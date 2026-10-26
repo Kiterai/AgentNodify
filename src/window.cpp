@@ -1,5 +1,7 @@
 #include "window.h"
 #include "theme.h"
+#include "graphview.h"
+#include "projectopener.h"
 #include <QApplication>
 #include <QCloseEvent>
 #include <QCheckBox>
@@ -52,6 +54,12 @@ QPushButton *button(const QString &text, QLayout *layout, std::function<void()> 
 QString uniquePath(const QString &dir) { return QDir(dir).filePath(QUuid::createUuid().toString(QUuid::WithoutBraces) + ".flow.json"); }
 std::string str(const QString &s) { return s.toUtf8().toStdString(); }
 QString qs(const Json &j) { return QString::fromUtf8(j.get<std::string>()); }
+QStringList modelSelectionErrors(const Flow &flow) {
+    QStringList errors;
+    for (const auto &[id, node] : flow.nodes) if (node.kind == Kind::Agent && node.model.isEmpty())
+        errors << "モデルを選択してください: " + (node.title.isEmpty() ? kindName(node.kind) : node.title);
+    return errors;
+}
 }
 Window::Window(bool smoke) : smoke_(smoke) {
     setWindowTitle("AgentNodify"); resize(1440, 900);
@@ -89,6 +97,7 @@ Window::Window(bool smoke) : smoke_(smoke) {
 }
 void Window::buildUi() {
     auto *file = menuBar()->addMenu("ファイル");
+    file->setObjectName("fileMenu");
     file->addAction("新しいフロー", QKeySequence::New, this, [this] { newFlow(); });
     file->addAction("開く…", QKeySequence::Open, this, [this] { openFlow(); });
     file->addAction("保存", QKeySequence::Save, this, [this] { saveFlow(); });
@@ -124,10 +133,19 @@ void Window::buildUi() {
     button("フローを検証", leftLayout, [this] { validateFlow(); });
     leftLayout->addStretch(); left->setObjectName("nodePalette");
     left->setMinimumWidth(180); editorSplit_->addWidget(left);
-    editScene_ = new QtNodes::BasicGraphicsScene(*editGraph_, this); editView_ = new QtNodes::GraphicsView(editScene_);
+    editScene_ = new QtNodes::BasicGraphicsScene(*editGraph_, this); editView_ = new GraphView(editScene_);
     editView_->setScaleRange(0.15, 3); editorSplit_->addWidget(editView_);
     editView_->setObjectName("flowEditorView");
     connect(editScene_, &QtNodes::BasicGraphicsScene::nodeClicked, this, [this](Id id) { selectNode(id); });
+    connect(editScene_, &QtNodes::BasicGraphicsScene::nodeContextMenu, this, [this](Id id, const QPointF &point) {
+        if (runner_->running() || !editGraph_->nodeExists(id)) return;
+        QMenu menu(this); menu.setObjectName("nodeContextMenu");
+        auto *remove = menu.addAction("削除");
+        const auto kind = editGraph_->flow.nodes.at(id).kind;
+        remove->setEnabled(kind != Kind::Start && kind != Kind::End);
+        connect(remove, &QAction::triggered, this, [this, id] { if (!runner_->running()) editGraph_->deleteNode(id); });
+        menu.exec(editView_->viewport()->mapToGlobal(editView_->mapFromScene(point)));
+    });
     connect(editGraph_, &QtNodes::AbstractGraphModel::nodeDeleted, this, [this](Id id) { if (selected_ == id) { selected_ = 0; textPane_->hide(); selectNode(0); } });
     connect(editGraph_, &Graph::textEditRequested, this, [this](Id id, const QString &field) { selectNode(id); showText(field); });
     connect(editGraph_, &Graph::nodeActivated, this, [this](Id id) { selectNode(id); });
@@ -159,7 +177,7 @@ void Window::buildUi() {
     auto *toolbar = new QHBoxLayout; status_ = new QLabel("プロジェクトを選択してください"); status_->setWordWrap(true); toolbar->addWidget(status_, 1);
     runButton_ = button("▶ 実行", toolbar, [this] { executeFlow(); });
     stopButton_ = button("■ 停止", toolbar, [this] { runner_->cancel(); }); stopButton_->setEnabled(false); cl->addLayout(toolbar);
-    workScene_ = new QtNodes::BasicGraphicsScene(*workGraph_, this); workView_ = new QtNodes::GraphicsView(workScene_); workView_->setScaleRange(0.15, 3); cl->addWidget(workView_, 1);
+    workScene_ = new QtNodes::BasicGraphicsScene(*workGraph_, this); workView_ = new GraphView(workScene_); workView_->setScaleRange(0.15, 3); cl->addWidget(workView_, 1);
     connect(workScene_, &QtNodes::BasicGraphicsScene::nodeClicked, this, [this](Id id) { selectWorkNode(id); });
     connect(workGraph_, &Graph::nodeActivated, this, [this](Id id) { selectWorkNode(id); });
     connect(workGraph_, &Graph::textEditRequested, this, [this](Id id, const QString &) { selectWorkNode(id); });
@@ -189,6 +207,9 @@ void Window::buildUi() {
     setStyleSheet(R"(
         QMainWindow, QWidget { background:#191f2a; color:#dce5f3; }
         QMenuBar, QMenu, QTabBar::tab { background:#222a38; }
+        QMenu { padding:6px; }
+        QMenu::item { padding:8px 36px 8px 20px; }
+        QMenu::item:selected { background:#3b5680; }
         QPushButton { background:#2d3b50; border:1px solid #40536c; border-radius:5px; padding:7px 9px; }
         QPushButton:hover { background:#3c506d; } QPushButton:disabled { color:#738198; }
         QLineEdit, QPlainTextEdit, QListWidget, QComboBox, QSpinBox, QTableWidget { background:#121925; border:1px solid #354259; padding:4px; selection-background-color:#3b5680; }
@@ -315,6 +336,7 @@ bool Window::saveFlow(bool saveAs) {
 }
 void Window::validateFlow() {
     auto errors = editGraph_->flow.validate();
+    errors.append(modelSelectionErrors(editGraph_->flow));
     if (errors.isEmpty()) QMessageBox::information(this, "フロー検証", "エラーはありません");
     else reportError(errors.join('\n'));
 }
@@ -326,6 +348,18 @@ void Window::refreshProjects() {
         auto *item = new QListWidgetItem(projects_[size_t(i)].name, projectList_); item->setData(Qt::UserRole, i); item->setToolTip(projects_[size_t(i)].directory);
         auto *row = new QWidget; auto *layout = new QHBoxLayout(row); layout->setContentsMargins(6, 2, 2, 2);
         layout->addWidget(new QLabel(projects_[size_t(i)].name), 1);
+        auto *more = new QToolButton; more->setText("…"); more->setObjectName("projectOpenMenu");
+        more->setToolTip("ディレクトリを開く"); more->setAccessibleName("プロジェクトディレクトリを開く"); layout->addWidget(more);
+        auto *menu = new QMenu(more); more->setMenu(menu); more->setPopupMode(QToolButton::InstantPopup);
+        connect(menu, &QMenu::aboutToShow, this, [this, menu, i] {
+            menu->clear();
+            for (const auto &opener : detectProjectOpeners()) {
+                menu->addAction(opener.label, this, [this, i, opener] {
+                    if (i >= int(projects_.size())) return;
+                    QString error; if (!openProjectDirectory(opener, projects_[size_t(i)].directory, &error)) reportError(error);
+                });
+            }
+        });
         auto *remove = new QToolButton; remove->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
         remove->setObjectName("removeProject"); remove->setToolTip("一覧から削除（ディレクトリは削除しません）"); remove->setAccessibleName("プロジェクトを一覧から削除"); layout->addWidget(remove);
         item->setText(""); item->setSizeHint(row->sizeHint()); projectList_->setItemWidget(item, row);
@@ -371,6 +405,7 @@ void Window::addProject() {
 void Window::executeFlow() {
     if (project_ < 0 || runner_->running()) { status_->setText("プロジェクトを選択してください"); return; }
     auto errors = editGraph_->flow.validate(); if (!errors.isEmpty()) { reportError(errors.join('\n')); return; }
+    errors = modelSelectionErrors(editGraph_->flow); if (!errors.isEmpty()) { reportError(errors.join('\n')); return; }
     if (!smoke_ && QMessageBox::question(this, "フロー実行", "エージェントはプロジェクト内のファイルを読み取り・変更する可能性があります。\n各CLIの権限設定が適用されます。実行しますか？") != QMessageBox::Yes) return;
     workGraph_->replace(editGraph_->flow); projects_[size_t(project_)].results.clear();
     activities_->setEnabled(false); projectList_->setEnabled(false); tabs_->setTabEnabled(0, false); runButton_->setEnabled(false); stopButton_->setEnabled(true);

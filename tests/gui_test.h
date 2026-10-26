@@ -15,5 +15,9 @@ private slots:
     void comboPopupColors();
     void workSelection();
     void flowRemoval();
+    void nodeContextAndMenuSpacing();
+    void embeddedComboCursor();
+    void projectOpeners();
+    void comboPopupWheel();
 };
 }

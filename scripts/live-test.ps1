@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('Codex', 'Claude Code', 'OpenCode')][string]$Agent,
-    [ValidateSet('text', 'json', 'loop', 'and', 'file')][string]$Case = 'text',
+    [ValidateSet('text', 'json', 'loop', 'and', 'file', 'cwd')][string]$Case = 'text',
+    [string]$ProjectDirectory,
     [string]$Program,
     [string]$QtPath = 'C:/Qt/6.12.0/msvc2022_64',
     [string]$CodexCaCertificate,
@@ -88,6 +89,7 @@ try {
         }
         $slug = switch ($Agent) { 'Codex' { 'codex' }; 'Claude Code' { 'claude' }; 'OpenCode' { 'opencode' } }
         $extra = @(); if ($WorkspaceWrite) { $extra += '--workspace-write' }
+        if ($ProjectDirectory) { $extra += @('--project', [IO.Path]::GetFullPath($ProjectDirectory)) }
         & $runner --agent $Agent --program $Program --model $model --case $Case --report "$root/build/$slug-$Case-sandbox-live.json" @extra
     } else {
         & $Program --version

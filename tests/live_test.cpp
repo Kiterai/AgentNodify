@@ -4,6 +4,7 @@
 #include <QCommandLineParser>
 #include <QDateTime>
 #include <QFile>
+#include <QFileInfo>
 #include <QDir>
 #include <QUuid>
 #include <QSaveFile>
@@ -18,7 +19,8 @@ int main(int argc, char **argv) {
         {{"a", "agent"}, "Codex / Claude Code / OpenCode", "name"},
         {{"p", "program"}, "Native CLI executable", "path"},
         {{"m", "model"}, "Explicit model ID (no default/fallback)", "model"},
-        {{"c", "case"}, "text / json / loop / and / file", "case", "text"},
+        {{"c", "case"}, "text / json / loop / and / file / cwd", "case", "text"},
+        {"project", "Explicit test project directory (cwd case creates a unique marker)", "path"},
         {{"r", "report"}, "Write JSON test report", "path"},
         {{"t", "timeout"}, "Per-node timeout in seconds", "seconds", "90"},
         {"workspace-write", "Opt in to workspace-write / acceptEdits (not a permission bypass)"}
@@ -26,7 +28,7 @@ int main(int argc, char **argv) {
     const auto agent = parser.value("agent"), model = parser.value("model"), test = parser.value("case");
     if ((agent != "Codex" && agent != "Claude Code" && agent != "OpenCode") ||
         model.isEmpty() || parser.value("program").isEmpty() ||
-        (test != "text" && test != "json" && test != "loop" && test != "and" && test != "file")) {
+        (test != "text" && test != "json" && test != "loop" && test != "and" && test != "file" && test != "cwd")) {
         QTextStream(stderr) << "Specify --agent, --program, --model and --case text/json/loop/and\n"; return 2;
     }
     const auto lower = model.toLower();
@@ -42,7 +44,11 @@ int main(int argc, char **argv) {
         n.model = model; n.prompt = noTools + prompt; n.schema = schema; flow.nodes[id] = n;
     };
     Json expected;
-    if (test == "file") {
+    if (test == "cwd") {
+        agentNode(3, "", R"({"type":"object","properties":{"cwd":{"type":"string"},"marker":{"type":"string"}},"required":["cwd","marker"],"additionalProperties":false})");
+        flow.nodes[3].prompt = "Use tools to determine the actual current working directory and read the relative file agentnodify-cwd-marker.txt from that directory. Do not search other directories or change directory. Return JSON with cwd equal to the absolute current directory reported by a tool, and marker equal to that file's content, trimmed. On Windows PowerShell, set [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) before printing the path, to preserve non-ASCII directory names. Do not modify any files. If a tool is denied, report that honestly rather than guessing.";
+        flow.edges = {{1, 3}, {3, 2}};
+    } else if (test == "file") {
         agentNode(3, "", "");
         flow.nodes[3].prompt = "Create a new file named agentnodify-check.txt in the current working directory containing exactly AGENTNODIFY_FILE_OK followed by a newline. Use file-writing tools, not just a description. Do not modify any other files. Report whether the actual write succeeded or was denied.";
         flow.edges = {{1, 3}, {3, 2}}; expected = "AGENTNODIFY_FILE_OK";
@@ -67,10 +73,18 @@ int main(int argc, char **argv) {
         flow.edges = {{1, 3}, {3, 4}, {4, 5, 0, 0}, {4, 6, 0, 0}, {5, 7, 0, 0}, {6, 7, 0, 1}, {7, 8}, {8, 4}, {4, 2, 1, 0}};
         expected = {{"count", 2}};
     }
-    const auto projectPath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/../file-check-" + QUuid::createUuid().toString(QUuid::WithoutBraces));
+    const auto projectPath = parser.isSet("project") ? QFileInfo(parser.value("project")).absoluteFilePath()
+        : test == "cwd" ? QDir::tempPath() + "/AgentNodify cwd 日本語 " + QUuid::createUuid().toString(QUuid::WithoutBraces)
+        : QDir::cleanPath(QCoreApplication::applicationDirPath() + "/../file-check-" + QUuid::createUuid().toString(QUuid::WithoutBraces));
     QDir directory(projectPath);
     if (!QDir().mkpath(projectPath)) {
         QTextStream(stderr) << "Cannot create temporary project: " << projectPath << '\n'; return 2;
+    }
+    if (test == "cwd") {
+        const auto token = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        QFile marker(directory.filePath("agentnodify-cwd-marker.txt"));
+        if (marker.exists() || !marker.open(QIODevice::WriteOnly | QIODevice::NewOnly) || marker.write(token.toUtf8()) < 0) return 2;
+        marker.close(); expected = {{"cwd", projectPath.toStdString()}, {"marker", token.toStdString()}};
     }
     Runner runner;
     AgentConfig config; config.codex = config.claude = config.opencode = parser.value("program");
@@ -88,6 +102,16 @@ int main(int argc, char **argv) {
         Json actual; if (runner.results().contains(2)) actual = runner.results().at(2).output;
         if (test == "text" && actual.is_string()) actual = actual.get<std::string>();
         bool passed = ok && (test == "text" ? display(actual).trimmed() == display(expected) : actual == expected);
+        if (test == "cwd" && actual.is_object() && actual.contains("cwd") && actual["cwd"].is_string()) {
+            auto observedPath = QString::fromStdString(actual["cwd"].get<std::string>());
+#ifdef Q_OS_WIN
+            // Bash reports /c/path while native Windows tools report C:/path.
+            if (observedPath.size() >= 3 && observedPath[0] == '/' && observedPath[1].isLetter() && observedPath[2] == '/')
+                observedPath = observedPath.mid(1, 1) + ":" + observedPath.mid(2);
+#endif
+            const auto observed = QFileInfo(observedPath).canonicalFilePath();
+            passed = ok && !observed.isEmpty() && observed.compare(QFileInfo(projectPath).canonicalFilePath(), Qt::CaseInsensitive) == 0 && actual.value("marker", Json()) == expected["marker"];
+        }
         QString fileContent;
         if (test == "file") {
             QFile file(directory.filePath("agentnodify-check.txt"));
@@ -103,7 +127,7 @@ int main(int argc, char **argv) {
         Json report = {{"at", QDateTime::currentDateTimeUtc().toString(Qt::ISODate).toStdString()},
             {"agent", agent.toStdString()}, {"model", model.toStdString()}, {"case", test.toStdString()},
             {"passed", passed}, {"message", message.toStdString()}, {"expected", expected}, {"actual", actual},
-            {"events", events}, {"nodes", results}, {"fileContent", fileContent.toStdString()}, {"project", projectPath.toStdString()}};
+            {"events", events}, {"nodes", results}, {"fileContent", fileContent.toStdString()}, {"project", projectPath.toStdString()}, {"launcherCwd", QDir::currentPath().toStdString()}};
         if (!parser.value("report").isEmpty()) {
             QSaveFile file(parser.value("report")); auto bytes = QByteArray::fromStdString(report.dump(2));
             if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) passed = false;

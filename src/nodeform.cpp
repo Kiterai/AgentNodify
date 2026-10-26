@@ -102,8 +102,8 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
     layout->addLayout(form);
     if (node.kind == Kind::Agent) {
         agent_ = new QComboBox; agent_->setObjectName("nodeAgent"); agent_->addItems({"Codex", "Claude Code", "OpenCode"}); agent_->setCurrentText(node.agent);
-        auto *combo = new ModelCombo; model_ = combo; model_->setObjectName("nodeModel"); model_->setEditable(true); model_->setCompleter(nullptr);
-        model_->lineEdit()->setPlaceholderText("CLI既定");
+        auto *combo = new ModelCombo; model_ = combo; model_->setObjectName("nodeModel"); model_->setEditable(false);
+        model_->setPlaceholderText("モデルを選択");
         model_->setMinimumContentsLength(10); model_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
         styleComboBoxPopup(agent_); styleComboBoxPopup(model_);
         auto *modelRow = new QWidget; auto *modelLayout = new QHBoxLayout(modelRow); modelLayout->setContentsMargins(0, 0, 0, 0); modelLayout->setSpacing(4);
@@ -129,11 +129,10 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
             node_.agent = agent; node_.model.clear(); node_.effort.clear(); effort_->setCurrentIndex(0); populateModels(); publish();
             if (catalog_) catalog_->request(agent);
         });
-        connect(model_, &QComboBox::currentTextChanged, this, [this](const QString &text) {
+        connect(model_, &QComboBox::currentIndexChanged, this, [this](int index) {
             if (updating_) return;
-            auto id = text;
-            if (model_->currentIndex() >= 0 && text == model_->itemText(model_->currentIndex())) id = model_->currentData().toString();
-            node_.model = id;
+            if (index < 0) return;
+            node_.model = model_->currentData().toString();
             populateEfforts();
             publish();
         });
@@ -181,9 +180,7 @@ void NodeForm::setReadOnly(bool readOnly) {
 }
 void NodeForm::populateModels() {
     if (!model_) return;
-    const auto cursor = model_->lineEdit()->cursorPosition();
-    const bool focused = model_->lineEdit()->hasFocus();
-    QSignalBlocker block(model_); model_->clear(); model_->addItem("CLI既定", "");
+    QSignalBlocker block(model_); model_->clear();
     const auto entry = catalog_ ? catalog_->entry(node_.agent) : CatalogEntry{};
     for (auto &info : entry.models) {
         const auto label = info.name;
@@ -191,15 +188,14 @@ void NodeForm::populateModels() {
         model_->setItemData(model_->count() - 1, info.id + "\n" + info.description, Qt::ToolTipRole);
     }
     auto selected = model_->findData(node_.model);
-    if (selected < 0) { model_->addItem(node_.model + "（現在の設定）", node_.model); selected = model_->count() - 1; }
+    if (selected < 0 && !node_.model.isEmpty()) { model_->addItem(node_.model + "（現在の設定）", node_.model); selected = model_->count() - 1; }
     model_->setCurrentIndex(selected);
-    if (focused) model_->lineEdit()->setCursorPosition(cursor);
-    QString status = catalog_ ? "未取得" : "手入力";
-    QString tooltip = "モデルIDは手入力できます。空欄はCLIの既定モデルです。";
+    QString status = "未取得";
+    QString tooltip = "取得した候補からモデルを選択してください。";
     if (entry.state == CatalogState::Loading) status = "取得中…";
     else if (entry.state == CatalogState::Ready) status = QString("%1件のモデル").arg(entry.models.size());
     else if (entry.state == CatalogState::Error) {
-        status = entry.models.empty() ? "取得失敗 · 手入力可" : "取得失敗 · 前回の候補を表示";
+        status = entry.models.empty() ? "取得失敗" : "取得失敗 · 前回の候補を表示";
         tooltip = entry.error + "\n" + tooltip;
     }
     modelStatus_->setText(status); modelStatus_->setToolTip(tooltip); model_->setToolTip(tooltip);

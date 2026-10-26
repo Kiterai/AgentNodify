@@ -2,6 +2,7 @@
 #include "window.h"
 #include "nodeform.h"
 #include "theme.h"
+#include "projectopener.h"
 #include <QtTest>
 #include <QComboBox>
 #include <QDir>
@@ -18,6 +19,11 @@
 #include <QTextLayout>
 #include <QMenu>
 #include <QMessageBox>
+#include <QContextMenuEvent>
+#include <QMenuBar>
+#include <QHBoxLayout>
+#include <QWheelEvent>
+#include <QStatusBar>
 #include <QUuid>
 #include <QStyledItemDelegate>
 #include <QtNodes/NodeStyle>
@@ -57,7 +63,10 @@ void GuiTest::embeddedParameters() {
     QCOMPARE(graph.flow.nodes.at(id).position, QPointF(200, 100));
     QCOMPARE(graph.form(id), form); QCOMPARE(graph.nodeData(id, NodeRole::Caption).toString(), QString("Review"));
     auto *agent = form->findChild<QComboBox *>("nodeAgent"), *model = form->findChild<QComboBox *>("nodeModel");
-    QVERIFY(agent && model); agent->setCurrentText("OpenCode"); model->setCurrentText("openai/gpt-6-luna");
+    QVERIFY(agent && model); agent->setCurrentText("OpenCode");
+    QVERIFY(!model->isEditable()); QCOMPARE(model->currentIndex(), -1);
+    auto imported = graph.flow.nodes.at(id); imported.model = "openai/gpt-6-luna"; graph.updateNode(imported);
+    QCOMPARE(model->currentData().toString(), imported.model);
     QCOMPARE(graph.flow.nodes.at(id).agent, QString("OpenCode")); QCOMPARE(graph.flow.nodes.at(id).model, QString("openai/gpt-6-luna"));
     const auto before = graph.nodeData(id, NodeRole::Size).toSize();
     auto node = graph.flow.nodes.at(id); node.prompt = QString("line\n").repeated(40); graph.updateNode(node);
@@ -238,6 +247,112 @@ void GuiTest::flowRemoval() {
     window.documents_.push_back({Flow::initial(), external, false});
     confirm(); window.removeFlow(1); QVERIFY(QFileInfo::exists(external));
     QVERIFY(QFile::remove(external)); QVERIFY(QDir(root).rmdir("flows")); QVERIFY(QDir().rmdir(root));
+}
+void GuiTest::nodeContextAndMenuSpacing() {
+    Window window(true); window.show();
+    auto id = window.editGraph_->addNode("agent"); window.editGraph_->addConnection({1, 0, id, 0});
+    window.editView_->centerScene(); QCoreApplication::processEvents();
+    auto openNodeMenu = [&](Id node, bool enabled) {
+        auto *item = window.editScene_->nodeGraphicsObject(node); QVERIFY(item);
+        auto point = window.editView_->mapFromScene(item->mapToScene(QPointF(item->boundingRect().width() / 2, 12)));
+        bool shown = false;
+        QTimer::singleShot(0, &window, [&] {
+            auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+            if (!menu) return;
+            shown = menu->objectName() == "nodeContextMenu";
+            const auto text = menu->actions()[0]->text(); const bool active = menu->actions()[0]->isEnabled();
+            if (enabled) menu->actions()[0]->trigger(); menu->close();
+            QCOMPARE(text, QString("削除")); QCOMPARE(active, enabled);
+        });
+        QContextMenuEvent event(QContextMenuEvent::Mouse, point, window.editView_->viewport()->mapToGlobal(point));
+        QApplication::sendEvent(window.editView_->viewport(), &event); QVERIFY(shown);
+    };
+    openNodeMenu(id, true); QVERIFY(!window.editGraph_->nodeExists(id)); QVERIFY(window.editGraph_->flow.edges.empty());
+    openNodeMenu(1, false); QVERIFY(window.editGraph_->nodeExists(1));
+    auto *file = window.findChild<QMenu *>("fileMenu"); QVERIFY(file);
+    file->popup(window.mapToGlobal(QPoint(10, 30))); QCoreApplication::processEvents();
+    int widest = 0;
+    for (auto *action : file->actions()) if (action->shortcut() == QKeySequence::SaveAs) {
+        const auto rect = file->actionGeometry(action);
+        widest = rect.width();
+        const auto textWidth = file->fontMetrics().horizontalAdvance(action->text());
+        const auto keyWidth = file->fontMetrics().horizontalAdvance(action->shortcut().toString(QKeySequence::NativeText));
+        QVERIFY(rect.width() - textWidth - keyWidth >= 60);
+    }
+    QVERIFY(widest > 0); QVERIFY(file->width() - widest < 30);
+    QVERIFY(file->grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-file-menu.png"))); file->close();
+}
+void GuiTest::embeddedComboCursor() {
+    Window window(true); window.show(); const auto id = window.editGraph_->addNode("agent");
+    window.editView_->centerScene(); QCoreApplication::processEvents();
+    auto *form = window.editGraph_->form(id);
+    for (auto *combo : form->findChildren<QComboBox *>()) {
+        QCOMPARE(combo->cursor().shape(), Qt::ArrowCursor);
+        QCOMPARE(combo->view()->viewport()->cursor().shape(), Qt::ArrowCursor);
+        if (combo->lineEdit()) QCOMPARE(combo->lineEdit()->cursor().shape(), Qt::ArrowCursor);
+        auto point = window.editView_->mapFromScene(form->graphicsProxyWidget()->mapToScene(combo->mapTo(form, combo->rect().center())));
+        QTest::mouseMove(window.editView_->viewport(), QPoint(5, 5));
+        QTest::mouseMove(window.editView_->viewport(), point); QCoreApplication::processEvents();
+        QCOMPARE(window.editView_->viewport()->cursor().shape(), Qt::ArrowCursor);
+    }
+}
+void GuiTest::projectOpeners() {
+    const auto detected = detectProjectOpeners();
+    QSet<QString> labels;
+    for (const auto &opener : detected) {
+        QVERIFY(QFileInfo(opener.program).isFile()); QVERIFY(!labels.contains(opener.label)); labels.insert(opener.label);
+        qInfo().noquote() << "Detected:" << opener.label << opener.program;
+    }
+    QVERIFY(detected.size() <= 6);
+    const auto path = QDir::current().absoluteFilePath("プロジェクト & (sample)");
+    for (const auto app : {ProjectApp::Explorer, ProjectApp::CommandPrompt, ProjectApp::PowerShell, ProjectApp::GitBash, ProjectApp::Code, ProjectApp::CodeInsiders}) {
+        const ProjectOpener opener{app, "", ""}; const auto args = opener.arguments(path);
+        const auto native = QDir::toNativeSeparators(path);
+        if (app == ProjectApp::Explorer) QCOMPARE(args, QStringList{native});
+        else if (app == ProjectApp::GitBash) QCOMPARE(args, QStringList{"--cd=" + native});
+        else if (app == ProjectApp::Code || app == ProjectApp::CodeInsiders) QCOMPARE(args, (QStringList{"--new-window", native}));
+        else QVERIFY(!args.join(' ').contains(path)); // Shells use QProcess cwd, never an interpolated cd command.
+        QString error; QVERIFY(!openProjectDirectory(opener, path, &error)); QVERIFY(!error.isEmpty());
+    }
+    Window window(true); window.projects_.push_back({"test", QDir::currentPath(), window.documents_[0].path, {}}); window.refreshProjects();
+    auto *more = window.projectList_->findChild<QToolButton *>("projectOpenMenu"); QVERIFY(more && more->menu());
+    auto *remove = window.projectList_->findChild<QToolButton *>("removeProject"); QVERIFY(remove);
+    QCOMPARE(more->text(), QString("…"));
+    QVERIFY(more->parentWidget()->layout()->indexOf(more) < more->parentWidget()->layout()->indexOf(remove));
+    more->menu()->aboutToShow(); QCOMPARE(more->menu()->actions().size(), qsizetype(detected.size()));
+    for (int i = 0; i < more->menu()->actions().size(); ++i) QCOMPARE(more->menu()->actions()[i]->text(), detected[size_t(i)].label);
+    window.show(); window.tabs_->setCurrentIndex(1); QCoreApplication::processEvents();
+    more->menu()->popup(more->mapToGlobal(QPoint(0, more->height()))); QCoreApplication::processEvents();
+    QVERIFY(more->menu()->grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-project-open-menu.png"))); more->menu()->close();
+    const auto id = window.editGraph_->addNode("agent"); auto node = window.editGraph_->flow.nodes.at(id); node.prompt = "test"; window.editGraph_->updateNode(node);
+    window.editGraph_->addConnection({1, 0, id, 0}); window.editGraph_->addConnection({id, 0, 2, 0});
+    window.config_.codex = "nonexistent-test-agent"; // Never run a real CLI from this regression test.
+    window.executeFlow(); QVERIFY(!window.runner_->running()); QVERIFY(window.statusBar()->currentMessage().contains("モデルを選択"));
+}
+void GuiTest::comboPopupWheel() {
+    Window window(true); window.show(); const auto id = window.editGraph_->addNode("agent");
+    window.editView_->setupScale(1.0); window.editView_->centerScene(); QCoreApplication::processEvents();
+    auto *combo = window.editGraph_->form(id)->findChild<QComboBox *>("nodeModel");
+    QVERIFY(combo && !combo->isEditable());
+    for (int i = 0; i < 80; ++i) combo->addItem(QString("Model %1").arg(i), QString("model-%1").arg(i));
+    combo->setMaxVisibleItems(6); combo->view()->setMaximumHeight(160);
+    combo->showPopup(); QCoreApplication::processEvents();
+    auto *list = combo->view(); auto *proxy = list->graphicsProxyWidget();
+    if (!proxy) proxy = list->window()->graphicsProxyWidget();
+    QVERIFY(proxy); QVERIFY(list->verticalScrollBar()->maximum() > 0);
+    const auto point = window.editView_->mapFromScene(proxy->mapToScene(list->viewport()->mapTo(proxy->widget(), list->viewport()->rect().center())));
+    const auto scale = window.editView_->transform(); const auto before = list->verticalScrollBar()->value();
+    QWheelEvent wheel(QPointF(point), QPointF(window.editView_->viewport()->mapToGlobal(point)), QPoint(), QPoint(0, -120), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(window.editView_->viewport(), &wheel); QCoreApplication::processEvents();
+    QCOMPARE(window.editView_->transform(), scale); QVERIFY(list->verticalScrollBar()->value() > before);
+    list->verticalScrollBar()->setValue(list->verticalScrollBar()->maximum());
+    const auto canvasPosition = QPoint(window.editView_->horizontalScrollBar()->value(), window.editView_->verticalScrollBar()->value());
+    QWheelEvent atEnd(QPointF(point), QPointF(window.editView_->viewport()->mapToGlobal(point)), QPoint(), QPoint(0, -120), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(window.editView_->viewport(), &atEnd); QCOMPARE(window.editView_->transform(), scale);
+    QCOMPARE(QPoint(window.editView_->horizontalScrollBar()->value(), window.editView_->verticalScrollBar()->value()), canvasPosition);
+    combo->hidePopup();
+    QWheelEvent canvas(QPointF(5, 5), QPointF(window.editView_->viewport()->mapToGlobal(QPoint(5, 5))), QPoint(), QPoint(0, 120), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(window.editView_->viewport(), &canvas); QVERIFY(window.editView_->transform() != scale);
 }
 }
 QTEST_MAIN(an::GuiTest)

@@ -80,8 +80,13 @@ APIキーを使う場合は各CLIが対応する環境変数を安全な方法�
 ./scripts/live-test.ps1 -Agent OpenCode -Case loop -Run
 ```
 
-`-Case`は`text` / `json` / `loop` / `and` / `file`。モデルは仕様で許可されたLuna / Haikuに固定しています。
+`-Case`は`text` / `json` / `loop` / `and` / `file` / `cwd`。モデルは仕様で許可されたLuna / Haikuに固定しています。
 Qtが異なる場合は`-QtPath`を指定します。CTestには登録しません。
+
+カレントディレクトリの検証は`-Run -Case cwd`です。既定ではサンドボックスの一時領域に日本語・空白入りの
+ディレクトリを作成し、現在地と相対ファイルのランダム値を照合します。任意の検証先には`-ProjectDirectory`を指定できます。
+既存の同名マーカーファイルは上書きしません。検証先に対する読み書き権限が必要です。
+OpenCodeのタスク実行はGUI・テストとも常に専用サーバーの`--standalone`を使用します。
 
 実ファイル作成の確認は`-Run -Case file`です。Codex / Claude Codeに書き込み権限を明示的に与える検証だけ、
 `-WorkspaceWrite`を追加します（Codex: workspace-write、Claude Code: acceptEdits。全権限バイパスではありません）。
@@ -139,7 +144,7 @@ CodexはWindows既定TLSで`workspace routing discovery failed`となりまし�
 | OpenCode実モデル and | 最新の再確認で成功。並列ノード各2回、ANDの新しい全入力の待ち合わせ2回を確認 |
 | Claude Code実モデル text / json / loop / and | 全4ケース成功（`claude-haiku-5-5`、Proログイン後） |
 | CTest core / gui_smoke | 成功 |
-| CTest gui | GUI改修後の再ビルド・テスト修正を行い成功（QtTest 11 passed / 0 failed） |
+| CTest gui | GUI改修後の再ビルド・テスト修正を行い成功（QtTest 15 passed / 0 failed） |
 | モデル一覧：Codex | 成功（7件、app-serverの`model/list`） |
 | モデル一覧：Claude Code | 成功（13件、制御プロトコル初期化応答の`models`） |
 | モデル一覧：OpenCode | 成功（25件、`models --standalone`） |

@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QCoreApplication>
+#include <QProcessEnvironment>
 #include <stdexcept>
 
 namespace an {
@@ -47,7 +48,7 @@ bool Runner::start(const Flow &flow, const QString &directory, const AgentConfig
     auto errors = flow.validate();
     if (!QFileInfo(directory).isDir()) errors << "プロジェクトディレクトリが存在しません";
     if (!errors.isEmpty()) { emit finished(false, errors.join('\n')); return false; }
-    flow_ = flow; directory_ = directory; config_ = config;
+    flow_ = flow; directory_ = QFileInfo(directory).canonicalFilePath(); config_ = config;
     results_.clear(); tokens_.clear(); jobs_.clear();
     ++generation_; active_ = true; pumpScheduled_ = false; startPending_ = true;
     for (auto &[id, n] : flow_.nodes) {
@@ -170,6 +171,7 @@ void Runner::launch(Id id, const Json &input) {
         program = config_.codex;
         j->finalPath = j->temp->filePath("response.txt");
         args << "exec" << "--json" << "--skip-git-repo-check" << "--output-last-message" << j->finalPath;
+        args << "--cd" << directory_;
         if (config_.workspaceWrite) args << "--sandbox" << "workspace-write";
         if (!n.schema.trimmed().isEmpty()) {
             auto path = j->temp->filePath("schema.json"); QFile file(path);
@@ -186,8 +188,9 @@ void Runner::launch(Id id, const Json &input) {
         if (!n.model.isEmpty()) args << "--model" << n.model;
         if (!n.schema.trimmed().isEmpty()) args << "--json-schema" << n.schema;
     } else {
-        program = config_.opencode; args << "run" << "--format" << "json";
-        if (config_.opencodeStandalone) args << "--standalone";
+        // A shared service owns tool execution and can outlive the launcher's cwd.
+        // Keep the server and its tools in this project's process tree instead.
+        program = config_.opencode; args << "run" << "--format" << "json" << "--standalone";
         if (!n.effort.isEmpty() && n.model.isEmpty()) throw std::runtime_error("OpenCodeの思考量を指定する場合はモデルを選択してください");
         if (!n.model.isEmpty()) args << "--model" << (n.effort.isEmpty() ? n.model : n.model.section('#', 0, 0) + "#" + n.effort);
         // OpenCode CLI has no documented native output-schema flag.
@@ -204,6 +207,9 @@ void Runner::launch(Id id, const Json &input) {
     auto *process = new QProcess(this); j->process = process;
     auto *timer = new QTimer(this); j->timer = timer; timer->setSingleShot(true);
     process->setWorkingDirectory(directory_);
+    auto environment = QProcessEnvironment::systemEnvironment();
+    environment.insert("PWD", directory_);
+    process->setProcessEnvironment(environment);
     connect(process, &QProcess::readyReadStandardOutput, this, [this, id] {
         if (!jobs_.contains(id)) return;
         auto bytes = jobs_[id]->process->readAllStandardOutput();

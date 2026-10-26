@@ -6,6 +6,7 @@
 #include <QTemporaryDir>
 #include <QFile>
 #include <QCoreApplication>
+#include <QScopeGuard>
 
 using namespace an;
     Flow CoreTest::simple(const QString &agent) {
@@ -111,6 +112,9 @@ using namespace an;
         auto f = simple(agent); f.nodes[3].prompt = "CHECK_CWD quote \" and $() 日本語\nhello";
         if (structured) f.nodes[3].schema = schema();
         auto cfg = config(); cfg.opencodeStandalone = standalone;
+        const auto previousPwd = qgetenv("PWD"); const bool hadPwd = qEnvironmentVariableIsSet("PWD");
+        auto restorePwd = qScopeGuard([&] { if (hadPwd) qputenv("PWD", previousPwd); else qunsetenv("PWD"); });
+        qputenv("PWD", "C:/incorrect-launcher-directory");
         Runner r; QSignalSpy spy(&r, &Runner::finished); QVERIFY(r.start(f, dir.path(), cfg));
         QVERIFY(spy.wait(15000)); QVERIFY2(spy[0][0].toBool(), qPrintable(spy[0][1].toString()));
         QVERIFY(r.results().at(2).output == (structured ? Json{{"result", "ok"}} : Json("hello")));

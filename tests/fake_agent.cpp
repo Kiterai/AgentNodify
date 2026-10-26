@@ -14,6 +14,11 @@ int main(int argc, char **argv) {
     if (prompt.contains("SLEEP")) QThread::sleep(5);
     if (prompt.contains("SHORT_DELAY")) QThread::msleep(80);
     if (prompt.contains("CHECK_CWD") && !QFile::exists("marker.txt")) return 8;
+    if (prompt.contains("CHECK_CWD")) {
+        if (QDir::cleanPath(qEnvironmentVariable("PWD")).compare(QDir::currentPath(), Qt::CaseInsensitive) != 0) return 18;
+        if (args.contains("exec") && args.value(args.indexOf("--cd") + 1) != QDir::currentPath()) return 19;
+        if (args.contains("run") && !args.contains("--standalone")) return 20;
+    }
     if (prompt.contains("EXPECT_OK") && !prompt.contains("EXPECT_OK=ok")) return 10;
     if (prompt.contains("CHECK_EFFORT_HIGH")) {
         if (args.contains("exec")) {

@@ -89,7 +89,9 @@ void CatalogTest::manualValuePreserved() {
     QCOMPARE(graph.flow.nodes.at(id).model, QString("code-alpha")); QCOMPARE(combo->currentText(), combo->itemText(alpha)); QVERIFY(!combo->currentText().contains(" · "));
     auto *effort = form->findChild<QComboBox *>("nodeEffort"); QVERIFY(effort);
     QCOMPARE(effort->count(), 3); QVERIFY(effort->findData("low") < 0); QVERIFY(effort->findData("high") >= 0);
-    combo->setEditText("new-manual-id"); QCOMPARE(graph.flow.nodes.at(id).model, QString("new-manual-id"));
+    QVERIFY(!combo->isEditable()); QVERIFY(!combo->lineEdit());
+    combo->setCurrentText("new-manual-id"); QCOMPARE(graph.flow.nodes.at(id).model, QString("code-alpha"));
+    QVERIFY(combo->findData("") < 0); QVERIFY(combo->findText("CLI既定") < 0);
     auto *agent = form->findChild<QComboBox *>("nodeAgent"); agent->setCurrentText("Claude Code");
     QTRY_VERIFY(catalog.entry("Claude Code").state == CatalogState::Ready);
     QVERIFY(combo->findData("haiku") >= 0); QVERIFY(combo->findData("code-alpha") < 0);
@@ -97,7 +99,7 @@ void CatalogTest::manualValuePreserved() {
     qputenv("AN_CATALOG_FIXTURE_MODE", "error");
     auto *refresh = form->findChild<QPushButton *>("refreshModels"); QVERIFY(refresh->isEnabled()); refresh->click();
     QTRY_VERIFY(catalog.entry("Claude Code").state == CatalogState::Error);
-    QVERIFY(combo->isEnabled() && combo->isEditable()); QVERIFY(combo->findData("haiku") >= 0);
+    QVERIFY(combo->isEnabled() && !combo->isEditable()); QVERIFY(combo->findData("haiku") >= 0);
 }
 }
 QTEST_MAIN(an::CatalogTest)

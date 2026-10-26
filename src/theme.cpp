@@ -1,12 +1,17 @@
 #include "theme.h"
 #include <QAbstractItemView>
 #include <QComboBox>
+#include <QLineEdit>
 #include <QPalette>
 #include <QStyledItemDelegate>
 
 namespace an {
 void styleComboBoxPopup(QComboBox *combo) {
+    // Override the graphics view's ScrollHandDrag cursor on embedded controls.
+    combo->setCursor(Qt::ArrowCursor);
+    if (combo->lineEdit()) combo->lineEdit()->setCursor(Qt::ArrowCursor);
     auto *view = combo->view();
+    view->setCursor(Qt::ArrowCursor); view->viewport()->setCursor(Qt::ArrowCursor);
     // Popup windows do not reliably inherit the embedded node's text palette.
     // Use a regular item delegate instead of the platform's native menu one.
     combo->setItemDelegate(new QStyledItemDelegate(view));
