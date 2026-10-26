@@ -1,0 +1,10 @@
+{
+  "rules": [
+    {
+      "shell": "git-bash",
+      "match": "prefix",
+      "pattern": "C:/Users/User1/Documents/dev/AgentNodify/build/Release/agentnodify_live_test.exe",
+      "effect": "allow"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "name": "Claude Code · JSON",
+  "nodes": [
+    {"id": 1, "kind": "start", "title": "始端", "x": 0, "y": 100, "rules": []},
+    {"id": 3, "kind": "agent", "title": "挨拶JSONを生成", "x": 240, "y": 100, "agent": "Claude Code", "model": "claude-haiku-5-5", "prompt": "ファイルを変更せず、messageに短い日本語の挨拶を格納したJSONを返してください。", "schema": "{\"type\":\"object\",\"properties\":{\"message\":{\"type\":\"string\"}},\"required\":[\"message\"],\"additionalProperties\":false}", "rules": []},
+    {"id": 2, "kind": "end", "title": "終端", "x": 560, "y": 100, "rules": []}
+  ],
+  "edges": [{"from": 1, "to": 3, "output": 0, "input": 0}, {"from": 3, "to": 2, "output": 0, "input": 0}]
+}

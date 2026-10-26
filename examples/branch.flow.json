@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "name": "分岐と合流の例",
+  "nodes": [
+    {"id": 1, "kind": "start", "title": "始端", "x": 0, "y": 180, "rules": []},
+    {"id": 3, "kind": "agent", "title": "判定", "x": 200, "y": 180, "agent": "Codex", "model": "gpt-6-luna", "prompt": "ファイルを変更せず、resultがokであるJSONを返してください。", "schema": "{\"type\":\"object\",\"properties\":{\"result\":{\"type\":\"string\"}},\"required\":[\"result\"],\"additionalProperties\":false}", "rules": []},
+    {"id": 4, "kind": "branch", "title": "resultがok？", "x": 450, "y": 180, "rules": [{"variable": "result", "value": "ok", "equals": true}]},
+    {"id": 5, "kind": "agent", "title": "成功経路", "x": 720, "y": 40, "agent": "Claude Code", "model": "claude-haiku-5-5", "prompt": "判定は${result}でした。ファイルを変更せず、messageが成功であるJSONを返してください。", "schema": "{\"type\":\"object\",\"properties\":{\"message\":{\"type\":\"string\"}},\"required\":[\"message\"],\"additionalProperties\":false}", "rules": []},
+    {"id": 6, "kind": "agent", "title": "その他の経路", "x": 720, "y": 320, "agent": "Claude Code", "model": "claude-haiku-5-5", "prompt": "判定は${result}でした。ファイルを変更せず、messageが要確認であるJSONを返してください。", "schema": "{\"type\":\"object\",\"properties\":{\"message\":{\"type\":\"string\"}},\"required\":[\"message\"],\"additionalProperties\":false}", "rules": []},
+    {"id": 2, "kind": "end", "title": "終端", "x": 1240, "y": 180, "rules": []}
+  ],
+  "edges": [
+    {"from": 1, "to": 3, "output": 0, "input": 0}, {"from": 3, "to": 4, "output": 0, "input": 0},
+    {"from": 4, "to": 5, "output": 0, "input": 0}, {"from": 4, "to": 6, "output": 1, "input": 0},
+    {"from": 5, "to": 2, "output": 0, "input": 0}, {"from": 6, "to": 2, "output": 0, "input": 0}
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "name": "2回で終了するループ",
+  "nodes": [
+    {"id": 1, "kind": "start", "title": "始端", "x": 0, "y": 100, "rules": []},
+    {"id": 3, "kind": "agent", "title": "カウンタ初期化", "x": 220, "y": 100, "agent": "Codex", "model": "gpt-6-luna", "prompt": "ツールやファイルを使わず、countが0であるJSONを返してください。", "schema": "{\"type\":\"object\",\"properties\":{\"count\":{\"type\":\"integer\"}},\"required\":[\"count\"],\"additionalProperties\":false}", "rules": []},
+    {"id": 4, "kind": "agent", "title": "カウンタ加算", "x": 500, "y": 100, "agent": "Codex", "model": "gpt-6-luna", "prompt": "入力countは${count}です。ツールやファイルを使わず、その整数に1を加算した値をcountに持つJSONを返してください。", "schema": "{\"type\":\"object\",\"properties\":{\"count\":{\"type\":\"integer\"}},\"required\":[\"count\"],\"additionalProperties\":false}", "rules": []},
+    {"id": 5, "kind": "branch", "title": "2未満なら再実行", "x": 780, "y": 220, "rules": [{"variable": "count", "value": "2", "equals": false}]},
+    {"id": 2, "kind": "end", "title": "終端", "x": 1080, "y": 220, "rules": []}
+  ],
+  "edges": [
+    {"from": 1, "to": 3, "output": 0, "input": 0}, {"from": 3, "to": 4, "output": 0, "input": 0},
+    {"from": 4, "to": 5, "output": 0, "input": 0}, {"from": 5, "to": 4, "output": 0, "input": 0},
+    {"from": 5, "to": 2, "output": 1, "input": 0}
+  ]
+}
