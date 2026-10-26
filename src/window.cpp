@@ -2,6 +2,7 @@
 #include "theme.h"
 #include <QApplication>
 #include <QCloseEvent>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -14,6 +15,7 @@
 #include <QPushButton>
 #include <QSaveFile>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QStatusBar>
@@ -23,6 +25,7 @@
 #include <QUuid>
 #include <QVBoxLayout>
 #include <QRegularExpression>
+#include <QStyle>
 #include <QtNodes/internal/NodeGraphicsObject.hpp>
 
 namespace an {
@@ -58,13 +61,14 @@ Window::Window(bool smoke) : smoke_(smoke) {
     workGraph_ = new Graph; workGraph_->setParent(this); workGraph_->readOnly = true;
     runner_ = new Runner(this);
     modelCatalog_ = new ModelCatalog(this);
-    if (!smoke_) editGraph_->modelCatalog = modelCatalog_;
+    if (!smoke_) editGraph_->modelCatalog = workGraph_->modelCatalog = modelCatalog_;
     buildUi();
     connect(editGraph_, &Graph::edited, this, [this] { changed(); });
     connect(runner_, &Runner::changed, this, [this](Id id) {
         if (project_ < 0 || !runner_->results().contains(id)) return;
         projects_[size_t(project_)].results = runner_->results();
         workGraph_->states[id] = runner_->results().at(id).state; emit workGraph_->nodeUpdated(id);
+        if (workSelected_ == 0 && runner_->results().at(id).state == State::Running) workSelected_ = id;
         if (workSelected_ == id) selectWorkNode(id);
     });
     connect(runner_, &Runner::finished, this, [this](bool ok, const QString &message) {
@@ -89,20 +93,14 @@ void Window::buildUi() {
     file->addAction("開く…", QKeySequence::Open, this, [this] { openFlow(); });
     file->addAction("保存", QKeySequence::Save, this, [this] { saveFlow(); });
     file->addAction("名前を付けて保存…", QKeySequence::SaveAs, this, [this] { saveFlow(true); });
-    file->addAction("フロー名を変更…", this, [this] {
-        if (runner_->running()) return;
-        bool ok; auto name = QInputDialog::getText(this, "フロー名", "名前", QLineEdit::Normal, editGraph_->flow.name, &ok);
-        if (ok && !name.trimmed().isEmpty()) { editGraph_->flow.name = name; changed(); refreshActivities(); }
-    });
     file->addSeparator(); file->addAction("終了", QKeySequence::Quit, this, &QWidget::close);
     auto *tools = menuBar()->addMenu("ツール");
     tools->addAction("フローを検証", QKeySequence("F7"), this, [this] { validateFlow(); });
-    tools->addAction("接続を追加…（自己ループ可）", this, [this] { connectNodes(); });
     tools->addAction("CLI設定…", this, [this] { settings(); });
     tools->addAction("モデル一覧を更新", this, [this] { if (!smoke_) modelCatalog_->refreshAll(true); });
     auto *help = menuBar()->addMenu("ヘルプ");
     help->addAction("操作方法", this, [this] {
-        QMessageBox::information(this, "操作方法", "左のボタンでノードを追加し、丸いポートをドラッグして接続します。\nパラメータはノード内のフォームで編集します。複数行欄をクリックすると右ペインで編集できます。\nノードや追加ボタンにカーソルを置くと機能説明を表示します。Deleteで選択要素を削除できます。\nAND入力は0-indexed、分岐は上から順・最後がelseです。\nポート数を変えると、そのノードの接続は解除されます。\n自己ループはツールメニューの「接続を追加」から設定できます。\nフローを保存し、プロジェクト作業タブでディレクトリを追加して実行します。\nCLIの認証と権限設定は各CLIで事前に行ってください。");
+        QMessageBox::information(this, "操作方法", "左のボタンでノードを追加し、丸いポートをドラッグして接続します。\nパラメータはノード内のフォームで編集します。複数行欄をクリックすると右ペインで編集できます。\nノードや追加ボタンにカーソルを置くと機能説明を表示します。Deleteで選択要素を削除できます。\nAND入力は0-indexed、分岐は上から順・最後が「それ以外」です。\nポート数を変えると、そのノードの接続は解除されます。\nフロー一覧の右クリックで名前変更・一覧から削除、＋から新規作成・既存追加ができます。\nフローを保存し、プロジェクト作業タブでディレクトリを追加して実行します。\n作業ノードをクリックすると右ペインに状態・CLIログ・出力を表示します。\nCLIの認証と権限設定は各CLIで事前に行ってください。");
     });
     auto *root = new QWidget; auto *row = new QHBoxLayout(root); row->setContentsMargins(0, 0, 0, 0); row->setSpacing(0);
     auto *bar = new QWidget; bar->setFixedWidth(88); auto *barLayout = new QVBoxLayout(bar); barLayout->setContentsMargins(2, 6, 2, 6);
@@ -156,10 +154,6 @@ void Window::buildUi() {
         if (rowIndex >= 0 && projectList_->item(rowIndex)) selectProject(projectList_->item(rowIndex)->data(Qt::UserRole).toInt());
     });
     button("＋ ディレクトリを追加…", pl, [this] { addProject(); });
-    button("一覧から削除", pl, [this] {
-        if (project_ < 0 || runner_->running()) return;
-        projects_.erase(projects_.begin() + project_); project_ = -1; refreshProjects(); persist();
-    });
     workSplit->addWidget(projectPane);
     auto *center = new QWidget; auto *cl = new QVBoxLayout(center);
     auto *toolbar = new QHBoxLayout; status_ = new QLabel("プロジェクトを選択してください"); status_->setWordWrap(true); toolbar->addWidget(status_, 1);
@@ -167,9 +161,14 @@ void Window::buildUi() {
     stopButton_ = button("■ 停止", toolbar, [this] { runner_->cancel(); }); stopButton_->setEnabled(false); cl->addLayout(toolbar);
     workScene_ = new QtNodes::BasicGraphicsScene(*workGraph_, this); workView_ = new QtNodes::GraphicsView(workScene_); workView_->setScaleRange(0.15, 3); cl->addWidget(workView_, 1);
     connect(workScene_, &QtNodes::BasicGraphicsScene::nodeClicked, this, [this](Id id) { selectWorkNode(id); });
+    connect(workGraph_, &Graph::nodeActivated, this, [this](Id id) { selectWorkNode(id); });
+    connect(workGraph_, &Graph::textEditRequested, this, [this](Id id, const QString &) { selectWorkNode(id); });
     auto tooltips = [this](Graph *graph, QtNodes::BasicGraphicsScene *scene) {
         auto update = [graph, scene](Id id) {
-            if (auto *item = scene->nodeGraphicsObject(id)) item->setToolTip(nodeDescription(graph->flow.nodes.at(id).kind));
+            if (auto *item = scene->nodeGraphicsObject(id)) {
+                item->setToolTip(nodeDescription(graph->flow.nodes.at(id).kind));
+                if (graph->readOnly) item->setFlag(QGraphicsItem::ItemIsSelectable, true);
+            }
         };
         connect(graph, &QtNodes::AbstractGraphModel::nodeCreated, this, update);
         connect(graph, &QtNodes::AbstractGraphModel::modelReset, this, [graph, update] { for (auto &[id, node] : graph->flow.nodes) update(id); });
@@ -228,8 +227,24 @@ void Window::refreshActivities() {
         auto *button = tile(doc.flow.name.left(2), doc.flow.name, [this, i] { selectFlow(i); });
         button->setObjectName("flowTile"); button->setCheckable(true); button->setChecked(i == current_);
         button->setToolTip(doc.flow.name + "\n" + doc.path);
+        button->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(button, &QWidget::customContextMenuRequested, this, [this, button, i](const QPoint &point) {
+            if (runner_->running()) return;
+            QMenu menu(this);
+            menu.addAction("名前を変更", this, [this, i] {
+                selectFlow(i); bool ok = false;
+                auto name = QInputDialog::getText(this, "フロー名", "名前", QLineEdit::Normal, editGraph_->flow.name, &ok);
+                if (ok && !name.trimmed().isEmpty()) { editGraph_->flow.name = name.trimmed(); changed(); refreshActivities(); }
+            });
+            menu.addAction("一覧から削除", this, [this, i] { removeFlow(i); });
+            menu.exec(button->mapToGlobal(point));
+        });
     }
-    auto *add = tile("＋", "新しいフロー", [this] { newFlow(); }); add->setObjectName("addFlowTile"); add->setToolTip("新しいフローを追加");
+    auto *add = tile("＋", "フローを追加", [] {}); add->setObjectName("addFlowTile"); add->setToolTip("フローを追加");
+    auto *menu = new QMenu(add);
+    menu->addAction("新規フロー", this, [this] { newFlow(); });
+    menu->addAction("既存フローの追加", this, [this] { openFlow(); });
+    add->setMenu(menu); add->setPopupMode(QToolButton::InstantPopup);
     activityLayout_->addStretch();
 }
 void Window::selectFlow(int index) {
@@ -255,43 +270,25 @@ void Window::showText(const QString &field) {
             if (auto *item = editScene_->nodeGraphicsObject(id)) editView_->ensureVisible(item, 30, 30);
     });
 }
-void Window::connectNodes() {
-    if (runner_->running()) return;
-    QDialog dialog(this); dialog.setWindowTitle("接続を追加 — 自己ループも指定可能");
-    auto *layout = new QVBoxLayout(&dialog); auto *form = new QFormLayout;
-    auto *from = new QComboBox, *to = new QComboBox;
-    styleComboBoxPopup(from); styleComboBoxPopup(to);
-    auto *output = new QSpinBox, *input = new QSpinBox;
-    for (auto &[id, node] : editGraph_->flow.nodes) {
-        auto label = node.title.isEmpty() ? kindName(node.kind) : node.title;
-        if (editGraph_->flow.outputCount(node)) from->addItem(label, id);
-        if (editGraph_->flow.inputCount(node)) to->addItem(label, id);
-    }
-    auto refresh = [this, from, to, output, input] {
-        if (from->currentIndex() >= 0) output->setRange(0, int(editGraph_->flow.outputCount(editGraph_->flow.nodes.at(from->currentData().toUInt()))) - 1);
-        if (to->currentIndex() >= 0) input->setRange(0, int(editGraph_->flow.inputCount(editGraph_->flow.nodes.at(to->currentData().toUInt()))) - 1);
-    };
-    if (selected_ != 0) {
-        from->setCurrentIndex(qMax(0, from->findData(selected_))); to->setCurrentIndex(qMax(0, to->findData(selected_)));
-    }
-    connect(from, &QComboBox::currentIndexChanged, &dialog, refresh);
-    connect(to, &QComboBox::currentIndexChanged, &dialog, refresh); refresh();
-    form->addRow("出力元ノード", from); form->addRow("出力ポート（0-indexed）", output);
-    form->addRow("入力先ノード", to); form->addRow("入力ポート（0-indexed）", input); layout->addLayout(form);
-    layout->addWidget(new QLabel("通常ノードは入力ごとに実行し、ANDは各入力から1件ずつ待ち合わせます。"));
-    auto *box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel); layout->addWidget(box);
-    box->button(QDialogButtonBox::Ok)->setEnabled(from->count() && to->count());
-    connect(box, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    connect(box, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    if (dialog.exec() != QDialog::Accepted) return;
-    QtNodes::ConnectionId edge{from->currentData().toUInt(), unsigned(output->value()), to->currentData().toUInt(), unsigned(input->value())};
-    if (!editGraph_->connectionPossible(edge)) { reportError("接続できません（重複した接続または不正なポート）"); return; }
-    editGraph_->addConnection(edge);
-}
 void Window::newFlow() {
     if (runner_->running()) return;
     Document doc; doc.flow = Flow::initial(); doc.flow.name = QString("フロー %1").arg(documents_.size() + 1); doc.path = uniquePath(dataDir_ + "/flows"); doc.dirty = true;
     documents_.push_back(doc); selectFlow(int(documents_.size()) - 1);
+}
+void Window::removeFlow(int index) {
+    if (runner_->running() || index < 0 || index >= int(documents_.size())) return;
+    auto &doc = documents_[size_t(index)];
+    const auto internalDir = QFileInfo(dataDir_ + "/flows").canonicalFilePath();
+    const bool internal = QFileInfo(doc.path).absoluteDir().canonicalPath().compare(internalDir, Qt::CaseInsensitive) == 0;
+    const auto warning = internal
+        ? "このフローはアプリ内部にのみ保存されています。フロー定義のデータも削除します。元に戻せません。\n一覧から削除しますか？"
+        : "一覧から削除しますか？外部のフロー定義ファイルは削除しません。";
+    if (QMessageBox::warning(this, "フローを一覧から削除", warning, QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
+    if (internal && QFileInfo::exists(doc.path) && !QFile::remove(doc.path)) { reportError("フロー定義を削除できません: " + doc.path); return; }
+    if (!internal && doc.dirty && QMessageBox::warning(this, "未保存の変更", "未保存の変更は失われます。外部ファイルは変更せず一覧から削除しますか？", QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
+    documents_.erase(documents_.begin() + index); current_ = -1;
+    if (documents_.empty()) newFlow(); else selectFlow(qMin(index, int(documents_.size()) - 1));
+    persist();
 }
 void Window::openFlow() {
     if (runner_->running()) return;
@@ -327,6 +324,15 @@ void Window::refreshProjects() {
     auto path = documents_[size_t(current_)].path;
     for (int i = 0; i < int(projects_.size()); ++i) if (projects_[size_t(i)].flowPath == path) {
         auto *item = new QListWidgetItem(projects_[size_t(i)].name, projectList_); item->setData(Qt::UserRole, i); item->setToolTip(projects_[size_t(i)].directory);
+        auto *row = new QWidget; auto *layout = new QHBoxLayout(row); layout->setContentsMargins(6, 2, 2, 2);
+        layout->addWidget(new QLabel(projects_[size_t(i)].name), 1);
+        auto *remove = new QToolButton; remove->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
+        remove->setObjectName("removeProject"); remove->setToolTip("一覧から削除（ディレクトリは削除しません）"); remove->setAccessibleName("プロジェクトを一覧から削除"); layout->addWidget(remove);
+        item->setText(""); item->setSizeHint(row->sizeHint()); projectList_->setItemWidget(item, row);
+        connect(remove, &QToolButton::clicked, this, [this, i] {
+            if (runner_->running()) return;
+            projects_.erase(projects_.begin() + i); project_ = -1; refreshProjects(); persist();
+        });
     }
     if (projectList_->count()) { projectList_->setCurrentRow(0); selectProject(projectList_->item(0)->data(Qt::UserRole).toInt()); }
     else { workGraph_->replace(editGraph_->flow); workSelected_ = 0; selectWorkNode(0); status_->setText("プロジェクトディレクトリを追加してください"); }
@@ -339,12 +345,21 @@ void Window::selectProject(int index) {
     workView_->centerScene(); status_->setText(p.directory); workSelected_ = 0; selectWorkNode(0);
 }
 void Window::selectWorkNode(Id id) {
-    workSelected_ = id; log_->clear(); output_->clear();
-    if (!workGraph_->nodeExists(id)) { nodeStatus_->setText("ノードを選択してください"); return; }
+    const bool same = workSelected_ == id;
+    const int scroll = log_->verticalScrollBar()->value();
+    const bool atBottom = log_->verticalScrollBar()->value() == log_->verticalScrollBar()->maximum();
+    workSelected_ = id;
+    auto updateLog = [this, same, scroll, atBottom](const QString &value) {
+        if (log_->toPlainText() != value) log_->setPlainText(value);
+        log_->verticalScrollBar()->setValue(!same || atBottom ? log_->verticalScrollBar()->maximum() : scroll);
+    };
+    output_->clear();
+    if (!workGraph_->nodeExists(id)) { updateLog({}); nodeStatus_->setText("ノードを選択してください"); return; }
     QString title = workGraph_->flow.nodes.at(id).title;
-    if (project_ < 0 || !projects_[size_t(project_)].results.contains(id)) { nodeStatus_->setText(title + " — 待機"); return; }
+    if (title.isEmpty()) title = kindName(workGraph_->flow.nodes.at(id).kind);
+    if (project_ < 0 || !projects_[size_t(project_)].results.contains(id)) { updateLog({}); nodeStatus_->setText(title + " — 待機"); return; }
     auto &r = projects_[size_t(project_)].results.at(id);
-    nodeStatus_->setText(title + " — " + stateName(r.state) + QString("（実行 %1 回）").arg(r.executions)); log_->setPlainText(r.log);
+    nodeStatus_->setText(title + " — " + stateName(r.state) + QString("（実行 %1 回）").arg(r.executions)); updateLog(r.log);
     if (r.state == State::Succeeded) output_->setPlainText(display(r.output));
 }
 void Window::addProject() {
@@ -373,11 +388,14 @@ void Window::settings() {
     };
     auto *codex = add("Codex", config_.codex), *claude = add("Claude Code", config_.claude), *opencode = add("OpenCode", config_.opencode);
     auto *timeout = new QSpinBox; timeout->setRange(1, 86400); timeout->setValue(config_.timeoutSeconds); form->addRow("タイムアウト（秒）", timeout); layout->addLayout(form);
+    auto *write = new QCheckBox("プロジェクトへの書き込みを許可（Codex / Claude Code）"); write->setChecked(config_.workspaceWrite); layout->addWidget(write);
+    auto *writeHint = new QLabel("明示的に選んだ場合のみ、Codexはworkspace-write、Claude CodeはacceptEditsを使います。\nClaude CodeのacceptEditsはOSサンドボックスではありません。CLIのdenyルールは維持されます。\nOpenCodeは既存の権限設定に従い、自動承認は追加しません。"); writeHint->setWordWrap(true); layout->addWidget(writeHint);
     auto *hint = new QLabel("認証は各CLIで事前に行ってください。権限の自動承認は付与しません。\nWindowsでは.cmdではなくネイティブ.exeを指定します。\nOpenCodeのJSON出力はスキーマ指示＋受信後検証です。"); hint->setWordWrap(true); layout->addWidget(hint);
     auto *box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel); layout->addWidget(box);
     connect(box, &QDialogButtonBox::accepted, &dialog, &QDialog::accept); connect(box, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     if (dialog.exec() == QDialog::Accepted) {
         config_ = {codex->text(), claude->text(), opencode->text(), timeout->value()};
+        config_.workspaceWrite = write->isChecked();
         persist(); if (!smoke_) { modelCatalog_->setConfig(config_); modelCatalog_->refreshAll(true); }
     }
 }
@@ -388,6 +406,7 @@ void Window::persist() {
     for (auto &d : documents_) paths.push_back(str(d.path));
     for (auto &p : projects_) projects.push_back({{"name", str(p.name)}, {"directory", str(p.directory)}, {"flow", str(p.flowPath)}});
     Json j = {{"flows", paths}, {"projects", projects}, {"codex", str(config_.codex)}, {"claude", str(config_.claude)}, {"opencode", str(config_.opencode)}, {"timeout", config_.timeoutSeconds}};
+    j["workspaceWrite"] = config_.workspaceWrite;
     QSaveFile file(dataDir_ + "/workspace.json"); auto bytes = QByteArray::fromStdString(j.dump(2));
     if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) reportError("ワークスペース設定を保存できません: " + file.errorString());
 }
@@ -397,6 +416,11 @@ void Window::restore() {
     try {
         auto j = Json::parse(file.readAll().toStdString());
         config_ = {qs(j.at("codex")), qs(j.at("claude")), qs(j.at("opencode")), qBound(1, j.value("timeout", 600), 86400)};
+        config_.workspaceWrite = j.value("workspaceWrite", false);
+#ifdef Q_OS_WIN
+        // Migrate only our old bare default, never a user-specified executable path.
+        if (config_.opencode == "opencode") config_.opencode = "opencode-cli";
+#endif
         for (auto &path : j.at("flows")) {
             try {
                 auto flow = Flow::load(qs(path));

@@ -15,6 +15,14 @@ int main(int argc, char **argv) {
     if (prompt.contains("SHORT_DELAY")) QThread::msleep(80);
     if (prompt.contains("CHECK_CWD") && !QFile::exists("marker.txt")) return 8;
     if (prompt.contains("EXPECT_OK") && !prompt.contains("EXPECT_OK=ok")) return 10;
+    if (prompt.contains("CHECK_EFFORT_HIGH")) {
+        if (args.contains("exec")) {
+            if (args.value(args.indexOf("-c") + 1) != "model_reasoning_effort=\"high\"" || args.value(args.indexOf("--sandbox") + 1) != "workspace-write") return 14;
+        } else if (args.contains("run")) {
+            if (args.value(args.indexOf("--model") + 1) != "provider/model#high" || args.contains("--auto")) return 15;
+        } else if (args.value(args.indexOf("--effort") + 1) != "high" || args.value(args.indexOf("--permission-mode") + 1) != "acceptEdits") return 16;
+    }
+    if (prompt.contains("CHECK_DEFAULT_EFFORT") && (args.contains("-c") || args.contains("--effort") || args.contains("provider/model#high") || args.contains("--sandbox") || args.contains("--permission-mode"))) return 17;
     QByteArray text = args.contains("--output-schema") || args.contains("--json-schema") || prompt.contains("JSON Schema") ? "{\"result\":\"ok\"}" : "hello";
     if (prompt.contains("BAD_SCHEMA")) text = "{\"result\":12}";
     if (prompt.contains("RESPONSE_TWO")) text = "two";

@@ -88,7 +88,7 @@ Json Flow::toJson() const {
         Json rules = Json::array();
         for (auto &r : n.rules) rules.push_back({{"variable", s(r.variable)}, {"value", s(r.value)}, {"equals", r.equals}});
         ns.push_back({{"id", id}, {"kind", s(kindKey(n.kind))}, {"title", s(n.title)},
-            {"x", n.position.x()}, {"y", n.position.y()}, {"agent", s(n.agent)}, {"model", s(n.model)},
+            {"x", n.position.x()}, {"y", n.position.y()}, {"agent", s(n.agent)}, {"model", s(n.model)}, {"effort", s(n.effort)},
             {"prompt", s(n.prompt)}, {"schema", s(n.schema)}, {"inputs", n.inputs}, {"rules", rules}});
     }
     for (auto &e : edges) es.push_back({{"from", e.from}, {"to", e.to}, {"output", e.output}, {"input", e.input}});
@@ -101,6 +101,7 @@ Flow Flow::fromJson(const Json &j) {
         Node n; n.id = v.at("id").get<Id>(); n.kind = parseKind(v.at("kind"));
         n.title = q(v.at("title")); n.position = {v.at("x").get<double>(), v.at("y").get<double>()};
         n.agent = q(v.value("agent", "Codex")); n.model = q(v.value("model", ""));
+        n.effort = q(v.value("effort", ""));
         n.prompt = q(v.value("prompt", "")); n.schema = q(v.value("schema", ""));
         n.inputs = v.value("inputs", 2u);
         if (n.inputs > 256) error("AND入力数は256以下にしてください");

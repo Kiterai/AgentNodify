@@ -3,7 +3,7 @@
 ## 現状と境界
 
 対象はsafe-shellが作る**外側のOSサンドボックス**です。各CLIのツール権限とは別です。
-`sandboxed=false`やCLIの権限自動承認・sandbox無効化は使いません。
+`sandboxed=false`やCLIの全権限自動承認・sandbox無効化は使いません。限定的な書き込みモードも明示的に選んだテストだけで使います。
 
 2026-10-26の確認では、実行ユーザーは`srt-sandbox`、HOME / USERPROFILEはUser1、
 APPDATA / LOCALAPPDATAはsrt-sandboxでした。PATHからのCLI検出も失敗しました。
@@ -13,6 +13,7 @@ Codex / Claudeの絶対パスによる`--version`は成功しましたが、両�
 `scripts/live-test.ps1`はCLIを絶対パスで起動し、HOME・AppData・XDG・CLI設定を
 `build/live-profile/`に統一します。終了時には呼び出し元の環境変数を戻します。
 `TEMP` / `TMP`は上書きせず、サンドボックスが用意する既定の一時領域を使います。
+実行テストのプロジェクトは`build/file-check-<UUID>/`に通常のディレクトリ作成APIで作り、ファイル確認用に残します。
 専用プロファイル配下では通常のディレクトリ作成は成功するものの、Qtの`QTemporaryDir`は
 アクセス拒否となったためです。作業ディレクトリ配下への追加権限は不要でした。
 通常ユーザーの認証ファイルのコピー、全ホームへの書き込み許可、外側への自動再試行は行いません。
@@ -79,8 +80,14 @@ APIキーを使う場合は各CLIが対応する環境変数を安全な方法�
 ./scripts/live-test.ps1 -Agent OpenCode -Case loop -Run
 ```
 
-`-Case`は`text` / `json` / `loop` / `and`。モデルは仕様で許可されたLuna / Haikuに固定しています。
+`-Case`は`text` / `json` / `loop` / `and` / `file`。モデルは仕様で許可されたLuna / Haikuに固定しています。
 Qtが異なる場合は`-QtPath`を指定します。CTestには登録しません。
+
+実ファイル作成の確認は`-Run -Case file`です。Codex / Claude Codeに書き込み権限を明示的に与える検証だけ、
+`-WorkspaceWrite`を追加します（Codex: workspace-write、Claude Code: acceptEdits。全権限バイパスではありません）。
+このオプションを外すと既存CLI設定に従います。OpenCodeの自動承認オプションは追加しません。
+2026-10-26の追加確認ではOpenCodeとacceptEditsのClaude Codeは実ファイル作成に成功し、
+Codexはworkspace-writeでも環境ポリシーに拒否されて未作成でした。詳細は`test-results.md`を参照してください。
 
 モデル一覧の取得確認（推論リクエストなし）は`-Models`で行えます。`-Run` / `-Login`とは併用しません。
 
@@ -132,7 +139,7 @@ CodexはWindows既定TLSで`workspace routing discovery failed`となりまし�
 | OpenCode実モデル and | 最新の再確認で成功。並列ノード各2回、ANDの新しい全入力の待ち合わせ2回を確認 |
 | Claude Code実モデル text / json / loop / and | 全4ケース成功（`claude-haiku-5-5`、Proログイン後） |
 | CTest core / gui_smoke | 成功 |
-| CTest gui | GUI改修後の再ビルド・テスト修正を行い成功（QtTest 9 passed / 0 failed） |
+| CTest gui | GUI改修後の再ビルド・テスト修正を行い成功（QtTest 11 passed / 0 failed） |
 | モデル一覧：Codex | 成功（7件、app-serverの`model/list`） |
 | モデル一覧：Claude Code | 成功（13件、制御プロトコル初期化応答の`models`） |
 | モデル一覧：OpenCode | 成功（25件、`models --standalone`） |

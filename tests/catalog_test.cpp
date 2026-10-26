@@ -33,6 +33,8 @@ void CatalogTest::protocols() {
     if (agent == "Codex") { QCOMPARE(entry.models[0].id, QString("code-alpha")); QCOMPARE(entry.models[1].id, QString("code-luna")); }
     else if (agent == "Claude Code") { QCOMPARE(entry.models[1].id, QString("haiku")); QVERIFY(entry.models[1].description.contains("claude-haiku-5-5")); }
     else QCOMPARE(entry.models[1].id, QString("openai/code-luna"));
+    if (agent == "Codex") QCOMPARE(entry.models[0].efforts, (QStringList{"medium", "high"}));
+    if (agent == "Claude Code") QCOMPARE(entry.models[1].efforts, (QStringList{"low", "medium"}));
 }
 void CatalogTest::failures_data() {
     QTest::addColumn<QString>("agent"); QTest::addColumn<QByteArray>("mode");
@@ -82,9 +84,11 @@ void CatalogTest::manualValuePreserved() {
     auto *form = graph.form(id); auto *combo = form->findChild<QComboBox *>("nodeModel"); QVERIFY(combo);
     QSignalSpy edited(&graph, &Graph::edited);
     QTRY_VERIFY(catalog.entry("Codex").state == CatalogState::Ready);
-    QCOMPARE(combo->currentText(), QString("custom-id")); QCOMPARE(graph.flow.nodes.at(id).model, QString("custom-id")); QCOMPARE(edited.count(), 0);
+    QCOMPARE(combo->currentData().toString(), QString("custom-id")); QCOMPARE(graph.flow.nodes.at(id).model, QString("custom-id")); QCOMPARE(edited.count(), 0);
     const auto alpha = combo->findData("code-alpha"); QVERIFY(alpha >= 0); combo->setCurrentIndex(alpha);
-    QCOMPARE(graph.flow.nodes.at(id).model, QString("code-alpha")); QCOMPARE(combo->currentText(), QString("code-alpha"));
+    QCOMPARE(graph.flow.nodes.at(id).model, QString("code-alpha")); QCOMPARE(combo->currentText(), combo->itemText(alpha)); QVERIFY(!combo->currentText().contains(" · "));
+    auto *effort = form->findChild<QComboBox *>("nodeEffort"); QVERIFY(effort);
+    QCOMPARE(effort->count(), 3); QVERIFY(effort->findData("low") < 0); QVERIFY(effort->findData("high") >= 0);
     combo->setEditText("new-manual-id"); QCOMPARE(graph.flow.nodes.at(id).model, QString("new-manual-id"));
     auto *agent = form->findChild<QComboBox *>("nodeAgent"); agent->setCurrentText("Claude Code");
     QTRY_VERIFY(catalog.entry("Claude Code").state == CatalogState::Ready);

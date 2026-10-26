@@ -16,6 +16,9 @@
 #include <QToolButton>
 #include <QTextBlock>
 #include <QTextLayout>
+#include <QMenu>
+#include <QMessageBox>
+#include <QUuid>
 #include <QStyledItemDelegate>
 #include <QtNodes/NodeStyle>
 #include <QtNodes/internal/NodeGraphicsObject.hpp>
@@ -69,7 +72,14 @@ void GuiTest::embeddedParameters() {
     QTRY_VERIFY2(preview->verticalScrollBar()->maximum() == 0,
         qPrintable(QString("height=%1 viewport=%2 frame=%3 font=%4 margin=%5 block=%6").arg(preview->height())
             .arg(preview->viewport()->height()).arg(preview->frameWidth()).arg(preview->fontMetrics().height())
-            .arg(preview->document()->documentMargin()).arg(preview->document()->firstBlock().layout()->boundingRect().height())));
+             .arg(preview->document()->documentMargin()).arg(preview->document()->firstBlock().layout()->boundingRect().height())));
+    for (int lines = 2; lines <= 8; ++lines) {
+        node.prompt = QString("line\n").repeated(lines - 1) + "last";
+        graph.updateNode(node); QCoreApplication::processEvents();
+        QCOMPARE(preview->visibleLines(), lines);
+        QVERIFY(!preview->verticalScrollBar()->isVisible());
+        QCOMPARE(preview->verticalScrollBar()->maximum(), 0);
+    }
 }
 void GuiTest::branchAndInputForms() {
     Graph graph; BasicGraphicsScene scene(graph); graph.replace(Flow::initial());
@@ -145,7 +155,11 @@ void GuiTest::editorAndFlowRail() {
     QVERIFY(window.grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-editor.png")));
     QTest::mouseClick(form->findChild<QLineEdit *>("nodeTitle"), Qt::LeftButton);
     QTRY_VERIFY(!editorPane->isVisible());
-    QTest::mouseClick(add, Qt::LeftButton);
+    QVERIFY(add->menu()); QCOMPARE(add->menu()->actions().size(), 2);
+    QCOMPARE(add->menu()->actions()[0]->text(), QString("新規フロー"));
+    QCOMPARE(add->menu()->actions()[1]->text(), QString("既存フローの追加"));
+    QCOMPARE(tiles[0]->contextMenuPolicy(), Qt::CustomContextMenu);
+    add->menu()->actions()[0]->trigger();
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     QCOMPARE(rail->findChildren<QToolButton *>("flowTile").size(), 2);
     QVERIFY(!editorPane->isVisible());
@@ -165,7 +179,7 @@ void GuiTest::comboPopupColors() {
     QComboBox connection; connection.addItems({"始端", "エージェント", "終端"}); styleComboBoxPopup(&connection);
     QList<QComboBox *> combos = agentForm.findChildren<QComboBox *>();
     combos.append(branchForm.findChildren<QComboBox *>()); combos.append(&connection);
-    QCOMPARE(combos.size(), 4);
+    QCOMPARE(combos.size(), 5);
     for (auto *combo : combos) {
         auto *view = combo->view(); view->ensurePolished();
         QVERIFY(qobject_cast<QStyledItemDelegate *>(view->itemDelegate()));
@@ -181,6 +195,49 @@ void GuiTest::comboPopupColors() {
     QTest::mouseClick(connection.view()->viewport(), Qt::LeftButton, Qt::NoModifier, connection.view()->visualRect(second).center());
     QCOMPARE(connection.currentIndex(), 1);
     connection.hidePopup();
+}
+void GuiTest::workSelection() {
+    Window window(true); window.show();
+    auto id = window.editGraph_->addNode("agent");
+    auto node = window.editGraph_->flow.nodes.at(id); node.title = "Work node"; node.effort = "medium";
+    node.prompt = "line one\nline two"; window.editGraph_->updateNode(node);
+    window.tabs_->setCurrentIndex(1); QCoreApplication::processEvents();
+    auto *form = window.workGraph_->form(id); QVERIFY(form);
+    QCOMPARE(form->node().prompt, node.prompt); QCOMPARE(form->node().effort, node.effort);
+    auto *item = window.workScene_->nodeGraphicsObject(id); QVERIFY(item);
+    QVERIFY(item->flags().testFlag(QGraphicsItem::ItemIsSelectable));
+    QVERIFY(!item->flags().testFlag(QGraphicsItem::ItemIsMovable));
+    window.workView_->centerScene(); QCoreApplication::processEvents();
+    const auto point = window.workView_->mapFromScene(item->mapToScene(QPointF(item->boundingRect().width() / 2, 12)));
+    QTest::mouseClick(window.workView_->viewport(), Qt::LeftButton, Qt::NoModifier, point);
+    QTRY_VERIFY(window.nodeStatus_->text().contains("Work node"));
+    window.selectWorkNode(0);
+    QTest::mouseClick(form->findChild<QLineEdit *>("nodeTitle"), Qt::LeftButton);
+    QTRY_VERIFY(window.nodeStatus_->text().contains("Work node"));
+    QTest::keyClicks(form->findChild<QLineEdit *>("nodeTitle"), "MUTATION");
+    QCOMPARE(form->node().title, node.title); QCOMPARE(window.workGraph_->flow.nodes.at(id).title, node.title);
+    window.projects_.push_back({"test", ".", window.documents_[0].path, {}}); window.project_ = 0;
+    auto &result = window.projects_[0].results[id]; result.state = State::Running; result.executions = 1; result.log = "progress 日本語";
+    window.selectWorkNode(id); QCOMPARE(window.log_->toPlainText(), result.log); QVERIFY(window.nodeStatus_->text().contains("実行中"));
+    result.state = State::Succeeded; result.output = "created file"; window.selectWorkNode(id);
+    QVERIFY(window.output_->toPlainText().contains("created file"));
+    auto *effort = window.editGraph_->form(id)->findChild<QComboBox *>("nodeEffort");
+    effort->setCurrentIndex(effort->findData("high"));
+    QCOMPARE(window.editGraph_->flow.nodes.at(id).effort, QString("high"));
+    QCOMPARE(Flow::fromJson(window.editGraph_->flow.toJson()).nodes.at(id).effort, QString("high"));
+}
+void GuiTest::flowRemoval() {
+    Window window(true);
+    const auto root = QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("removal-" + QUuid::createUuid().toString(QUuid::WithoutBraces));
+    QVERIFY(QDir().mkpath(root + "/flows")); window.dataDir_ = root;
+    window.documents_.clear(); window.current_ = -1; window.newFlow();
+    const auto internal = window.documents_[0].path; window.documents_[0].flow.save(internal);
+    auto confirm = [&] { QTimer::singleShot(0, &window, [] { if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) box->button(QMessageBox::Yes)->click(); }); };
+    confirm(); window.removeFlow(0); QVERIFY(!QFileInfo::exists(internal));
+    const auto external = root + "/external.json"; Flow::initial().save(external);
+    window.documents_.push_back({Flow::initial(), external, false});
+    confirm(); window.removeFlow(1); QVERIFY(QFileInfo::exists(external));
+    QVERIFY(QFile::remove(external)); QVERIFY(QDir(root).rmdir("flows")); QVERIFY(QDir().rmdir(root));
 }
 }
 QTEST_MAIN(an::GuiTest)

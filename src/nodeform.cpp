@@ -63,20 +63,22 @@ void TextPreview::resizeEvent(QResizeEvent *event) {
 void TextPreview::resizeToText() {
     const auto width = qMax(30, viewport()->width() - int(document()->documentMargin() * 2));
     int lines = 0;
-    for (auto block = document()->begin(); block.isValid() && lines < 8; block = block.next()) {
+    for (auto block = document()->begin(); block.isValid() && lines <= 8; block = block.next()) {
         QTextLayout layout(block.text(), font());
         QTextOption option; option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere); layout.setTextOption(option);
         layout.beginLayout(); int blockLines = 0;
-        while (blockLines + lines < 8) {
+        while (blockLines + lines <= 8) {
             auto line = layout.createLine(); if (!line.isValid()) break;
             line.setLineWidth(width); ++blockLines;
         }
         layout.endLayout(); lines += qMax(1, blockLines);
     }
     lines_ = qBound(1, lines, 8);
+    setVerticalScrollBarPolicy(lines <= 8 ? Qt::ScrollBarAlwaysOff : Qt::ScrollBarAsNeeded);
     // QPlainTextEdit needs a small bottom allowance in addition to its document
     // margins; an exact line-height fit otherwise enables a spurious scrollbar.
-    const int height = lines_ * qMax(fontMetrics().height(), fontMetrics().lineSpacing()) + int(std::ceil(document()->documentMargin() * 2)) + 2 * frameWidth() + 2;
+    const int chrome = height() - viewport()->height();
+    const int height = lines_ * qMax(fontMetrics().height(), fontMetrics().lineSpacing()) + int(std::ceil(document()->documentMargin() * 2)) + qMax(2 * frameWidth(), chrome) + 4;
     if (minimumHeight() != height || maximumHeight() != height) { setFixedHeight(height); emit heightChanged(); }
 }
 
@@ -109,6 +111,12 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
         modelLayout->addWidget(refreshModels_);
         modelStatus_ = new QLabel; modelStatus_->setObjectName("modelCatalogStatus");
         form->addRow("エージェント", agent_); form->addRow("モデル", modelRow); form->addRow("", modelStatus_);
+        effort_ = new QComboBox; effort_->setObjectName("nodeEffort"); styleComboBoxPopup(effort_);
+        effort_->addItem("既定（指定なし）", "");
+        populateEfforts();
+        effort_->setToolTip("モデルが対応する思考量を選んでください。未指定ならCLI・モデルの既定値を使います。OpenCodeではモデルの指定が必要です。");
+        form->addRow("思考量", effort_);
+        connect(effort_, &QComboBox::currentIndexChanged, this, [this] { if (!updating_) { node_.effort = effort_->currentData().toString(); publish(); } });
         populateModels();
         combo->beforePopup = [this] { if (catalog_) catalog_->request(node_.agent); };
         connect(refreshModels_, &QPushButton::clicked, this, [this] { if (catalog_) catalog_->request(node_.agent, true); });
@@ -118,7 +126,7 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
         }
         connect(agent_, &QComboBox::currentTextChanged, this, [this](const QString &agent) {
             if (updating_) return;
-            node_.agent = agent; node_.model.clear(); populateModels(); publish();
+            node_.agent = agent; node_.model.clear(); node_.effort.clear(); effort_->setCurrentIndex(0); populateModels(); publish();
             if (catalog_) catalog_->request(agent);
         });
         connect(model_, &QComboBox::currentTextChanged, this, [this](const QString &text) {
@@ -126,7 +134,7 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
             auto id = text;
             if (model_->currentIndex() >= 0 && text == model_->itemText(model_->currentIndex())) id = model_->currentData().toString();
             node_.model = id;
-            if (text != id) { QSignalBlocker block(model_); model_->setEditText(id); }
+            populateEfforts();
             publish();
         });
         auto addPreview = [this, layout](const QString &label, const QString &field, const QString &text) {
@@ -158,7 +166,18 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
 }
 bool NodeForm::eventFilter(QObject *object, QEvent *event) {
     if (event->type() == QEvent::FocusIn || event->type() == QEvent::MouseButtonPress) emit activated();
+    const bool preview = qobject_cast<TextPreview *>(object) || (prompt_ && object == prompt_->viewport()) || (schema_ && object == schema_->viewport());
+    if (readOnly_ && !preview &&
+        (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease ||
+         event->type() == QEvent::KeyPress || event->type() == QEvent::Wheel || event->type() == QEvent::InputMethod)) return true;
     return QWidget::eventFilter(object, event);
+}
+void NodeForm::setReadOnly(bool readOnly) {
+    readOnly_ = readOnly;
+    for (auto *widget : findChildren<QWidget *>()) {
+        widget->installEventFilter(this);
+        if (auto *edit = qobject_cast<QLineEdit *>(widget)) edit->setReadOnly(readOnly);
+    }
 }
 void NodeForm::populateModels() {
     if (!model_) return;
@@ -167,13 +186,13 @@ void NodeForm::populateModels() {
     QSignalBlocker block(model_); model_->clear(); model_->addItem("CLI既定", "");
     const auto entry = catalog_ ? catalog_->entry(node_.agent) : CatalogEntry{};
     for (auto &info : entry.models) {
-        const auto label = info.name == info.id ? info.id : info.name + " · " + info.id;
+        const auto label = info.name;
         model_->addItem(label, info.id);
-        model_->setItemData(model_->count() - 1, info.description, Qt::ToolTipRole);
+        model_->setItemData(model_->count() - 1, info.id + "\n" + info.description, Qt::ToolTipRole);
     }
     auto selected = model_->findData(node_.model);
     if (selected < 0) { model_->addItem(node_.model + "（現在の設定）", node_.model); selected = model_->count() - 1; }
-    model_->setCurrentIndex(selected); model_->setEditText(node_.model);
+    model_->setCurrentIndex(selected);
     if (focused) model_->lineEdit()->setCursorPosition(cursor);
     QString status = catalog_ ? "未取得" : "手入力";
     QString tooltip = "モデルIDは手入力できます。空欄はCLIの既定モデルです。";
@@ -185,7 +204,20 @@ void NodeForm::populateModels() {
     }
     modelStatus_->setText(status); modelStatus_->setToolTip(tooltip); model_->setToolTip(tooltip);
     refreshModels_->setEnabled(catalog_ && entry.state != CatalogState::Loading);
-    refreshModels_->setToolTip("モデル一覧を再取得\n" + tooltip); scheduleResize();
+    refreshModels_->setToolTip("モデル一覧を再取得\n" + tooltip); populateEfforts(); scheduleResize();
+}
+void NodeForm::populateEfforts() {
+    if (!effort_) return;
+    QSignalBlocker blocker(effort_); effort_->clear(); effort_->addItem("既定（指定なし）", "");
+    QStringList levels = node_.agent == "Claude Code" ? QStringList{"low", "medium", "high", "xhigh", "max"} : QStringList{"low", "medium", "high", "xhigh"};
+    if (catalog_) for (const auto &info : catalog_->entry(node_.agent).models)
+        if (info.id == node_.model && !info.efforts.isEmpty()) { levels = info.efforts; break; }
+    for (const auto &value : levels) {
+        QString label = value; if (!label.isEmpty()) label[0] = label[0].toUpper();
+        effort_->addItem(label, value);
+    }
+    if (effort_->findData(node_.effort) < 0) effort_->addItem(node_.effort + "（現在の設定）", node_.effort);
+    effort_->setCurrentIndex(effort_->findData(node_.effort));
 }
 void NodeForm::publish() { if (!updating_) { emit edited(); scheduleResize(); } }
 void NodeForm::setNode(const Node &node) {
@@ -201,6 +233,10 @@ void NodeForm::setNode(const Node &node) {
     if (prompt_ && prompt_->toPlainText() != node.prompt) prompt_->setPlainText(node.prompt);
     if (schema_ && schema_->toPlainText() != node.schema) schema_->setPlainText(node.schema);
     if (inputs_) inputs_->setValue(int(node.inputs));
+    if (effort_) {
+        if (effort_->findData(node.effort) < 0) effort_->addItem(node.effort, node.effort);
+        effort_->setCurrentIndex(effort_->findData(node.effort));
+    }
     if (rules_ && rulesChanged) rebuildRules();
     updating_ = false; scheduleResize();
 }
@@ -211,15 +247,16 @@ void NodeForm::rebuildRules() {
     }
     for (size_t i = 0; i < node_.rules.size(); ++i) {
         auto *card = new QWidget; auto *layout = new QVBoxLayout(card); layout->setContentsMargins(0, 0, 0, 0); layout->setSpacing(4);
-        auto *heading = new QHBoxLayout; heading->addWidget(new QLabel(i == 0 ? "if" : "else if"), 1);
+        auto *heading = new QHBoxLayout; heading->addWidget(new QLabel(QString("条件%1").arg(i + 1)), 1);
         auto *remove = new QPushButton("×"); remove->setObjectName("removeRule"); remove->setFixedWidth(28); remove->setToolTip("この条件を削除"); heading->addWidget(remove); layout->addLayout(heading);
-        auto *variable = new QLineEdit(node_.rules[i].variable); variable->setObjectName("ruleVariable"); variable->setPlaceholderText("前段の変数名"); layout->addWidget(variable);
+        auto *variable = new QLineEdit(node_.rules[i].variable); variable->setObjectName("ruleVariable"); variable->setPlaceholderText("前段の変数名");
+        auto *subject = new QHBoxLayout; subject->addWidget(new QLabel("もしも")); subject->addWidget(variable, 1); subject->addWidget(new QLabel("が")); layout->addLayout(subject);
         auto *comparison = new QHBoxLayout;
         auto *op = new QComboBox; op->setObjectName("ruleOperator"); op->addItems({"等しい", "異なる"}); op->setCurrentIndex(node_.rules[i].equals ? 0 : 1);
         styleComboBoxPopup(op);
         auto *value = new QLineEdit(node_.rules[i].value); value->setObjectName("ruleValue"); value->setPlaceholderText("比較する値");
         variable->installEventFilter(this); value->installEventFilter(this); op->installEventFilter(this);
-        comparison->addWidget(op); comparison->addWidget(value, 1); layout->addLayout(comparison); rulesLayout_->addWidget(card);
+        comparison->addWidget(value, 1); comparison->addWidget(new QLabel("と")); comparison->addWidget(op); comparison->addWidget(new QLabel("ならば")); layout->addLayout(comparison); rulesLayout_->addWidget(card);
         connect(variable, &QLineEdit::textEdited, card, [this, i](const QString &text) { if (i < node_.rules.size()) { node_.rules[i].variable = text; publish(); } });
         connect(value, &QLineEdit::textEdited, card, [this, i](const QString &text) { if (i < node_.rules.size()) { node_.rules[i].value = text; publish(); } });
         connect(op, &QComboBox::currentIndexChanged, card, [this, i](int index) { if (i < node_.rules.size()) { node_.rules[i].equals = index == 0; publish(); } });
@@ -228,7 +265,7 @@ void NodeForm::rebuildRules() {
             node_.rules.erase(node_.rules.begin() + i); rebuildRules(); publish();
         });
     }
-    rulesLayout_->addWidget(new QLabel("else")); scheduleResize();
+    rulesLayout_->addWidget(new QLabel("それ以外")); scheduleResize();
 }
 void NodeForm::scheduleResize() {
     if (resizeScheduled_) return; resizeScheduled_ = true;

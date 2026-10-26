@@ -27,7 +27,7 @@ int main(int argc, char **argv) {
             else if (value.value("method", "") == "model/list") {
                 Json models = Json::array(); const bool next = value.at("params").contains("cursor");
                 if (mode != "empty") {
-                    models.push_back({{"id", "code-alpha"}, {"model", "code-alpha"}, {"displayName", "Code Alpha"}, {"description", "fixture"}});
+                    models.push_back({{"id", "code-alpha"}, {"model", "code-alpha"}, {"displayName", "Code Alpha"}, {"description", "fixture"}, {"supportedReasoningEfforts", Json::array({{{"reasoningEffort", "medium"}}, {{"reasoningEffort", "high"}}})}});
                     if (!next) models.push_back({{"model", "hidden"}, {"hidden", true}});
                     else models.push_back({{"model", "code-luna"}, {"displayName", "Code Luna"}});
                 }
@@ -37,7 +37,7 @@ int main(int argc, char **argv) {
         } else if (value.value("type", "") == "control_request") {
             Json models = mode == "empty" ? Json::array() : Json::array({
                 {{"value", "alpha"}, {"displayName", "Alpha"}},
-                {{"value", "haiku"}, {"displayName", "Haiku"}, {"resolvedModel", "claude-haiku-5-5"}}
+                {{"value", "haiku"}, {"displayName", "Haiku"}, {"resolvedModel", "claude-haiku-5-5"}, {"supportedEffortLevels", Json::array({"low", "medium"})}}
             });
             send({{"type", "control_response"}, {"response", {{"subtype", "success"}, {"request_id", value.at("request_id")}, {"response", {{"models", models}}}}}});
         }

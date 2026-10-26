@@ -51,6 +51,18 @@ using namespace an;
         auto j = f.toJson(); j["nodes"].push_back(j["nodes"][0]);
         QVERIFY_EXCEPTION_THROWN(Flow::fromJson(j), std::exception);
     }
+    void CoreTest::effortArguments() {
+        QTemporaryDir dir;
+        for (const QString agent : {"Codex", "Claude Code", "OpenCode"}) for (bool explicitEffort : {false, true}) {
+            auto flow = simple(agent); flow.nodes[3].model = "provider/model";
+            flow.nodes[3].effort = explicitEffort ? "high" : "";
+            flow.nodes[3].prompt = explicitEffort ? "CHECK_EFFORT_HIGH" : "CHECK_DEFAULT_EFFORT";
+            auto settings = config(); settings.workspaceWrite = explicitEffort;
+            Runner runner; QSignalSpy done(&runner, &Runner::finished);
+            QVERIFY(runner.start(flow, dir.path(), settings)); QTRY_COMPARE(done.count(), 1);
+            QVERIFY2(done[0][0].toBool(), qPrintable(runner.results().at(3).log));
+        }
+    }
     void CoreTest::invalidFlows() {
         auto f = simple(); QVERIFY(f.validate().isEmpty());
         f.edges.push_back({3, 3}); QVERIFY(f.validate().isEmpty());

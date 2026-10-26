@@ -28,4 +28,5 @@ private slots:
     void loopValidation();
     void failuresAndCancellation();
     void rejectBeforeExecution();
+    void effortArguments();
 };

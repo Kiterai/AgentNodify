@@ -19,6 +19,8 @@ public:
 protected:
     void closeEvent(QCloseEvent *event) override;
 private:
+    friend class GuiTest;
+    void removeFlow(int index);
     struct Document { Flow flow; QString path; bool dirty = false; };
     struct Project { QString name, directory, flowPath; std::map<Id, Result> results; };
     std::vector<Document> documents_;
@@ -58,7 +60,6 @@ private:
     void addProject();
     void executeFlow();
     void settings();
-    void connectNodes();
     void persist();
     void restore();
     void changed();

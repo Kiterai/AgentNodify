@@ -104,7 +104,14 @@ void ModelCatalog::addModels(Job &job, const Json &models, const QString &agent)
         auto name = text(model, "displayName"); if (name.isEmpty()) name = id;
         auto description = text(model, "description");
         auto resolved = text(model, "resolvedModel"); if (!resolved.isEmpty()) description += "\n" + resolved;
-        job.models.push_back({id, name.left(2000), description.left(4000)});
+        ModelInfo info{id, name.left(2000), description.left(4000)};
+        const auto key = agent == "Codex" ? "supportedReasoningEfforts" : "supportedEffortLevels";
+        if (model.contains(key) && model.at(key).is_array()) for (const auto &effort : model.at(key)) {
+            auto level = effort.is_string() ? QString::fromStdString(effort.get<std::string>()) : effort.is_object() ? text(effort, "reasoningEffort") : QString();
+            if (level.isEmpty() && effort.is_object()) level = text(effort, "effort");
+            if (!level.isEmpty() && level.size() <= 100 && !info.efforts.contains(level)) info.efforts.append(level);
+        }
+        job.models.push_back(std::move(info));
         if (job.models.size() > 10000) throw std::runtime_error("モデル一覧が10000件を超えました。");
     }
 }

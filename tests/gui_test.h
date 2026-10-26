@@ -13,5 +13,7 @@ private slots:
     void editorAndFlowRail();
     void widgetLifetime();
     void comboPopupColors();
+    void workSelection();
+    void flowRemoval();
 };
 }

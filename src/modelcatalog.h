@@ -7,6 +7,7 @@
 namespace an {
 struct ModelInfo {
     QString id, name, description;
+    QStringList efforts;
     bool operator==(const ModelInfo &) const = default;
 };
 enum class CatalogState { Idle, Loading, Ready, Error };

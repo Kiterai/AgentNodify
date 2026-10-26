@@ -157,7 +157,7 @@ void Runner::pump() {
     }
     for (auto &[id, r] : results_) if (r.executions == 0) { r.state = State::Skipped; emit changed(id); }
     active_ = false;
-    emit finished(true, "フローの実行が完了しました");
+    emit finished(true, "フローの実行が完了しました（タスクの達成・ファイル作成結果は各ノードの出力を確認してください）");
 }
 void Runner::launch(Id id, const Json &input) {
     const auto &n = flow_.nodes.at(id);
@@ -170,21 +170,26 @@ void Runner::launch(Id id, const Json &input) {
         program = config_.codex;
         j->finalPath = j->temp->filePath("response.txt");
         args << "exec" << "--json" << "--skip-git-repo-check" << "--output-last-message" << j->finalPath;
+        if (config_.workspaceWrite) args << "--sandbox" << "workspace-write";
         if (!n.schema.trimmed().isEmpty()) {
             auto path = j->temp->filePath("schema.json"); QFile file(path);
             if (!file.open(QIODevice::WriteOnly) || file.write(n.schema.toUtf8()) < 0) throw std::runtime_error("スキーマファイルを書き込めません");
             args << "--output-schema" << path;
         }
         if (!n.model.isEmpty()) args << "--model" << n.model;
+        if (!n.effort.isEmpty()) args << "-c" << ("model_reasoning_effort=" + QString::fromStdString(Json(n.effort.toStdString()).dump()));
         args << "-";
     } else if (n.agent == "Claude Code") {
         program = config_.claude; args << "-p" << "--verbose" << "--output-format" << "stream-json";
+        if (config_.workspaceWrite) args << "--permission-mode" << "acceptEdits";
+        if (!n.effort.isEmpty()) args << "--effort" << n.effort;
         if (!n.model.isEmpty()) args << "--model" << n.model;
         if (!n.schema.trimmed().isEmpty()) args << "--json-schema" << n.schema;
     } else {
         program = config_.opencode; args << "run" << "--format" << "json";
         if (config_.opencodeStandalone) args << "--standalone";
-        if (!n.model.isEmpty()) args << "--model" << n.model;
+        if (!n.effort.isEmpty() && n.model.isEmpty()) throw std::runtime_error("OpenCodeの思考量を指定する場合はモデルを選択してください");
+        if (!n.model.isEmpty()) args << "--model" << (n.effort.isEmpty() ? n.model : n.model.section('#', 0, 0) + "#" + n.effort);
         // OpenCode CLI has no documented native output-schema flag.
         if (!n.schema.trimmed().isEmpty()) prompt += "\nReturn only JSON (no Markdown) matching this JSON Schema:\n" + n.schema;
         args << "--" << prompt;
@@ -194,7 +199,7 @@ void Runner::launch(Id id, const Json &input) {
     // Do not invoke cmd.exe or interpolate prompts into a shell command.
     if (resolved.endsWith(".cmd", Qt::CaseInsensitive) || resolved.endsWith(".bat", Qt::CaseInsensitive))
         throw std::runtime_error(".cmd/.batは非対応です。CLIのネイティブ.exeを指定してください");
-    appendLog(id, ("CLI: " + resolved + "\n").toUtf8());
+    appendLog(id, ("CLI: " + resolved + "\n作業ディレクトリ: " + directory_ + "\n権限で拒否された操作は実行されません。各CLIの権限設定を確認してください。\n").toUtf8());
     if (!active_) return;
     auto *process = new QProcess(this); j->process = process;
     auto *timer = new QTimer(this); j->timer = timer; timer->setSingleShot(true);
@@ -204,10 +209,12 @@ void Runner::launch(Id id, const Json &input) {
         auto bytes = jobs_[id]->process->readAllStandardOutput();
         auto &data = jobs_[id]->stdoutData;
         if (data.size() + bytes.size() > 32 * 1024 * 1024) { fail(id, "CLI出力が32MiBを超えました"); return; }
-        data += bytes; appendLog(id, bytes);
+        data += bytes; appendLog(id, QString(jobs_[id]->stdoutDecoder.decode(bytes)).toUtf8());
     });
     connect(process, &QProcess::readyReadStandardError, this, [this, id] {
-        if (jobs_.contains(id)) appendLog(id, jobs_[id]->process->readAllStandardError());
+        if (jobs_.contains(id)) {
+            auto &job = *jobs_[id]; appendLog(id, QString(job.stderrDecoder.decode(job.process->readAllStandardError())).toUtf8());
+        }
     });
     connect(process, &QProcess::errorOccurred, this, [this, id](QProcess::ProcessError e) {
         if (e == QProcess::FailedToStart && jobs_.contains(id)) fail(id, jobs_[id]->process->errorString());
@@ -223,8 +230,13 @@ void Runner::launch(Id id, const Json &input) {
 void Runner::processFinished(Id id, int code, QProcess::ExitStatus status) {
     if (!active_ || !jobs_.contains(id)) return;
     auto &j = *jobs_.at(id);
-    j.timer->stop(); j.stdoutData += j.process->readAllStandardOutput();
-    appendLog(id, j.process->readAllStandardError());
+    j.timer->stop();
+    const auto remaining = j.process->readAllStandardOutput();
+    if (j.stdoutData.size() + remaining.size() > 32 * 1024 * 1024) { fail(id, "CLI出力が32MiBを超えました"); return; }
+    j.stdoutData += remaining; appendLog(id, QString(j.stdoutDecoder.decode(remaining)).toUtf8());
+    if (!active_ || !jobs_.contains(id)) return;
+    appendLog(id, QString(j.stderrDecoder.decode(j.process->readAllStandardError())).toUtf8());
+    if (!active_ || !jobs_.contains(id)) return;
     if (code != 0 || status != QProcess::NormalExit) { fail(id, QString("CLIが異常終了しました (exit %1)").arg(code)); return; }
     try {
         auto &n = flow_.nodes.at(id); Json output;

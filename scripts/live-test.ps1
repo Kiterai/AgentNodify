@@ -1,14 +1,15 @@
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('Codex', 'Claude Code', 'OpenCode')][string]$Agent,
-    [ValidateSet('text', 'json', 'loop', 'and')][string]$Case = 'text',
+    [ValidateSet('text', 'json', 'loop', 'and', 'file')][string]$Case = 'text',
     [string]$Program,
     [string]$QtPath = 'C:/Qt/6.12.0/msvc2022_64',
     [string]$CodexCaCertificate,
     [ValidateSet('Debug', 'Release')][string]$Configuration = 'Release',
     [switch]$Run,
     [switch]$Login,
-    [switch]$Models
+    [switch]$Models,
+    [switch]$WorkspaceWrite
 )
 # No host-execution fallback. Without -Run/-Login/-Models, only check the version.
 $ErrorActionPreference = 'Stop'
@@ -86,7 +87,8 @@ try {
             'OpenCode' { 'openai/gpt-6-luna' }
         }
         $slug = switch ($Agent) { 'Codex' { 'codex' }; 'Claude Code' { 'claude' }; 'OpenCode' { 'opencode' } }
-        & $runner --agent $Agent --program $Program --model $model --case $Case --report "$root/build/$slug-$Case-sandbox-live.json"
+        $extra = @(); if ($WorkspaceWrite) { $extra += '--workspace-write' }
+        & $runner --agent $Agent --program $Program --model $model --case $Case --report "$root/build/$slug-$Case-sandbox-live.json" @extra
     } else {
         & $Program --version
     }

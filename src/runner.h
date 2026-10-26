@@ -4,6 +4,7 @@
 #include <QProcess>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QStringDecoder>
 #include <deque>
 #include <memory>
 
@@ -26,6 +27,7 @@ struct AgentConfig {
 #endif
     int timeoutSeconds = 600;
     bool opencodeStandalone = false;
+    bool workspaceWrite = false;
 };
 // Every firing enqueues an event. Ordinary nodes consume one event; AND consumes
 // exactly one event from every input FIFO, then waits for a fresh complete set.
@@ -47,6 +49,7 @@ private:
         QProcess *process = nullptr;
         QTimer *timer = nullptr;
         QByteArray stdoutData;
+        QStringDecoder stdoutDecoder{QStringDecoder::Utf8}, stderrDecoder{QStringDecoder::Utf8};
         QString finalPath;
         std::unique_ptr<QTemporaryDir> temp;
     };

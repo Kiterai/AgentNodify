@@ -31,12 +31,13 @@ void Graph::updateNode(const Node &node) {
     emit nodeUpdated(node.id); emit edited();
 }
 NodeForm *Graph::form(Id id) const {
-    if (readOnly || !nodeExists(id)) return nullptr;
+    if (!nodeExists(id)) return nullptr;
     const auto &node = flow.nodes.at(id);
     if (node.kind == Kind::Start || node.kind == Kind::End) return nullptr;
     if (forms_[id]) return forms_[id];
     auto *self = const_cast<Graph *>(this);
     auto *widget = new NodeForm(node, nullptr, modelCatalog); forms_[id] = widget;
+    widget->setReadOnly(readOnly);
     connect(widget, &NodeForm::edited, self, [self, widget] { self->updateNode(widget->node()); });
     connect(widget, &NodeForm::activated, self, [self, id] { emit self->nodeActivated(id); });
     connect(widget, &NodeForm::textEditRequested, self, [self, id](const QString &field) { emit self->textEditRequested(id, field); });
@@ -138,7 +139,7 @@ QVariant Graph::portData(Id id, PortType type, unsigned index, PortRole role) co
         auto &n = flow.nodes.at(id);
         if (n.kind == Kind::Start || n.kind == Kind::End) return kindName(n.kind);
         if (type == PortType::In) return n.kind == Kind::And ? QString("入力 %1").arg(index) : QString("入力");
-        if (n.kind == Kind::Branch) return index == n.rules.size() ? QString("else") : QString("if %1").arg(index);
+        if (n.kind == Kind::Branch) return index == n.rules.size() ? QString("それ以外") : QString("条件%1").arg(index + 1);
         return QString("出力");
     }
     return {};

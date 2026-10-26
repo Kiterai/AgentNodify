@@ -24,6 +24,7 @@ struct Node {
     QPointF position;
     QString agent = "Codex";
     QString model;
+    QString effort;
     QString prompt;
     QString schema;
     unsigned inputs = 2;

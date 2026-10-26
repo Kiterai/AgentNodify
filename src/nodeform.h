@@ -37,6 +37,7 @@ class NodeForm : public QWidget {
 public:
     explicit NodeForm(const Node &node, QWidget *parent = nullptr, ModelCatalog *catalog = nullptr);
     Node node() const { return node_; }
+    void setReadOnly(bool readOnly);
     void setNode(const Node &node);
 signals:
     void edited();
@@ -46,10 +47,11 @@ signals:
 protected:
     bool eventFilter(QObject *object, QEvent *event) override;
 private:
+    bool readOnly_ = false;
     Node node_;
     bool updating_ = false, resizeScheduled_ = false;
     QLineEdit *title_ = nullptr;
-    QComboBox *agent_ = nullptr, *model_ = nullptr;
+    QComboBox *agent_ = nullptr, *model_ = nullptr, *effort_ = nullptr;
     QPointer<ModelCatalog> catalog_;
     QLabel *modelStatus_ = nullptr;
     QPushButton *refreshModels_ = nullptr;
@@ -59,6 +61,7 @@ private:
     QVBoxLayout *rulesLayout_ = nullptr;
     void publish();
     void populateModels();
+    void populateEfforts();
     void rebuildRules();
     void scheduleResize();
 };

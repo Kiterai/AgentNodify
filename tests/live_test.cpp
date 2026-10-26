@@ -4,6 +4,8 @@
 #include <QCommandLineParser>
 #include <QDateTime>
 #include <QFile>
+#include <QDir>
+#include <QUuid>
 #include <QSaveFile>
 #include <QTemporaryDir>
 #include <QTextStream>
@@ -16,14 +18,15 @@ int main(int argc, char **argv) {
         {{"a", "agent"}, "Codex / Claude Code / OpenCode", "name"},
         {{"p", "program"}, "Native CLI executable", "path"},
         {{"m", "model"}, "Explicit model ID (no default/fallback)", "model"},
-        {{"c", "case"}, "text / json / loop / and", "case", "text"},
+        {{"c", "case"}, "text / json / loop / and / file", "case", "text"},
         {{"r", "report"}, "Write JSON test report", "path"},
-        {{"t", "timeout"}, "Per-node timeout in seconds", "seconds", "90"}
+        {{"t", "timeout"}, "Per-node timeout in seconds", "seconds", "90"},
+        {"workspace-write", "Opt in to workspace-write / acceptEdits (not a permission bypass)"}
     }); parser.process(app);
     const auto agent = parser.value("agent"), model = parser.value("model"), test = parser.value("case");
     if ((agent != "Codex" && agent != "Claude Code" && agent != "OpenCode") ||
         model.isEmpty() || parser.value("program").isEmpty() ||
-        (test != "text" && test != "json" && test != "loop" && test != "and")) {
+        (test != "text" && test != "json" && test != "loop" && test != "and" && test != "file")) {
         QTextStream(stderr) << "Specify --agent, --program, --model and --case text/json/loop/and\n"; return 2;
     }
     const auto lower = model.toLower();
@@ -39,7 +42,11 @@ int main(int argc, char **argv) {
         n.model = model; n.prompt = noTools + prompt; n.schema = schema; flow.nodes[id] = n;
     };
     Json expected;
-    if (test == "text") {
+    if (test == "file") {
+        agentNode(3, "", "");
+        flow.nodes[3].prompt = "Create a new file named agentnodify-check.txt in the current working directory containing exactly AGENTNODIFY_FILE_OK followed by a newline. Use file-writing tools, not just a description. Do not modify any other files. Report whether the actual write succeeded or was denied.";
+        flow.edges = {{1, 3}, {3, 2}}; expected = "AGENTNODIFY_FILE_OK";
+    } else if (test == "text") {
         agentNode(3, "Reply with exactly AGENTNODIFY_OK, no punctuation or explanation.", "");
         flow.edges = {{1, 3}, {3, 2}}; expected = "AGENTNODIFY_OK";
     } else if (test == "json") {
@@ -60,14 +67,16 @@ int main(int argc, char **argv) {
         flow.edges = {{1, 3}, {3, 4}, {4, 5, 0, 0}, {4, 6, 0, 0}, {5, 7, 0, 0}, {6, 7, 0, 1}, {7, 8}, {8, 4}, {4, 2, 1, 0}};
         expected = {{"count", 2}};
     }
-    QTemporaryDir directory;
-    if (!directory.isValid()) {
-        QTextStream(stderr) << "Cannot create temporary project: " << directory.errorString() << '\n'; return 2;
+    const auto projectPath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/../file-check-" + QUuid::createUuid().toString(QUuid::WithoutBraces));
+    QDir directory(projectPath);
+    if (!QDir().mkpath(projectPath)) {
+        QTextStream(stderr) << "Cannot create temporary project: " << projectPath << '\n'; return 2;
     }
     Runner runner;
     AgentConfig config; config.codex = config.claude = config.opencode = parser.value("program");
     // Live tests must not share the user's managed OpenCode service/port.
     config.opencodeStandalone = true;
+    config.workspaceWrite = parser.isSet("workspace-write");
     config.timeoutSeconds = qBound(1, parser.value("timeout").toInt(), 600);
     Json events = Json::array();
     QObject::connect(&runner, &Runner::fired, &app, [&](Id id, quint64 execution, const QString &json) {
@@ -79,6 +88,13 @@ int main(int argc, char **argv) {
         Json actual; if (runner.results().contains(2)) actual = runner.results().at(2).output;
         if (test == "text" && actual.is_string()) actual = actual.get<std::string>();
         bool passed = ok && (test == "text" ? display(actual).trimmed() == display(expected) : actual == expected);
+        QString fileContent;
+        if (test == "file") {
+            QFile file(directory.filePath("agentnodify-check.txt"));
+            const bool opened = file.open(QIODevice::ReadOnly);
+            if (opened) fileContent = QString::fromUtf8(file.readAll());
+            passed = ok && opened && fileContent.trimmed() == "AGENTNODIFY_FILE_OK";
+        }
         if (passed && test == "loop") passed = runner.results().at(4).executions == 2;
         if (passed && test == "and") passed = runner.results().at(7).executions == 2;
         Json results = Json::array();
@@ -87,7 +103,7 @@ int main(int argc, char **argv) {
         Json report = {{"at", QDateTime::currentDateTimeUtc().toString(Qt::ISODate).toStdString()},
             {"agent", agent.toStdString()}, {"model", model.toStdString()}, {"case", test.toStdString()},
             {"passed", passed}, {"message", message.toStdString()}, {"expected", expected}, {"actual", actual},
-            {"events", events}, {"nodes", results}};
+            {"events", events}, {"nodes", results}, {"fileContent", fileContent.toStdString()}, {"project", projectPath.toStdString()}};
         if (!parser.value("report").isEmpty()) {
             QSaveFile file(parser.value("report")); auto bytes = QByteArray::fromStdString(report.dump(2));
             if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) passed = false;
