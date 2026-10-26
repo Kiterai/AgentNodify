@@ -11,10 +11,12 @@ struct ProgressItem {
     Json content, input, output;
     bool hasInput = false, hasOutput = false;
     bool jsonContent = false;
+    bool finalResponse = false;
 };
 // Interprets display data only. Never executes commands or accesses reported files.
 class ProgressParser {
 public:
+    void setDirectory(const QString &directory) { directory_ = directory; }
     void append(const QString &chunk);
     void finish(State state);
     void finalResponse(const Json &output, bool structured = false);

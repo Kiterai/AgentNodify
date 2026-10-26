@@ -10,6 +10,12 @@ private slots:
     void openCodePatchAndErrors();
     void jsonLimitsAndMarkdown();
     void toolFoldsAndReplay();
+    void borderlessLayout();
+    void compactJsonTree();
+    void roundedCodeBlocks();
+    void inlineCodeBackground();
+    void disclosureHover();
+    void longMarkdownMessage();
     void fallbackAndPartialLines();
 };
 }

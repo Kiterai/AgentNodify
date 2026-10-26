@@ -81,8 +81,7 @@ Window::Window(bool smoke) : smoke_(smoke) {
         if (project_ < 0 || !runner_->results().contains(id)) return;
         projects_[size_t(project_)].results[id] = runner_->results().at(id);
         workGraph_->states[id] = runner_->results().at(id).state; emit workGraph_->nodeUpdated(id);
-        if (workSelected_ == 0 && runner_->results().at(id).state == State::Running && workGraph_->flow.nodes.at(id).kind == Kind::Agent) selectWorkNode(id);
-        else if (workSelected_ == id) showWorkResult();
+        if (workSelected_ == id) showWorkResult();
     });
     connect(runner_, &Runner::finished, this, [this](bool ok, const QString &message) {
         flushHistory();
@@ -210,7 +209,7 @@ void Window::buildUi() {
     historyHeading->addWidget(followHistoryButton_); hl->addLayout(historyHeading);
     connect(followHistoryButton_, &QToolButton::toggled, this, [this](bool follow) { followLatestHistory_ = follow; if (follow) refreshWorkHistory(); });
     historyList_ = new QListWidget; historyList_->setObjectName("nodeExecutionHistory");
-    historyList_->setToolTip("選択したノードの実行を日時順（新しい順）に表示します。ノード未選択時はプロジェクト全体を表示します。"); hl->addWidget(historyList_, 1); detailSplit->addWidget(historyPane);
+    historyList_->setToolTip("選択したノードの実行を日時順（新しい順）に表示します。ノード未選択時は表示しません。"); hl->addWidget(historyList_, 1); detailSplit->addWidget(historyPane);
     connect(historyList_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *item) {
         selectedHistory_ = item ? item->data(Qt::UserRole).toString() : QString();
         if (item) { followLatestHistory_ = false; followHistoryButton_->setChecked(false); }
@@ -415,8 +414,8 @@ void Window::selectWorkNode(Id id) {
 }
 void Window::refreshWorkHistory() {
     std::vector<const NodeExecution *> entries;
-    if (project_ >= 0) for (auto it = projects_[size_t(project_)].history.rbegin(); it != projects_[size_t(project_)].history.rend(); ++it)
-        if (workSelected_ == 0 || it->node == workSelected_) entries.push_back(&*it);
+    if (project_ >= 0 && workGraph_->nodeExists(workSelected_)) for (auto it = projects_[size_t(project_)].history.rbegin(); it != projects_[size_t(project_)].history.rend(); ++it)
+        if (it->node == workSelected_) entries.push_back(&*it);
     const int scroll = historyList_->verticalScrollBar()->value();
     QSignalBlocker block(historyList_);
     bool rebuild = historyList_->count() != int(entries.size());
@@ -428,7 +427,7 @@ void Window::refreshWorkHistory() {
         const auto &entry = *entries[size_t(row)];
         auto *item = rebuild ? new QListWidgetItem(historyList_) : historyList_->item(row);
         item->setData(Qt::UserRole, entry.id);
-        item->setText(QString("%1 · %2\n%3").arg(entry.startedAt.toLocalTime().toString("yyyy/MM/dd HH:mm:ss.zzz"), stateName(entry.state), entry.title));
+        item->setText(QString("%1 · %2\n実行 %3 · %4").arg(entry.startedAt.toLocalTime().toString("yyyy/MM/dd HH:mm:ss.zzz"), stateName(entry.state)).arg(entry.executionNumber).arg(entry.agent.isEmpty() ? QString("内部処理") : entry.agent));
         item->setToolTip("開始: " + entry.startedAt.toLocalTime().toString(Qt::ISODateWithMs) + "\n終了: " +
             (entry.finishedAt.isValid() ? entry.finishedAt.toLocalTime().toString(Qt::ISODateWithMs) : entry.state == State::Running ? "実行中" : "不明（中断）"));
         if (entry.id == selectedHistory_) selectedRow = row;
@@ -449,13 +448,13 @@ void Window::showWorkResult() {
     }
     const QString key = execution ? execution->id : QString("current:%1:%2").arg(project_).arg(workSelected_);
     displayedExecution_ = key;
-    auto render = [this, &key](const QString &log, State state, const Json *output = nullptr, bool structured = false) {
-        log_->setProgress(log, key, state, output, structured);
+    auto render = [this, &key](const QString &log, State state, const Json *output = nullptr, bool structured = false, const QString &directory = QString()) {
+        log_->setProgress(log, key, state, output, structured, directory);
         if (output) output_->setValue(*output, true, structured || log_->finalIsJson()); else output_->setPlainText({});
     };
     if (execution) {
         nodeStatus_->setText(execution->title + " — " + stateName(execution->state) + "\n" + execution->startedAt.toLocalTime().toString("yyyy/MM/dd HH:mm:ss.zzz"));
-        render(execution->log, execution->state, execution->state == State::Succeeded ? &execution->output : nullptr, execution->structuredOutput); return;
+        render(execution->log, execution->state, execution->state == State::Succeeded ? &execution->output : nullptr, execution->structuredOutput, execution->directory); return;
     }
     if (!workGraph_->nodeExists(workSelected_)) { render({}, State::Pending); nodeStatus_->setText("ノードを選択してください"); return; }
     const auto &node = workGraph_->flow.nodes.at(workSelected_);

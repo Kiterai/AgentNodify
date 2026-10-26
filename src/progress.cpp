@@ -64,13 +64,12 @@ void ProgressParser::finalResponse(const Json &output, bool structured) {
     for (auto it = items_.rbegin(); it != items_.rend(); ++it) if (it->kind == ProgressKind::Message && equivalent(it->content, output)) {
         const bool quotedJson = it->content.is_string() && displayJson(stringValue(it->content)).is_string();
         it->jsonContent = it->jsonContent || structured || quotedJson;
-        it->name = "最終応答"; it->content = output; return;
+        it->name = "最終応答"; it->finalResponse = true; it->content = output; return;
     }
-    auto &entry = item("final-response", ProgressKind::Message); entry.name = "最終応答"; entry.content = output; entry.jsonContent = structured;
+    auto &entry = item("final-response", ProgressKind::Message); entry.name = "最終応答"; entry.finalResponse = true; entry.content = output; entry.jsonContent = structured;
 }
 void ProgressParser::line(const QString &text) {
     ++line_; if (text.trimmed().isEmpty()) return;
-    if (text.startsWith("作業ディレクトリ: ")) directory_ = text.mid(QString("作業ディレクトリ: ").size()).trimmed();
     const auto value = displayJson(text);
     if (value.is_discarded() || !value.is_object()) {
         auto &entry = item(QString("plain:%1").arg(line_), ProgressKind::Simple); entry.text = text; return;
@@ -93,7 +92,7 @@ void ProgressParser::simple(const Json &value, const QString &label) {
     auto &entry = item(key, ProgressKind::Simple);
     entry.name = label.isEmpty() ? str(value, "type") : label;
     if (entry.name.isEmpty()) entry.name = "イベント";
-    entry.text = str(value, "message"); if (entry.text.isEmpty()) entry.text = str(value, "subtype");
+    entry.text = str(value, "subtype"); if (entry.text.isEmpty()) entry.text = str(value, "message");
     entry.content = value;
 }
 void ProgressParser::file(const QString &key, const QString &path, const QString &access, const QString &status) {

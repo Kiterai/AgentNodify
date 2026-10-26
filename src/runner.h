@@ -23,6 +23,8 @@ struct NodeExecution {
     QString id;
     Id node = 0;
     QString title;
+    quint64 executionNumber = 0;
+    QString agent, directory;
     QDateTime startedAt, finishedAt;
     State state = State::Running;
     QString log;

@@ -181,8 +181,10 @@ using namespace an;
             if (entry.node == 3) {
                 QVERIFY(entry.structuredOutput);
                 ++attempt; QVERIFY(entry.output == Json({{"count", attempt}}));
-                QCOMPARE(entry.log.count("--- 実行"), 1);
-                QVERIFY(entry.log.contains(QString("--- 実行 %1 ---").arg(attempt)));
+                QCOMPARE(entry.executionNumber, quint64(attempt)); QCOMPARE(entry.agent, QString("Codex"));
+                QCOMPARE(entry.directory, QDir(dir.path()).canonicalPath());
+                QVERIFY(!entry.log.contains("--- 実行")); QVERIFY(!entry.log.contains("CLI:"));
+                QVERIFY(!entry.log.contains("作業ディレクトリ:")); QVERIFY(!entry.log.contains("権限で拒否された"));
             }
         }
         QCOMPARE(attempt, 3);
@@ -289,7 +291,9 @@ using namespace an;
         first.startedAt = QDateTime::currentDateTimeUtc(); first.finishedAt = first.startedAt.addMSecs(100); first.sequence = 1;
         first.state = State::Succeeded; first.log = "1回目のログ\n"; first.output = {{"count", 1}};
         first.structuredOutput = true;
+        first.executionNumber = 7; first.agent = "Claude Code"; first.directory = dir.path();
         saveNodeExecution(path, first);
+        QFile legacy(QDir(path).filePath("legacy.json")); QVERIFY(legacy.open(QIODevice::WriteOnly)); legacy.write("{\"version\":1}"); legacy.close();
         auto second = first; second.id = QUuid::createUuid().toString(QUuid::WithoutBraces); second.sequence = 2;
         second.state = State::Running; second.finishedAt = {}; second.output = nullptr; second.log = "2回目の途中";
         saveNodeExecution(path, second);
@@ -297,6 +301,7 @@ using namespace an;
         QCOMPARE(history[0].id, first.id); QCOMPARE(history[0].title, first.title); QCOMPARE(history[0].startedAt, first.startedAt);
         QCOMPARE(history[0].finishedAt, first.finishedAt); QCOMPARE(history[0].log, first.log); QVERIFY(history[0].output == first.output);
         QVERIFY(history[0].structuredOutput);
+        QCOMPARE(history[0].executionNumber, first.executionNumber); QCOMPARE(history[0].agent, first.agent); QCOMPARE(history[0].directory, first.directory);
         QVERIFY(history[1].state == State::Cancelled); QVERIFY(history[1].log.contains("中断")); QVERIFY(!history[1].finishedAt.isValid());
         second.state = State::Failed; second.finishedAt = second.startedAt.addMSecs(200); second.log = "エラー"; saveNodeExecution(path, second);
         QFile damaged(QDir(path).filePath("damaged.json")); QVERIFY(damaged.open(QIODevice::WriteOnly)); damaged.write("{broken"); damaged.close();

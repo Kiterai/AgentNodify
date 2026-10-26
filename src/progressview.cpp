@@ -2,6 +2,10 @@
 #include <QAbstractTextDocumentLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QPainter>
+#include <QStyleOptionToolButton>
+#include <QTextBlock>
+#include <QTextLayout>
 #include <QScrollBar>
 #include <QSet>
 #include <QScopedValueRollback>
@@ -14,6 +18,7 @@
 
 namespace an {
 namespace {
+const QColor codeBackground("#273449");
 QString shortString(const QString &text) {
     qsizetype characters = 0, end = 0;
     for (qsizetype i = 0; i < text.size(); ++i) {
@@ -31,7 +36,7 @@ QString summary(const Json &value) {
 }
 void addTree(QTreeWidgetItem *parent, const QString &name, const Json &value, const QString &path, int depth, int &remaining) {
     if (remaining-- <= 0) return;
-    auto *item = new QTreeWidgetItem(parent, {name + ": " + summary(value)}); item->setData(0, Qt::UserRole, path);
+    auto *item = new QTreeWidgetItem(parent, {name.isEmpty() ? summary(value) : name + ": " + summary(value)}); item->setData(0, Qt::UserRole, path);
     if (!value.is_structured()) return;
     if (depth >= 32 || remaining <= 0) { new QTreeWidgetItem(item, {"...表示上限"}); return; }
     if (value.is_array()) {
@@ -57,36 +62,132 @@ public:
     }
     void resizeContent() {
         const int wanted = int(std::ceil(document()->documentLayout()->documentSize().height())) + 2 * frameWidth() + 12;
-        setVerticalScrollBarPolicy(wanted > 420 ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);
-        const auto height = qBound(32, wanted, 420); if (this->height() != height) setFixedHeight(height);
+        setVerticalScrollBarPolicy(!markdown_ && wanted > 420 ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);
+        const auto height = markdown_ ? qMax(32, wanted) : qBound(32, wanted, 420);
+        if (this->height() != height) setFixedHeight(height);
     }
+    void styleMarkdown() {
+        markdown_ = true;
+        for (auto block = document()->begin(); block.isValid(); block = block.next()) {
+            auto format = block.blockFormat();
+            format.setLineHeight(115, QTextBlockFormat::ProportionalHeight);
+            if (isCode(block)) {
+                format.setBackground(Qt::NoBrush);
+                format.setLeftMargin(6); format.setRightMargin(6);
+                format.setTopMargin(isCode(block.previous()) ? 0 : 14);
+                format.setBottomMargin(isCode(block.next()) ? 0 : 14);
+            }
+            QTextCursor cursor(block); cursor.setBlockFormat(format);
+        }
+    }
+    void setPlainContent(const QString &text) { markdown_ = false; setPlainText(text); }
 protected:
+    void paintEvent(QPaintEvent *event) override {
+        // QTextBrowser draws the text after these backgrounds, preserving selection,
+        // copying and its normal Markdown layout. The viewport erases before painting.
+        {
+            QPainter painter(viewport()); painter.setRenderHint(QPainter::Antialiasing);
+            painter.setPen(Qt::NoPen); painter.setBrush(codeBackground);
+            const QPointF offset(-horizontalScrollBar()->value(), -verticalScrollBar()->value());
+            for (auto block = document()->begin(); markdown_ && block.isValid(); block = block.next()) {
+                if (!isCode(block)) { paintInlineCode(painter, block, offset); continue; }
+                auto rect = document()->documentLayout()->blockBoundingRect(block);
+                while (isCode(block.next())) { block = block.next(); rect = rect.united(document()->documentLayout()->blockBoundingRect(block)); }
+                const qreal margin = document()->documentMargin();
+                rect.setLeft(margin); rect.setRight(document()->size().width() - margin);
+                rect.adjust(0, -10, 0, 10); rect.translate(offset);
+                if (rect.intersects(viewport()->rect())) painter.drawRoundedRect(rect, 6, 6);
+            }
+        }
+        QTextBrowser::paintEvent(event);
+    }
     QVariant loadResource(int, const QUrl &) override { return {}; } // No local/remote images or resources from agent text.
     void resizeEvent(QResizeEvent *event) override { QTextBrowser::resizeEvent(event); resizeContent(); }
+private:
+    bool markdown_ = false;
+    void paintInlineCode(QPainter &painter, const QTextBlock &block, const QPointF &offset) {
+        const auto *layout = block.layout(); if (!layout) return;
+        const auto origin = document()->documentLayout()->blockBoundingRect(block).topLeft() + offset;
+        for (auto it = block.begin(); !it.atEnd(); ++it) {
+            const auto fragment = it.fragment();
+            if (!fragment.isValid() || !fragment.charFormat().fontFixedPitch()) continue;
+            const int start = fragment.position() - block.position(), end = start + fragment.length();
+            for (int i = 0; i < layout->lineCount(); ++i) {
+                const auto line = layout->lineAt(i);
+                const int from = qMax(start, line.textStart()), to = qMin(end, line.textStart() + line.textLength());
+                if (from >= to) continue;
+                const auto left = line.cursorToX(from), right = line.cursorToX(to);
+                QRectF rect(origin.x() + qMin(left, right), origin.y() + line.y(), qAbs(right - left), line.height());
+                rect.adjust(-3, -2, 3, 2);
+                painter.drawRoundedRect(rect, 3, 3);
+            }
+        }
+    }
+    static bool isCode(const QTextBlock &block) {
+        if (!block.isValid()) return false;
+        const auto format = block.blockFormat();
+        return format.hasProperty(QTextFormat::BlockCodeFence) || format.hasProperty(QTextFormat::BlockCodeLanguage) || format.nonBreakableLines();
+    }
 };
 class Tree : public QTreeWidget {
 public:
     explicit Tree(QWidget *parent) : QTreeWidget(parent) {
         setHeaderHidden(true); setColumnCount(1); setUniformRowHeights(true); setTextElideMode(Qt::ElideNone);
+        setIndentation(12);
         header()->setSectionResizeMode(QHeaderView::ResizeToContents); header()->setStretchLastSection(false);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         connect(this, &QTreeWidget::itemExpanded, this, [this] { resizeContent(); });
         connect(this, &QTreeWidget::itemCollapsed, this, [this] { resizeContent(); });
+        connect(horizontalScrollBar(), &QScrollBar::rangeChanged, this, [this] { QTimer::singleShot(0, this, [this] { resizeContent(); }); });
     }
     void resizeContent() {
+        if (resizing_) return;
+        QScopedValueRollback<bool> guard(resizing_, true);
+        ensurePolished(); doItemsLayout();
         int rows = 0;
         std::function<void(QTreeWidgetItem *)> count = [&](auto *item) { ++rows; if (item->isExpanded()) for (int i = 0; i < item->childCount(); ++i) count(item->child(i)); };
         for (int i = 0; i < topLevelItemCount(); ++i) count(topLevelItem(i));
-        const auto wanted = qMax(1, rows) * qMax(22, fontMetrics().height() + 6) + 2 * frameWidth() + horizontalScrollBar()->sizeHint().height() + 4;
-        setFixedHeight(qBound(40, wanted, 360));
+        const int rowHeight = qMax(1, sizeHintForRow(0));
+        const int scrollbar = horizontalScrollBar()->maximum() > 0 ? horizontalScrollBar()->sizeHint().height() : 0;
+        const int wanted = qMax(1, rows) * rowHeight + 2 * frameWidth() + scrollbar;
+        if (height() != qMin(wanted, 360)) setFixedHeight(qMin(wanted, 360));
+    }
+protected:
+    void resizeEvent(QResizeEvent *event) override { QTreeWidget::resizeEvent(event); resizeContent(); }
+private:
+    bool resizing_ = false;
+};
+// Allocate text and icon separately: native RTL tool-button layouts can place
+// the arrow over the text when borderless style-sheet padding is zero.
+class DisclosureButton : public QToolButton {
+public:
+    DisclosureButton() { setAttribute(Qt::WA_Hover); }
+    QSize sizeHint() const override { return {fontMetrics().horizontalAdvance(text()) + 24, qMax(16, fontMetrics().height()) + 4}; }
+    QSize minimumSizeHint() const override { return sizeHint(); }
+protected:
+    void paintEvent(QPaintEvent *) override {
+        QPainter painter(this); QStyleOptionToolButton option; initStyleOption(&option);
+        if (isEnabled() && (option.state & QStyle::State_MouseOver)) {
+            option.palette.setColor(QPalette::ButtonText, QColor("#ffffff"));
+            option.palette.setColor(QPalette::WindowText, QColor("#ffffff"));
+        }
+        const QRect textRect(2, 0, width() - 24, height());
+        style()->drawItemText(&painter, textRect, Qt::AlignLeft | Qt::AlignVCenter, option.palette, isEnabled(), text(), QPalette::ButtonText);
+        option.rect = QRect(width() - 20, (height() - 10) / 2, 12, 12);
+        style()->drawPrimitive(arrowType() == Qt::DownArrow ? QStyle::PE_IndicatorArrowDown : QStyle::PE_IndicatorArrowRight, &option, &painter, this);
     }
 };
 class Detail : public QWidget {
 public:
-    Detail(const QString &title, const QString &name, QWidget *parent) : QWidget(parent) {
+    Detail(const QString &title, const QString &name, QWidget *parent, QLabel *heading = nullptr) : QWidget(parent) {
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
         auto *layout = new QVBoxLayout(this); layout->setContentsMargins(0, 0, 0, 0); layout->setSpacing(4);
-        toggle_ = new QToolButton; toggle_->setText(title); toggle_->setObjectName(name); toggle_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-        toggle_->setCheckable(true); toggle_->setArrowType(Qt::RightArrow); layout->addWidget(toggle_, 0, Qt::AlignLeft);
+        auto *header = new QHBoxLayout; header->setContentsMargins(0, 0, 0, 0); header->setSpacing(8);
+        if (heading) { heading->setWordWrap(false); header->addWidget(heading); }
+        toggle_ = new DisclosureButton; toggle_->setText(title); toggle_->setObjectName(name);
+        toggle_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon); toggle_->setArrowType(Qt::RightArrow);
+        toggle_->setAutoRaise(true); toggle_->setCursor(Qt::PointingHandCursor); toggle_->setCheckable(true);
+        header->addWidget(toggle_, 0, Qt::AlignLeft); header->addStretch(); layout->addLayout(header);
         connect(toggle_, &QToolButton::toggled, this, [this](bool expanded) {
             toggle_->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
             if (expanded && !content_) { content_ = new ContentView(this); this->layout()->addWidget(content_); }
@@ -106,7 +207,7 @@ private:
 }
 ContentView::ContentView(QWidget *parent) : QWidget(parent) {
     setObjectName("contentView");
-    setStyleSheet("QWidget#contentView { background:transparent; color:#dce5f3; } QTextBrowser, QTreeWidget { background:#121925; color:#dce5f3; border:1px solid #354259; padding:4px; selection-background-color:#3b5680; selection-color:white; } QTreeWidget::item:selected { background:#3b5680; color:white; }");
+    setStyleSheet("QWidget#contentView { background:transparent; color:#dce5f3; } QTextBrowser, QTreeWidget { background:#121925; color:#dce5f3; border:1px solid #354259; padding:4px; selection-background-color:#3b5680; selection-color:white; } QWidget#progressCard QTextBrowser, QWidget#progressCard QTreeWidget { background:transparent; border:0; padding:0; } QTreeWidget::item:selected { background:#3b5680; color:white; }");
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed); setMinimumWidth(0);
     auto *layout = new QVBoxLayout(this); layout->setContentsMargins(0, 0, 0, 0);
     browser_ = new Browser(this); browser_->setObjectName("markdownContent"); layout->addWidget(browser_);
@@ -128,7 +229,11 @@ void ContentView::setValue(const Json &value, bool markdown, bool forceJson) {
         for (int i = 0; i < tree_->topLevelItemCount(); ++i) visit(tree_->topLevelItem(i));
         const bool empty = tree_->topLevelItemCount() == 0;
         tree_->clear(); int remaining = 4096;
-        addTree(tree_->invisibleRootItem(), "$", parsed, "", 0, remaining);
+        addTree(tree_->invisibleRootItem(), {}, parsed, "", 0, remaining);
+        if (parsed.is_structured() && !parsed.empty()) {
+            auto *root = tree_->takeTopLevelItem(0);
+            tree_->addTopLevelItems(root->takeChildren()); delete root;
+        }
         std::function<void(QTreeWidgetItem *)> restore = [&](auto *item) {
             item->setExpanded(expanded.contains(item->data(0, Qt::UserRole).toString()) || ((first || empty) && item->parent() == nullptr));
             for (int i = 0; i < item->childCount(); ++i) restore(item->child(i));
@@ -137,8 +242,11 @@ void ContentView::setValue(const Json &value, bool markdown, bool forceJson) {
         static_cast<Tree *>(tree_)->resizeContent(); browser_->hide(); tree_->show(); setFocusProxy(tree_);
     } else {
         tree_->hide(); browser_->show(); setFocusProxy(browser_);
-        if (markdown) browser_->document()->setMarkdown(plain_, QTextDocument::MarkdownFeatures::fromInt(QTextDocument::MarkdownDialectGitHub | QTextDocument::MarkdownNoHTML));
-        else browser_->setPlainText(plain_);
+        if (markdown) {
+            browser_->document()->setMarkdown(plain_, QTextDocument::MarkdownFeatures::fromInt(QTextDocument::MarkdownDialectGitHub | QTextDocument::MarkdownNoHTML));
+            static_cast<Browser *>(browser_)->styleMarkdown();
+        }
+        else static_cast<Browser *>(browser_)->setPlainContent(plain_);
         static_cast<Browser *>(browser_)->resizeContent();
     }
 }
@@ -146,16 +254,21 @@ class ProgressView::Card : public QWidget {
 public:
     Card(ProgressKind kind, QWidget *parent) : QWidget(parent), kind_(kind) {
         setObjectName("progressCard"); setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
-        setStyleSheet("QWidget#progressCard { background:#202938; border:1px solid #354259; border-radius:5px; } QLabel { color:#dce5f3; background:transparent; border:none; } QToolButton { color:#dce5f3; background:#2d3b50; border:1px solid #40536c; border-radius:3px; padding:3px 6px; }");
-        auto *layout = new QVBoxLayout(this); layout->setContentsMargins(8, 6, 8, 6); layout->setSpacing(4);
-        heading_ = new QLabel; heading_->setObjectName("progressHeading"); heading_->setTextFormat(Qt::PlainText); heading_->setWordWrap(true); layout->addWidget(heading_);
+        setStyleSheet("QWidget#progressCard { background:transparent; border:0; } QLabel { color:#dce5f3; background:transparent; border:none; } QToolButton { color:#aebed5; background:transparent; border:0; padding:0; } QToolButton:hover { color:#ffffff; } QToolButton:focus { color:#9bc7ff; }");
+        auto *layout = new QVBoxLayout(this); layout->setContentsMargins(4, 2, 4, 2); layout->setSpacing(2);
+        if (kind != ProgressKind::Message) {
+            heading_ = new QLabel; heading_->setObjectName("progressHeading"); heading_->setTextFormat(Qt::PlainText); heading_->setWordWrap(true);
+            auto font = heading_->font(); font.setBold(true); heading_->setFont(font);
+            if (kind != ProgressKind::Simple) layout->addWidget(heading_);
+        }
         if (kind == ProgressKind::Message) { content_ = new ContentView(this); layout->addWidget(content_); }
         else if (kind == ProgressKind::Tool) {
             input_ = new Detail("入力", "toolInputToggle", this); output_ = new Detail("出力", "toolOutputToggle", this); layout->addWidget(input_); layout->addWidget(output_);
-        } else if (kind == ProgressKind::Simple) { details_ = new Detail("詳細", "eventDetailToggle", this); layout->addWidget(details_); }
+            input_->layout()->setContentsMargins(12, 0, 0, 0); output_->layout()->setContentsMargins(12, 0, 0, 0);
+        } else if (kind == ProgressKind::Simple) { details_ = new Detail("詳細", "eventDetailToggle", this, heading_); layout->addWidget(details_); }
     }
     void update(const ProgressItem &item) {
-        if (kind_ == ProgressKind::Message) { heading_->setText(item.name); content_->setValue(item.content, true, item.jsonContent); }
+        if (kind_ == ProgressKind::Message) { content_->setValue(item.content, true, item.jsonContent); }
         else if (kind_ == ProgressKind::Tool) {
             heading_->setText(item.name + " · " + progressStatus(item.status));
             input_->setValue(item.input, item.hasInput); output_->setValue(item.output, item.hasOutput);
@@ -163,12 +276,12 @@ public:
             const auto name = item.path.section('/', -1); heading_->setText(item.name + " · " + (name.isEmpty() ? item.path : name) + " · " + progressStatus(item.status)); heading_->setToolTip("<qt>" + item.path.toHtmlEscaped() + "</qt>");
         } else {
             heading_->setText(item.name + (item.name.isEmpty() || item.text.isEmpty() ? "" : " · ") + shortString(item.text));
-            details_->setVisible(!item.content.is_null()); details_->setValue(item.content, !item.content.is_null());
+            details_->findChild<QToolButton *>("eventDetailToggle")->setVisible(!item.content.is_null()); details_->setValue(item.content, !item.content.is_null());
         }
     }
 private:
     ProgressKind kind_;
-    QLabel *heading_;
+    QLabel *heading_ = nullptr;
     ContentView *content_ = nullptr;
     Detail *input_ = nullptr, *output_ = nullptr, *details_ = nullptr;
 };
@@ -176,7 +289,7 @@ ProgressView::ProgressView(QWidget *parent) : QScrollArea(parent) {
     setObjectName("progressTimeline"); setWidgetResizable(true); setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setStyleSheet("QScrollArea#progressTimeline, QWidget#progressItems { background:#191f2a; color:#dce5f3; }");
     setFocusPolicy(Qt::StrongFocus);
-    auto *content = new QWidget; content->setObjectName("progressItems"); layout_ = new QVBoxLayout(content); layout_->setContentsMargins(2, 2, 2, 2); layout_->setSpacing(6); layout_->addStretch(); setWidget(content);
+    auto *content = new QWidget; content->setObjectName("progressItems"); layout_ = new QVBoxLayout(content); layout_->setContentsMargins(2, 2, 2, 2); layout_->setSpacing(3); layout_->addStretch(); setWidget(content);
     connect(verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int value) { if (!adjustingScroll_) followBottom_ = value == verticalScrollBar()->maximum(); });
     connect(verticalScrollBar(), &QScrollBar::rangeChanged, this, [this](int, int maximum) {
         if (followBottom_) { QScopedValueRollback<bool> guard(adjustingScroll_, true); verticalScrollBar()->setValue(maximum); }
@@ -191,14 +304,16 @@ bool ProgressView::finalIsJson() const {
         if (it->kind == ProgressKind::Message && it->name == "最終応答") return it->jsonContent;
     return false;
 }
-void ProgressView::setProgress(const QString &log, const QString &executionKey, State state, const Json *finalOutput, bool structuredOutput) {
+void ProgressView::setProgress(const QString &log, const QString &executionKey, State state, const Json *finalOutput, bool structuredOutput, const QString &directory) {
     const bool changed = key_ != executionKey || !log.startsWith(raw_);
     const auto scroll = verticalScrollBar()->value(); QScopedValueRollback<bool> guard(adjustingScroll_, true);
     if (changed) { followBottom_ = true; reset(); key_ = executionKey; }
+    parser_.setDirectory(directory);
     parser_.append(log.mid(raw_.size())); raw_ = log;
     if (state != State::Running && state != State::Pending) parser_.finish(state);
     if (finalOutput) parser_.finalResponse(*finalOutput, structuredOutput);
     for (const auto &entry : parser_.items()) {
+        if (entry.finalResponse) { delete cards_.take(entry.key); continue; }
         auto *card = cards_.value(entry.key, nullptr);
         if (!card) { card = new Card(entry.kind, widget()); cards_[entry.key] = card; layout_->insertWidget(layout_->count() - 1, card); }
         card->update(entry);

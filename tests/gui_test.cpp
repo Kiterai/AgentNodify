@@ -400,18 +400,23 @@ void GuiTest::nodeExecutionHistory() {
     QCOMPARE(window.projects_[0].history.size(), size_t(8)); QCOMPARE(window.historyList_->count(), 3);
     QVERIFY(window.output_->toPlainText().contains('3'));
     window.historyList_->setCurrentRow(2); const auto firstId = window.selectedHistory_;
-    QVERIFY(window.log_->toPlainText().contains("--- 実行 1 ---")); QVERIFY(!window.log_->toPlainText().contains("--- 実行 2 ---"));
+    QVERIFY(!window.log_->toPlainText().contains("--- 実行"));
+    QVERIFY(window.historyList_->item(2)->text().contains("実行 1 · Codex"));
+    QVERIFY(!window.historyList_->item(2)->text().contains(node.title));
     QVERIFY(window.output_->toPlainText().contains('1')); QVERIFY(window.historyList_->item(2)->text().contains(QDate::currentDate().toString("yyyy/MM/dd")));
     const auto firstLog = window.log_->toPlainText();
     QVERIFY(QFile::remove(directory.filePath("counter.txt"))); done.clear(); window.executeFlow(); QTRY_COMPARE(done.count(), 1); QVERIFY(done[0][0].toBool());
     QCOMPARE(window.projects_[0].history.size(), size_t(16)); QCOMPARE(window.historyList_->count(), 6);
     QCOMPARE(window.selectedHistory_, firstId); QCOMPARE(window.log_->toPlainText(), firstLog); QVERIFY(window.output_->toPlainText().contains('1'));
     window.historyList_->setCurrentRow(0); QVERIFY(window.output_->toPlainText().contains('3'));
-    window.selectWorkNode(0); QCOMPARE(window.historyList_->count(), 16); // Flat node history, no flow-run group rows.
+    window.selectWorkNode(0); QCOMPARE(window.historyList_->count(), 0);
+    QVERIFY(window.log_->toPlainText().isEmpty()); QVERIFY(window.output_->toPlainText().isEmpty());
+    QVERIFY(QFile::remove(directory.filePath("counter.txt"))); done.clear(); window.executeFlow(); QTRY_COMPARE(done.count(), 1);
+    QCOMPARE(window.workSelected_, Id(0)); QCOMPARE(window.historyList_->count(), 0);
     window.projects_.push_back({"別のプロジェクト", directory.path(), window.documents_[0].path, {}}); window.selectProject(1);
     QCOMPARE(window.historyList_->count(), 0); QVERIFY(window.log_->toPlainText().isEmpty());
-    window.selectProject(0); window.selectWorkNode(agent); QCOMPARE(window.historyList_->count(), 6);
-    window.historyList_->setCurrentRow(5); QCOMPARE(window.log_->toPlainText(), firstLog);
+    window.selectProject(0); window.selectWorkNode(agent); QCOMPARE(window.historyList_->count(), 9);
+    window.historyList_->setCurrentRow(8); QCOMPARE(window.log_->toPlainText(), firstLog);
     QVERIFY(!window.followLatestHistory_); QTest::mouseClick(window.followHistoryButton_, Qt::LeftButton);
     QVERIFY(window.followLatestHistory_); QCOMPARE(window.historyList_->currentRow(), 0);
     window.workView_->setupScale(0.7); window.workView_->centerScene(); QCoreApplication::processEvents();

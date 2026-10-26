@@ -72,6 +72,8 @@ void Runner::beginExecution(Id id) {
     auto &r = results_[id]; ++r.executions; r.state = State::Running; r.log.clear(); r.output = nullptr;
     NodeExecution execution; execution.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     execution.node = id; execution.title = flow_.nodes.at(id).title;
+    execution.executionNumber = r.executions; execution.directory = directory_;
+    if (flow_.nodes.at(id).kind == Kind::Agent) execution.agent = flow_.nodes.at(id).agent;
     execution.structuredOutput = !flow_.nodes.at(id).schema.trimmed().isEmpty();
     if (execution.title.isEmpty()) execution.title = kindName(flow_.nodes.at(id).kind);
     execution.startedAt = QDateTime::currentDateTimeUtc(); activeExecutions_[id] = execution;
@@ -155,7 +157,6 @@ void Runner::pump() {
             if (!active_) break;
             try {
                 if (n.kind == Kind::Agent) {
-                    appendLog(id, QString("\n--- 実行 %1 ---\n").arg(results_[id].executions).toUtf8());
                     if (active_) launch(id, input);
                 }
                 else if (n.kind == Kind::Branch) {
@@ -228,7 +229,6 @@ void Runner::launch(Id id, const Json &input) {
     // Do not invoke cmd.exe or interpolate prompts into a shell command.
     if (resolved.endsWith(".cmd", Qt::CaseInsensitive) || resolved.endsWith(".bat", Qt::CaseInsensitive))
         throw std::runtime_error(".cmd/.batは非対応です。CLIのネイティブ.exeを指定してください");
-    appendLog(id, ("CLI: " + resolved + "\n作業ディレクトリ: " + directory_ + "\n権限で拒否された操作は実行されません。各CLIの権限設定を確認してください。\n").toUtf8());
     if (!active_) return;
     auto *process = new QProcess(this); j->process = process;
     auto *timer = new QTimer(this); j->timer = timer; timer->setSingleShot(true);

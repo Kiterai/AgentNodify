@@ -29,7 +29,8 @@ void saveNodeExecution(const QString &directory, const NodeExecution &execution)
     const auto uuid = QUuid(execution.id);
     if (uuid.isNull() || !execution.startedAt.isValid()) throw std::runtime_error("実行履歴のIDまたは日時が不正です");
     if (!QDir().mkpath(directory)) throw std::runtime_error("実行履歴の保存先を作成できません");
-    Json value = {{"version", 1}, {"id", text(execution.id)}, {"node", execution.node}, {"title", text(execution.title)},
+    Json value = {{"version", 2}, {"id", text(execution.id)}, {"node", execution.node}, {"title", text(execution.title)},
+        {"executionNumber", execution.executionNumber}, {"agent", text(execution.agent)}, {"directory", text(execution.directory)},
         {"startedAt", text(execution.startedAt.toUTC().toString(Qt::ISODateWithMs))},
         {"finishedAt", text(execution.finishedAt.toUTC().toString(Qt::ISODateWithMs))},
         {"state", text(stateKey(execution.state))}, {"log", text(execution.log)}, {"output", execution.output}, {"sequence", execution.sequence}, {"structuredOutput", execution.structuredOutput}};
@@ -44,11 +45,14 @@ std::vector<NodeExecution> loadNodeExecutions(const QString &directory, QStringL
         try {
             QFile file(QDir(directory).filePath(name)); if (!file.open(QIODevice::ReadOnly)) throw std::runtime_error(text(file.errorString()));
             const auto value = Json::parse(file.readAll().toStdString());
-            if (value.at("version") != 1) throw std::runtime_error("未対応の実行履歴の形式です");
+            if (value.at("version") == 1) continue;
+            if (value.at("version") != 2) throw std::runtime_error("未対応の実行履歴の形式です");
             NodeExecution execution; execution.id = string(value, "id");
             if (QUuid(execution.id).isNull() || QUuid(execution.id).toString(QUuid::WithoutBraces) + ".json" != name)
                 throw std::runtime_error("実行履歴のIDが不正です");
             execution.node = value.at("node").get<Id>(); execution.title = string(value, "title");
+            execution.executionNumber = value.at("executionNumber").get<quint64>();
+            execution.agent = string(value, "agent"); execution.directory = string(value, "directory");
             execution.startedAt = QDateTime::fromString(string(value, "startedAt"), Qt::ISODateWithMs);
             execution.finishedAt = QDateTime::fromString(string(value, "finishedAt"), Qt::ISODateWithMs);
             if (!execution.startedAt.isValid()) throw std::runtime_error("実行履歴の日時が不正です");
