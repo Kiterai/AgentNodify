@@ -81,6 +81,18 @@ APIキーを使う場合は各CLIが対応する環境変数を安全な方法�
 
 `-Case`は`text` / `json` / `loop` / `and`。モデルは仕様で許可されたLuna / Haikuに固定しています。
 Qtが異なる場合は`-QtPath`を指定します。CTestには登録しません。
+
+モデル一覧の取得確認（推論リクエストなし）は`-Models`で行えます。`-Run` / `-Login`とは併用しません。
+
+```powershell
+./scripts/live-test.ps1 -Agent Codex -Models
+./scripts/live-test.ps1 -Agent 'Claude Code' -Models
+./scripts/live-test.ps1 -Agent OpenCode -Models
+```
+
+アプリと同じ`ModelCatalog`を使う`agentnodify_catalog_probe`で取得し、
+結果は`build/{codex,claude,opencode}-models-sandbox.json`にモデル情報だけを保存します。
+CLI初期化応答のアカウント情報・認証情報・生ログはレポートに保存しません。
 OpenCodeは分離したXDG領域を使い、実テストでは`run --standalone`で専用サーバーを起動します。
 通常ユーザーの既存サービスとのポート衝突を避けるための設定で、権限自動承認ではありません。
 通常ユーザーの既存サービスへ明示接続する設定や
@@ -121,6 +133,10 @@ CodexはWindows既定TLSで`workspace routing discovery failed`となりまし�
 | Claude Code実モデル text / json / loop / and | 全4ケース成功（`claude-haiku-5-5`、Proログイン後） |
 | CTest core / gui_smoke | 成功 |
 | CTest gui | GUI改修後の再ビルド・テスト修正を行い成功（QtTest 8 passed / 0 failed） |
+| モデル一覧：Codex | 成功（7件、app-serverの`model/list`） |
+| モデル一覧：Claude Code | 成功（13件、制御プロトコル初期化応答の`models`） |
+| モデル一覧：OpenCode | 成功（25件、`models --standalone`） |
+| CTest catalog | 成功（QtTest 22 passed / 0 failed） |
 
 最新のサンドボックス内実テストは3エージェント×4ケースの全12件が成功。
 以前のOpenCodeの並列起動2回の失敗（`Standalone server exited before reporting readiness`）は

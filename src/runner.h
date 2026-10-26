@@ -19,7 +19,11 @@ struct Result {
 struct AgentConfig {
     QString codex = "codex";
     QString claude = "claude";
+#ifdef Q_OS_WIN
+    QString opencode = "opencode-cli";
+#else
     QString opencode = "opencode";
+#endif
     int timeoutSeconds = 600;
     bool opencodeStandalone = false;
 };

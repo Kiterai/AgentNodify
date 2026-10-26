@@ -7,8 +7,9 @@ Windows 11 / MSVC 2022 / Qt 6.12.0 Release構成。
 
 - コアのQtTest: 26 passed / 0 failed。
 - GUIのQtTest: 8 passed / 0 failed。
+- モデル一覧取得のQtTest: 22 passed / 0 failed。
 - GUI起動・編集・読み取り専用グラフのスモークテスト: 成功。
-- CTest: `core` / `gui` / `gui_smoke` の3件すべて成功。
+- CTest: `core` / `gui` / `catalog` / `gui_smoke` の4件すべて成功。
 
 GUIではフォーム編集・右ペイン同期・折り返しと改行による1〜8行の伸縮、
 始端／終端の黄色背景と1行表示、ノード連番の非表示、フロー一覧、ウィジェット寿命を確認。
@@ -17,6 +18,22 @@ GUIではフォーム編集・右ペイン同期・折り返しと改行によ�
 プレビュー1行に不要なスクロールバーが出る問題と右ペイン表示時の見切れも調整した。
 オフスクリーンテストではWindowsのフォントディレクトリを明示指定する。
 画像確認用の出力は`build/gui-editor.png`、詳細ログは`build/gui-results.txt` / `build/core-results.txt`。
+モデル一覧の回帰テストには3つのCLIプロトコル、Codexのページ送り・重複除去・非表示モデル、
+異常応答・出力上限・タイムアウト、キャッシュ、CLI変更、設定済みIDを変更しないUI更新を含む。
+
+### 実CLIからのモデル一覧取得
+
+サンドボックス内の専用プロファイルで、アプリと同じ`ModelCatalog`を使って確認した。
+プロンプトやモデルへの推論リクエストは送っていない。
+
+| エージェント | 結果 | 件数 |
+|---|---|---|
+| Codex | 成功 | 7 |
+| Claude Code | 成功 | 13 |
+| OpenCode CLI | 成功 | 25 |
+
+件数は確認時点のCLI設定による。取得結果は`build/*-models-sandbox.json`、
+自動テストの詳細は`build/catalog-results.txt`。認証情報・初期化応答全体は保存しない。
 
 今回追加した確認:
 

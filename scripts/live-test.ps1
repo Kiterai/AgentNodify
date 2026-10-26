@@ -7,11 +7,12 @@ param(
     [string]$CodexCaCertificate,
     [ValidateSet('Debug', 'Release')][string]$Configuration = 'Release',
     [switch]$Run,
-    [switch]$Login
+    [switch]$Login,
+    [switch]$Models
 )
-# No host-execution fallback. Without -Run/-Login this only checks local setup.
+# No host-execution fallback. Without -Run/-Login/-Models, only check the version.
 $ErrorActionPreference = 'Stop'
-if ($Run -and $Login) { throw 'Choose either -Run or -Login.' }
+if (([int]$Run.IsPresent + [int]$Login.IsPresent + [int]$Models.IsPresent) -gt 1) { throw 'Choose only one of -Run, -Login, or -Models.' }
 $root = Split-Path $PSScriptRoot -Parent
 $profile = Join-Path $root 'build/live-profile'
 $homePath = [Environment]::GetEnvironmentVariable('USERPROFILE')
@@ -28,6 +29,8 @@ if ([IO.Path]::GetExtension($Program) -ne '.exe' -or !(Test-Path -LiteralPath $P
 }
 $runner = Join-Path $root "build/$Configuration/agentnodify_live_test.exe"
 if ($Run -and !(Test-Path -LiteralPath $runner -PathType Leaf)) { throw "Build first: $runner" }
+$catalogProbe = Join-Path $root "build/$Configuration/agentnodify_catalog_probe.exe"
+if ($Models -and !(Test-Path -LiteralPath $catalogProbe -PathType Leaf)) { throw "Build first: $catalogProbe" }
 $variables = @{
     HOME = $profile
     USERPROFILE = $profile
@@ -73,6 +76,9 @@ try {
             'Claude Code' { & $Program auth login }
             'OpenCode' { & $Program auth login }
         }
+    } elseif ($Models) {
+        $slug = switch ($Agent) { 'Codex' { 'codex' }; 'Claude Code' { 'claude' }; 'OpenCode' { 'opencode' } }
+        & $catalogProbe --agent $Agent --program $Program --report "$root/build/$slug-models-sandbox.json"
     } elseif ($Run) {
         $model = switch ($Agent) {
             'Codex' { 'gpt-6-luna' }

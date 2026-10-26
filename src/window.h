@@ -31,6 +31,7 @@ private:
     AgentConfig config_;
     Graph *editGraph_, *workGraph_;
     Runner *runner_;
+    ModelCatalog *modelCatalog_;
     QtNodes::BasicGraphicsScene *editScene_, *workScene_;
     QtNodes::GraphicsView *editView_, *workView_;
     QWidget *activities_;

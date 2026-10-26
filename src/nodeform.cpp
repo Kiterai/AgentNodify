@@ -15,8 +15,16 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <cmath>
+#include <functional>
 
 namespace an {
+namespace {
+class ModelCombo : public QComboBox {
+public:
+    std::function<void()> beforePopup;
+    void showPopup() override { if (beforePopup) beforePopup(); QComboBox::showPopup(); }
+};
+}
 QString nodeDescription(Kind kind) {
     switch (kind) {
     case Kind::Start: return "フローの処理を開始します。開始時に空のオブジェクト {} を1回出力します。";
@@ -71,7 +79,7 @@ void TextPreview::resizeToText() {
     if (minimumHeight() != height || maximumHeight() != height) { setFixedHeight(height); emit heightChanged(); }
 }
 
-NodeForm::NodeForm(const Node &node, QWidget *parent) : QWidget(parent), node_(node) {
+NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : QWidget(parent), node_(node), catalog_(catalog) {
     setObjectName("nodeForm"); setFixedWidth(320);
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     setToolTip(nodeDescription(node.kind));
@@ -91,15 +99,34 @@ NodeForm::NodeForm(const Node &node, QWidget *parent) : QWidget(parent), node_(n
     layout->addLayout(form);
     if (node.kind == Kind::Agent) {
         agent_ = new QComboBox; agent_->setObjectName("nodeAgent"); agent_->addItems({"Codex", "Claude Code", "OpenCode"}); agent_->setCurrentText(node.agent);
-        model_ = new QComboBox; model_->setObjectName("nodeModel"); model_->setEditable(true);
-        model_->setMinimumContentsLength(10); model_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon); populateModels();
-        model_->setToolTip("モデルIDは編集できます。空欄はCLIの既定モデルです。");
-        form->addRow("エージェント", agent_); form->addRow("モデル", model_);
+        auto *combo = new ModelCombo; model_ = combo; model_->setObjectName("nodeModel"); model_->setEditable(true); model_->setCompleter(nullptr);
+        model_->lineEdit()->setPlaceholderText("CLI既定");
+        model_->setMinimumContentsLength(10); model_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+        auto *modelRow = new QWidget; auto *modelLayout = new QHBoxLayout(modelRow); modelLayout->setContentsMargins(0, 0, 0, 0); modelLayout->setSpacing(4);
+        modelLayout->addWidget(model_, 1); refreshModels_ = new QPushButton("↻"); refreshModels_->setObjectName("refreshModels"); refreshModels_->setFixedWidth(30);
+        modelLayout->addWidget(refreshModels_);
+        modelStatus_ = new QLabel; modelStatus_->setObjectName("modelCatalogStatus");
+        form->addRow("エージェント", agent_); form->addRow("モデル", modelRow); form->addRow("", modelStatus_);
+        populateModels();
+        combo->beforePopup = [this] { if (catalog_) catalog_->request(node_.agent); };
+        connect(refreshModels_, &QPushButton::clicked, this, [this] { if (catalog_) catalog_->request(node_.agent, true); });
+        if (catalog_) {
+            connect(catalog_, &ModelCatalog::changed, this, [this](const QString &agent) { if (agent == node_.agent) populateModels(); });
+            QTimer::singleShot(0, this, [this] { if (catalog_) catalog_->request(node_.agent); });
+        }
         connect(agent_, &QComboBox::currentTextChanged, this, [this](const QString &agent) {
             if (updating_) return;
             node_.agent = agent; node_.model.clear(); populateModels(); publish();
+            if (catalog_) catalog_->request(agent);
         });
-        connect(model_, &QComboBox::currentTextChanged, this, [this](const QString &model) { if (!updating_) { node_.model = model; publish(); } });
+        connect(model_, &QComboBox::currentTextChanged, this, [this](const QString &text) {
+            if (updating_) return;
+            auto id = text;
+            if (model_->currentIndex() >= 0 && text == model_->itemText(model_->currentIndex())) id = model_->currentData().toString();
+            node_.model = id;
+            if (text != id) { QSignalBlocker block(model_); model_->setEditText(id); }
+            publish();
+        });
         auto addPreview = [this, layout](const QString &label, const QString &field, const QString &text) {
             layout->addWidget(new QLabel(label));
             auto *preview = new TextPreview; preview->setObjectName(field + "Preview");
@@ -133,11 +160,30 @@ bool NodeForm::eventFilter(QObject *object, QEvent *event) {
 }
 void NodeForm::populateModels() {
     if (!model_) return;
-    QSignalBlocker block(model_); model_->clear(); model_->addItem("");
-    if (node_.agent == "Codex") model_->addItems({"gpt-6-luna"});
-    else if (node_.agent == "Claude Code") model_->addItems({"haiku", "claude-haiku-5-5"});
-    else model_->addItems({"openai/gpt-6-luna", "anthropic/claude-haiku-5-5"});
-    model_->setCurrentText(node_.model);
+    const auto cursor = model_->lineEdit()->cursorPosition();
+    const bool focused = model_->lineEdit()->hasFocus();
+    QSignalBlocker block(model_); model_->clear(); model_->addItem("CLI既定", "");
+    const auto entry = catalog_ ? catalog_->entry(node_.agent) : CatalogEntry{};
+    for (auto &info : entry.models) {
+        const auto label = info.name == info.id ? info.id : info.name + " · " + info.id;
+        model_->addItem(label, info.id);
+        model_->setItemData(model_->count() - 1, info.description, Qt::ToolTipRole);
+    }
+    auto selected = model_->findData(node_.model);
+    if (selected < 0) { model_->addItem(node_.model + "（現在の設定）", node_.model); selected = model_->count() - 1; }
+    model_->setCurrentIndex(selected); model_->setEditText(node_.model);
+    if (focused) model_->lineEdit()->setCursorPosition(cursor);
+    QString status = catalog_ ? "未取得" : "手入力";
+    QString tooltip = "モデルIDは手入力できます。空欄はCLIの既定モデルです。";
+    if (entry.state == CatalogState::Loading) status = "取得中…";
+    else if (entry.state == CatalogState::Ready) status = QString("%1件のモデル").arg(entry.models.size());
+    else if (entry.state == CatalogState::Error) {
+        status = entry.models.empty() ? "取得失敗 · 手入力可" : "取得失敗 · 前回の候補を表示";
+        tooltip = entry.error + "\n" + tooltip;
+    }
+    modelStatus_->setText(status); modelStatus_->setToolTip(tooltip); model_->setToolTip(tooltip);
+    refreshModels_->setEnabled(catalog_ && entry.state != CatalogState::Loading);
+    refreshModels_->setToolTip("モデル一覧を再取得\n" + tooltip); scheduleResize();
 }
 void NodeForm::publish() { if (!updating_) { emit edited(); scheduleResize(); } }
 void NodeForm::setNode(const Node &node) {

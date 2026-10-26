@@ -14,6 +14,7 @@ public:
     ~Graph() override;
     Flow flow;
     bool readOnly = false;
+    QPointer<ModelCatalog> modelCatalog;
     std::map<Id, State> states;
     int frame = 0;
     void replace(const Flow &value);

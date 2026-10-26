@@ -36,7 +36,7 @@ NodeForm *Graph::form(Id id) const {
     if (node.kind == Kind::Start || node.kind == Kind::End) return nullptr;
     if (forms_[id]) return forms_[id];
     auto *self = const_cast<Graph *>(this);
-    auto *widget = new NodeForm(node); forms_[id] = widget;
+    auto *widget = new NodeForm(node, nullptr, modelCatalog); forms_[id] = widget;
     connect(widget, &NodeForm::edited, self, [self, widget] { self->updateNode(widget->node()); });
     connect(widget, &NodeForm::activated, self, [self, id] { emit self->nodeActivated(id); });
     connect(widget, &NodeForm::textEditRequested, self, [self, id](const QString &field) { emit self->textEditRequested(id, field); });

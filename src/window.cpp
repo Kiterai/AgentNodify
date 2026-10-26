@@ -56,6 +56,8 @@ Window::Window(bool smoke) : smoke_(smoke) {
     editGraph_ = new Graph; editGraph_->setParent(this);
     workGraph_ = new Graph; workGraph_->setParent(this); workGraph_->readOnly = true;
     runner_ = new Runner(this);
+    modelCatalog_ = new ModelCatalog(this);
+    if (!smoke_) editGraph_->modelCatalog = modelCatalog_;
     buildUi();
     connect(editGraph_, &Graph::edited, this, [this] { changed(); });
     connect(runner_, &Runner::changed, this, [this](Id id) {
@@ -76,7 +78,9 @@ Window::Window(bool smoke) : smoke_(smoke) {
         for (auto &[id, state] : workGraph_->states) if (state == State::Running) emit workGraph_->nodeUpdated(id);
     }); animation->start();
     if (!smoke_) restore();
+    if (!smoke_) modelCatalog_->setConfig(config_);
     if (documents_.empty()) newFlow(); else { refreshActivities(); selectFlow(0); }
+    if (!smoke_) QTimer::singleShot(0, modelCatalog_, [this] { modelCatalog_->refreshAll(); });
 }
 void Window::buildUi() {
     auto *file = menuBar()->addMenu("ファイル");
@@ -94,6 +98,7 @@ void Window::buildUi() {
     tools->addAction("フローを検証", QKeySequence("F7"), this, [this] { validateFlow(); });
     tools->addAction("接続を追加…（自己ループ可）", this, [this] { connectNodes(); });
     tools->addAction("CLI設定…", this, [this] { settings(); });
+    tools->addAction("モデル一覧を更新", this, [this] { if (!smoke_) modelCatalog_->refreshAll(true); });
     auto *help = menuBar()->addMenu("ヘルプ");
     help->addAction("操作方法", this, [this] {
         QMessageBox::information(this, "操作方法", "左のボタンでノードを追加し、丸いポートをドラッグして接続します。\nパラメータはノード内のフォームで編集します。複数行欄をクリックすると右ペインで編集できます。\nノードや追加ボタンにカーソルを置くと機能説明を表示します。Deleteで選択要素を削除できます。\nAND入力は0-indexed、分岐は上から順・最後がelseです。\nポート数を変えると、そのノードの接続は解除されます。\n自己ループはツールメニューの「接続を追加」から設定できます。\nフローを保存し、プロジェクト作業タブでディレクトリを追加して実行します。\nCLIの認証と権限設定は各CLIで事前に行ってください。");
@@ -369,7 +374,10 @@ void Window::settings() {
     auto *hint = new QLabel("認証は各CLIで事前に行ってください。権限の自動承認は付与しません。\nWindowsでは.cmdではなくネイティブ.exeを指定します。\nOpenCodeのJSON出力はスキーマ指示＋受信後検証です。"); hint->setWordWrap(true); layout->addWidget(hint);
     auto *box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel); layout->addWidget(box);
     connect(box, &QDialogButtonBox::accepted, &dialog, &QDialog::accept); connect(box, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    if (dialog.exec() == QDialog::Accepted) { config_ = {codex->text(), claude->text(), opencode->text(), timeout->value()}; persist(); }
+    if (dialog.exec() == QDialog::Accepted) {
+        config_ = {codex->text(), claude->text(), opencode->text(), timeout->value()};
+        persist(); if (!smoke_) { modelCatalog_->setConfig(config_); modelCatalog_->refreshAll(true); }
+    }
 }
 void Window::reportError(const QString &message) { if (!smoke_) QMessageBox::warning(this, "エラー", message); statusBar()->showMessage(message, 15000); }
 void Window::persist() {
