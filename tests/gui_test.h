@@ -19,5 +19,7 @@ private slots:
     void embeddedComboCursor();
     void projectOpeners();
     void comboPopupWheel();
+    void nodeExecutionHistory();
+    void historyAfterRestart();
 };
 }

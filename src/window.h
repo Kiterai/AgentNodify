@@ -7,6 +7,8 @@
 #include <QLabel>
 #include <QSplitter>
 #include <QPushButton>
+#include <QToolButton>
+#include <QUuid>
 #include <QtNodes/BasicGraphicsScene>
 #include <QtNodes/GraphicsView>
 
@@ -22,7 +24,12 @@ private:
     friend class GuiTest;
     void removeFlow(int index);
     struct Document { Flow flow; QString path; bool dirty = false; };
-    struct Project { QString name, directory, flowPath; std::map<Id, Result> results; };
+    struct Project {
+        QString name, directory, flowPath;
+        std::map<Id, Result> results;
+        QString historyId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        std::vector<NodeExecution> history;
+    };
     std::vector<Document> documents_;
     std::vector<Project> projects_;
     int current_ = -1, project_ = -1;
@@ -39,6 +46,12 @@ private:
     QWidget *activities_;
     QVBoxLayout *activityLayout_;
     QListWidget *projectList_;
+    QListWidget *historyList_;
+    QToolButton *followHistoryButton_;
+    QString selectedHistory_, displayedExecution_;
+    bool followLatestHistory_ = true, historySaveFailed_ = false;
+    QTimer *historySaveTimer_;
+    std::map<QString, std::pair<QString, NodeExecution>> pendingHistory_;
     QTabWidget *tabs_;
     QSplitter *editorSplit_;
     QWidget *textPane_;
@@ -53,6 +66,10 @@ private:
     void refreshProjects();
     void selectProject(int index);
     void selectWorkNode(Id id);
+    void refreshWorkHistory();
+    void showWorkResult();
+    void recordNodeExecution(const NodeExecution &execution);
+    void flushHistory();
     void newFlow();
     void openFlow();
     bool saveFlow(bool saveAs = false);

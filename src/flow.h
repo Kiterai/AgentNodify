@@ -36,6 +36,7 @@ struct Edge {
     bool operator==(const Edge &) const = default;
 };
 struct Flow {
+    quint64 nextNodeId = 1;
     QString name = QStringLiteral("新しいフロー");
     std::map<Id, Node> nodes;
     std::vector<Edge> edges;

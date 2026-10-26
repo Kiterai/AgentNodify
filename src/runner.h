@@ -5,6 +5,8 @@
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QStringDecoder>
+#include <QDateTime>
+#include <QMetaType>
 #include <deque>
 #include <memory>
 
@@ -16,6 +18,16 @@ struct Result {
     QString log;
     Json output;
     quint64 executions = 0;
+};
+struct NodeExecution {
+    QString id;
+    Id node = 0;
+    QString title;
+    QDateTime startedAt, finishedAt;
+    State state = State::Running;
+    QString log;
+    Json output;
+    quint64 sequence = 0; // Assigned by the project's persistent history.
 };
 struct AgentConfig {
     QString codex = "codex";
@@ -41,6 +53,7 @@ public:
     bool running() const { return active_; }
     const std::map<Id, Result> &results() const { return results_; }
 signals:
+    void executionChanged(const an::NodeExecution &execution);
     void changed(unsigned int id);
     void fired(unsigned int id, quint64 execution, QString outputJson);
     void finished(bool success, QString message);
@@ -57,6 +70,7 @@ private:
     AgentConfig config_;
     QString directory_;
     std::map<Id, Result> results_;
+    std::map<Id, NodeExecution> activeExecutions_;
     std::map<Id, std::vector<std::deque<Json>>> tokens_;
     std::map<Id, std::unique_ptr<Job>> jobs_;
     bool active_ = false;
@@ -72,7 +86,10 @@ private:
     void fail(Id id, const QString &message);
     void stopJobs();
     void appendLog(Id id, const QByteArray &bytes);
+    void beginExecution(Id id);
+    void finishExecution(Id id);
 };
 // Exposed for protocol fixture tests. Never treat process output as commands.
 Json decodeAgentOutput(const QString &agent, const QByteArray &data, bool structured);
 }
+Q_DECLARE_METATYPE(an::NodeExecution)

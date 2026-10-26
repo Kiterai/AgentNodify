@@ -5,6 +5,7 @@
 #include <QFileInfo>
 #include <QCoreApplication>
 #include <QProcessEnvironment>
+#include <QUuid>
 #include <stdexcept>
 
 namespace an {
@@ -49,7 +50,7 @@ bool Runner::start(const Flow &flow, const QString &directory, const AgentConfig
     if (!QFileInfo(directory).isDir()) errors << "プロジェクトディレクトリが存在しません";
     if (!errors.isEmpty()) { emit finished(false, errors.join('\n')); return false; }
     flow_ = flow; directory_ = QFileInfo(directory).canonicalFilePath(); config_ = config;
-    results_.clear(); tokens_.clear(); jobs_.clear();
+    results_.clear(); tokens_.clear(); jobs_.clear(); activeExecutions_.clear();
     ++generation_; active_ = true; pumpScheduled_ = false; startPending_ = true;
     for (auto &[id, n] : flow_.nodes) {
         tokens_[id].resize(flow_.inputCount(n)); results_[id] = {}; emit changed(id);
@@ -61,12 +62,36 @@ void Runner::appendLog(Id id, const QByteArray &bytes) {
     log += QString::fromUtf8(bytes);
     constexpr qsizetype limit = 2 * 1024 * 1024;
     if (log.size() > limit) log = "[古いログを省略]\n" + log.right(limit);
+    if (activeExecutions_.contains(id)) {
+        activeExecutions_[id].log = log;
+        emit executionChanged(activeExecutions_.at(id));
+    }
     emit changed(id);
+}
+void Runner::beginExecution(Id id) {
+    auto &r = results_[id]; ++r.executions; r.state = State::Running; r.log.clear(); r.output = nullptr;
+    NodeExecution execution; execution.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    execution.node = id; execution.title = flow_.nodes.at(id).title;
+    if (execution.title.isEmpty()) execution.title = kindName(flow_.nodes.at(id).kind);
+    execution.startedAt = QDateTime::currentDateTimeUtc(); activeExecutions_[id] = execution;
+    emit executionChanged(activeExecutions_.at(id));
+    if (active_) emit changed(id);
+}
+void Runner::finishExecution(Id id) {
+    auto it = activeExecutions_.find(id); if (it == activeExecutions_.end()) return;
+    auto execution = std::move(it->second); activeExecutions_.erase(it);
+    const auto &r = results_.at(id); execution.state = r.state; execution.log = r.log; execution.output = r.output;
+    execution.finishedAt = QDateTime::currentDateTimeUtc(); emit executionChanged(execution);
 }
 void Runner::stopJobs() {
     for (auto &[id, j] : jobs_) {
         j->timer->stop(); j->process->disconnect(this);
         if (j->process->state() != QProcess::NotRunning) { j->process->kill(); j->process->waitForFinished(3000); }
+        auto &log = results_[id].log;
+        log += QString(j->stdoutDecoder.decode(j->process->readAllStandardOutput()));
+        log += QString(j->stderrDecoder.decode(j->process->readAllStandardError()));
+        constexpr qsizetype limit = 2 * 1024 * 1024;
+        if (log.size() > limit) log = "[古いログを省略]\n" + log.right(limit);
         j->timer->deleteLater(); j->process->deleteLater();
     }
     jobs_.clear();
@@ -74,20 +99,20 @@ void Runner::stopJobs() {
 void Runner::cancel() {
     if (!active_) return;
     active_ = false; stopJobs();
-    for (auto &[id, r] : results_) if (r.state == State::Running || r.state == State::Pending) { r.state = State::Cancelled; emit changed(id); }
+    for (auto &[id, r] : results_) if (r.state == State::Running || r.state == State::Pending) { r.state = State::Cancelled; finishExecution(id); emit changed(id); }
     emit finished(false, "実行を中止しました");
 }
 void Runner::fail(Id id, const QString &message) {
     if (!active_) return;
-    results_[id].state = State::Failed; results_[id].log += "\n" + message; emit changed(id);
-    active_ = false; stopJobs();
-    for (auto &[other, r] : results_) if (r.state == State::Running || r.state == State::Pending) { r.state = State::Cancelled; emit changed(other); }
+    active_ = false; results_[id].state = State::Failed; stopJobs();
+    results_[id].log += "\n" + message; finishExecution(id); emit changed(id);
+    for (auto &[other, r] : results_) if (r.state == State::Running || r.state == State::Pending) { r.state = State::Cancelled; finishExecution(other); emit changed(other); }
     const auto &node = flow_.nodes.at(id);
     emit finished(false, (node.title.isEmpty() ? kindName(node.kind) : node.title) + ": " + message);
 }
 void Runner::complete(Id id, const Json &output, int selected) {
     auto &r = results_[id]; r.state = State::Succeeded;
-    r.output = output; emit changed(id);
+    r.output = output; finishExecution(id); emit changed(id);
     emit fired(id, r.executions, QString::fromStdString(output.dump()));
     if (!active_) return; // A consumer may cancel from a progress signal.
     for (auto &e : flow_.edges) if (e.from == id) {
@@ -125,10 +150,10 @@ void Runner::pump() {
                 for (auto &queue : inputs) { input.push_back(std::move(queue.front())); queue.pop_front(); }
             } else if (n.kind == Kind::Start) { input = Json::object(); startPending_ = false; }
             else { input = std::move(inputs.at(0).front()); inputs.at(0).pop_front(); }
-            ++results_[id].executions;
+            beginExecution(id);
+            if (!active_) break;
             try {
                 if (n.kind == Kind::Agent) {
-                    results_[id].state = State::Running;
                     appendLog(id, QString("\n--- 実行 %1 ---\n").arg(results_[id].executions).toUtf8());
                     if (active_) launch(id, input);
                 }

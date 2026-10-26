@@ -29,4 +29,5 @@ private slots:
     void failuresAndCancellation();
     void rejectBeforeExecution();
     void effortArguments();
+    void historyStorage();
 };

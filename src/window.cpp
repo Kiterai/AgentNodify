@@ -2,6 +2,8 @@
 #include "theme.h"
 #include "graphview.h"
 #include "projectopener.h"
+#include "history.h"
+#include <algorithm>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QCheckBox>
@@ -71,15 +73,19 @@ Window::Window(bool smoke) : smoke_(smoke) {
     modelCatalog_ = new ModelCatalog(this);
     if (!smoke_) editGraph_->modelCatalog = workGraph_->modelCatalog = modelCatalog_;
     buildUi();
+    historySaveTimer_ = new QTimer(this); historySaveTimer_->setSingleShot(true); historySaveTimer_->setInterval(1000);
+    connect(historySaveTimer_, &QTimer::timeout, this, &Window::flushHistory);
+    connect(runner_, &Runner::executionChanged, this, &Window::recordNodeExecution);
     connect(editGraph_, &Graph::edited, this, [this] { changed(); });
     connect(runner_, &Runner::changed, this, [this](Id id) {
         if (project_ < 0 || !runner_->results().contains(id)) return;
-        projects_[size_t(project_)].results = runner_->results();
+        projects_[size_t(project_)].results[id] = runner_->results().at(id);
         workGraph_->states[id] = runner_->results().at(id).state; emit workGraph_->nodeUpdated(id);
-        if (workSelected_ == 0 && runner_->results().at(id).state == State::Running) workSelected_ = id;
-        if (workSelected_ == id) selectWorkNode(id);
+        if (workSelected_ == 0 && runner_->results().at(id).state == State::Running && workGraph_->flow.nodes.at(id).kind == Kind::Agent) selectWorkNode(id);
+        else if (workSelected_ == id) showWorkResult();
     });
     connect(runner_, &Runner::finished, this, [this](bool ok, const QString &message) {
+        flushHistory();
         runButton_->setEnabled(true); stopButton_->setEnabled(false);
         activities_->setEnabled(true); projectList_->setEnabled(true); tabs_->setTabEnabled(0, true);
         status_->setText(message); statusBar()->showMessage(message, 15000);
@@ -195,8 +201,27 @@ void Window::buildUi() {
     workSplit->addWidget(center);
     auto *details = new QWidget; auto *dl = new QVBoxLayout(details);
     nodeStatus_ = new QLabel("ノードを選択してください"); nodeStatus_->setWordWrap(true); dl->addWidget(nodeStatus_);
-    dl->addWidget(new QLabel("進行状況 / CLIログ")); log_ = new QPlainTextEdit; log_->setReadOnly(true); dl->addWidget(log_, 1);
-    dl->addWidget(new QLabel("次段への出力")); output_ = new QPlainTextEdit; output_->setReadOnly(true); new Highlighter(output_->document()); dl->addWidget(output_, 1);
+    auto *detailSplit = new QSplitter(Qt::Vertical); detailSplit->setObjectName("workDetailsSplitter"); dl->addWidget(detailSplit, 1);
+    auto *historyPane = new QWidget; auto *hl = new QVBoxLayout(historyPane); hl->setContentsMargins(0, 0, 0, 0);
+    auto *historyHeading = new QHBoxLayout; historyHeading->addWidget(new QLabel("実行履歴"), 1);
+    followHistoryButton_ = new QToolButton; followHistoryButton_->setObjectName("followLatestExecution");
+    followHistoryButton_->setText("最新を追従"); followHistoryButton_->setCheckable(true); followHistoryButton_->setChecked(true);
+    followHistoryButton_->setToolTip("最新のノード実行に自動で切り替えます。履歴を選択すると追従を停止します。");
+    historyHeading->addWidget(followHistoryButton_); hl->addLayout(historyHeading);
+    connect(followHistoryButton_, &QToolButton::toggled, this, [this](bool follow) { followLatestHistory_ = follow; if (follow) refreshWorkHistory(); });
+    historyList_ = new QListWidget; historyList_->setObjectName("nodeExecutionHistory");
+    historyList_->setToolTip("選択したノードの実行を日時順（新しい順）に表示します。ノード未選択時はプロジェクト全体を表示します。"); hl->addWidget(historyList_, 1); detailSplit->addWidget(historyPane);
+    connect(historyList_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *item) {
+        selectedHistory_ = item ? item->data(Qt::UserRole).toString() : QString();
+        if (item) { followLatestHistory_ = false; followHistoryButton_->setChecked(false); }
+        showWorkResult();
+    });
+    connect(historyList_, &QListWidget::itemClicked, this, [this](QListWidgetItem *) { followLatestHistory_ = false; followHistoryButton_->setChecked(false); });
+    auto *logPane = new QWidget; auto *ll = new QVBoxLayout(logPane); ll->setContentsMargins(0, 0, 0, 0);
+    ll->addWidget(new QLabel("進行状況 / CLIログ")); log_ = new QPlainTextEdit; log_->setReadOnly(true); ll->addWidget(log_, 1); detailSplit->addWidget(logPane);
+    auto *outputPane = new QWidget; auto *ol = new QVBoxLayout(outputPane); ol->setContentsMargins(0, 0, 0, 0);
+    ol->addWidget(new QLabel("次段への出力")); output_ = new QPlainTextEdit; output_->setReadOnly(true); new Highlighter(output_->document()); ol->addWidget(output_, 1); detailSplit->addWidget(outputPane);
+    detailSplit->setSizes({180, 280, 220});
     workSplit->addWidget(details); workSplit->setSizes({230, 780, 330}); workSplit->setStretchFactor(1, 1);
     tabs_->addTab(workSplit, "プロジェクト作業"); setCentralWidget(root);
     connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
@@ -379,22 +404,90 @@ void Window::selectProject(int index) {
     workView_->centerScene(); status_->setText(p.directory); workSelected_ = 0; selectWorkNode(0);
 }
 void Window::selectWorkNode(Id id) {
-    const bool same = workSelected_ == id;
+    workSelected_ = id; selectedHistory_.clear(); followLatestHistory_ = true;
+    refreshWorkHistory();
+}
+void Window::refreshWorkHistory() {
+    std::vector<const NodeExecution *> entries;
+    if (project_ >= 0) for (auto it = projects_[size_t(project_)].history.rbegin(); it != projects_[size_t(project_)].history.rend(); ++it)
+        if (workSelected_ == 0 || it->node == workSelected_) entries.push_back(&*it);
+    const int scroll = historyList_->verticalScrollBar()->value();
+    QSignalBlocker block(historyList_);
+    bool rebuild = historyList_->count() != int(entries.size());
+    if (!rebuild) for (int row = 0; row < int(entries.size()); ++row)
+        if (historyList_->item(row)->data(Qt::UserRole).toString() != entries[size_t(row)]->id) { rebuild = true; break; }
+    if (rebuild) historyList_->clear();
+    int selectedRow = -1;
+    for (int row = 0; row < int(entries.size()); ++row) {
+        const auto &entry = *entries[size_t(row)];
+        auto *item = rebuild ? new QListWidgetItem(historyList_) : historyList_->item(row);
+        item->setData(Qt::UserRole, entry.id);
+        item->setText(QString("%1 · %2\n%3").arg(entry.startedAt.toLocalTime().toString("yyyy/MM/dd HH:mm:ss.zzz"), stateName(entry.state), entry.title));
+        item->setToolTip("開始: " + entry.startedAt.toLocalTime().toString(Qt::ISODateWithMs) + "\n終了: " +
+            (entry.finishedAt.isValid() ? entry.finishedAt.toLocalTime().toString(Qt::ISODateWithMs) : entry.state == State::Running ? "実行中" : "不明（中断）"));
+        if (entry.id == selectedHistory_) selectedRow = row;
+    }
+    if ((followLatestHistory_ || selectedRow < 0) && !entries.empty()) selectedRow = 0;
+    historyList_->setCurrentRow(selectedRow);
+    selectedHistory_ = selectedRow >= 0 ? entries[size_t(selectedRow)]->id : QString();
+    if (followLatestHistory_) historyList_->scrollToTop(); else historyList_->verticalScrollBar()->setValue(scroll);
+    QSignalBlocker followBlock(followHistoryButton_); followHistoryButton_->setChecked(followLatestHistory_); followHistoryButton_->setEnabled(!entries.empty());
+    showWorkResult();
+}
+void Window::showWorkResult() {
+    const NodeExecution *execution = nullptr;
+    if (project_ >= 0 && !selectedHistory_.isEmpty()) {
+        const auto &history = projects_[size_t(project_)].history;
+        auto it = std::find_if(history.begin(), history.end(), [this](const auto &entry) { return entry.id == selectedHistory_; });
+        if (it != history.end()) execution = &*it;
+    }
+    const QString key = execution ? execution->id : QString("current:%1:%2").arg(project_).arg(workSelected_);
+    const bool same = displayedExecution_ == key; displayedExecution_ = key;
     const int scroll = log_->verticalScrollBar()->value();
     const bool atBottom = log_->verticalScrollBar()->value() == log_->verticalScrollBar()->maximum();
-    workSelected_ = id;
     auto updateLog = [this, same, scroll, atBottom](const QString &value) {
         if (log_->toPlainText() != value) log_->setPlainText(value);
         log_->verticalScrollBar()->setValue(!same || atBottom ? log_->verticalScrollBar()->maximum() : scroll);
     };
-    output_->clear();
-    if (!workGraph_->nodeExists(id)) { updateLog({}); nodeStatus_->setText("ノードを選択してください"); return; }
-    QString title = workGraph_->flow.nodes.at(id).title;
-    if (title.isEmpty()) title = kindName(workGraph_->flow.nodes.at(id).kind);
-    if (project_ < 0 || !projects_[size_t(project_)].results.contains(id)) { updateLog({}); nodeStatus_->setText(title + " — 待機"); return; }
-    auto &r = projects_[size_t(project_)].results.at(id);
+    auto updateOutput = [this](const QString &value) { if (output_->toPlainText() != value) output_->setPlainText(value); };
+    if (execution) {
+        nodeStatus_->setText(execution->title + " — " + stateName(execution->state) + "\n" + execution->startedAt.toLocalTime().toString("yyyy/MM/dd HH:mm:ss.zzz"));
+        updateLog(execution->log); updateOutput(execution->state == State::Succeeded ? display(execution->output) : QString()); return;
+    }
+    updateOutput({});
+    if (!workGraph_->nodeExists(workSelected_)) { updateLog({}); nodeStatus_->setText("ノードを選択してください"); return; }
+    const auto &node = workGraph_->flow.nodes.at(workSelected_);
+    const auto title = node.title.isEmpty() ? kindName(node.kind) : node.title;
+    if (project_ < 0 || !projects_[size_t(project_)].results.contains(workSelected_)) { updateLog({}); nodeStatus_->setText(title + " — 待機"); return; }
+    const auto &r = projects_[size_t(project_)].results.at(workSelected_);
     nodeStatus_->setText(title + " — " + stateName(r.state) + QString("（実行 %1 回）").arg(r.executions)); updateLog(r.log);
-    if (r.state == State::Succeeded) output_->setPlainText(display(r.output));
+    updateOutput(r.state == State::Succeeded ? display(r.output) : QString());
+}
+void Window::recordNodeExecution(const NodeExecution &value) {
+    if (project_ < 0) return;
+    auto &project = projects_[size_t(project_)]; auto entry = value;
+    auto it = std::find_if(project.history.begin(), project.history.end(), [&](const auto &old) { return old.id == entry.id; });
+    const bool added = it == project.history.end();
+    entry.sequence = added ? (project.history.empty() ? 1 : project.history.back().sequence + 1) : it->sequence;
+    if (added) project.history.push_back(entry); else *it = entry;
+    if (!smoke_) {
+        pendingHistory_[entry.id] = {dataDir_ + "/history/" + project.historyId, entry};
+        if (added || entry.state != State::Running) flushHistory();
+        else if (!historySaveTimer_->isActive()) historySaveTimer_->start(1000);
+    }
+    if (workSelected_ == 0 || workSelected_ == entry.node) refreshWorkHistory();
+}
+void Window::flushHistory() {
+    historySaveTimer_->stop(); auto pending = std::move(pendingHistory_); pendingHistory_.clear();
+    QString error;
+    for (const auto &[id, record] : pending) {
+        try { saveNodeExecution(record.first, record.second); }
+        catch (const std::exception &e) { pendingHistory_[id] = record; error = QString::fromUtf8(e.what()); }
+    }
+    if (!pendingHistory_.empty()) {
+        historySaveTimer_->start(5000);
+        if (!historySaveFailed_) { historySaveFailed_ = true; reportError(error); }
+    } else historySaveFailed_ = false;
 }
 void Window::addProject() {
     if (runner_->running() || current_ < 0) return;
@@ -408,6 +501,7 @@ void Window::executeFlow() {
     errors = modelSelectionErrors(editGraph_->flow); if (!errors.isEmpty()) { reportError(errors.join('\n')); return; }
     if (!smoke_ && QMessageBox::question(this, "フロー実行", "エージェントはプロジェクト内のファイルを読み取り・変更する可能性があります。\n各CLIの権限設定が適用されます。実行しますか？") != QMessageBox::Yes) return;
     workGraph_->replace(editGraph_->flow); projects_[size_t(project_)].results.clear();
+    persist(); // Preserve the project's history identity before the first record is written.
     activities_->setEnabled(false); projectList_->setEnabled(false); tabs_->setTabEnabled(0, false); runButton_->setEnabled(false); stopButton_->setEnabled(true);
     runner_->start(editGraph_->flow, projects_[size_t(project_)].directory, config_);
 }
@@ -439,7 +533,7 @@ void Window::persist() {
     if (smoke_) return;
     Json paths = Json::array(), projects = Json::array();
     for (auto &d : documents_) paths.push_back(str(d.path));
-    for (auto &p : projects_) projects.push_back({{"name", str(p.name)}, {"directory", str(p.directory)}, {"flow", str(p.flowPath)}});
+    for (auto &p : projects_) projects.push_back({{"name", str(p.name)}, {"directory", str(p.directory)}, {"flow", str(p.flowPath)}, {"historyId", str(p.historyId)}});
     Json j = {{"flows", paths}, {"projects", projects}, {"codex", str(config_.codex)}, {"claude", str(config_.claude)}, {"opencode", str(config_.opencode)}, {"timeout", config_.timeoutSeconds}};
     j["workspaceWrite"] = config_.workspaceWrite;
     QSaveFile file(dataDir_ + "/workspace.json"); auto bytes = QByteArray::fromStdString(j.dump(2));
@@ -463,7 +557,20 @@ void Window::restore() {
                 documents_.push_back({flow, qs(path), false});
             } catch (const std::exception &e) { reportError(qs(path) + ": " + QString::fromUtf8(e.what())); }
         }
-        for (auto &p : j.at("projects")) projects_.push_back({qs(p.at("name")), qs(p.at("directory")), qs(p.at("flow")), {}});
+        for (auto &p : j.at("projects")) {
+            Project project{qs(p.at("name")), qs(p.at("directory")), qs(p.at("flow")), {}};
+            if (p.contains("historyId") && p.at("historyId").is_string()) {
+                const auto uuid = QUuid(qs(p.at("historyId")));
+                if (!uuid.isNull()) project.historyId = uuid.toString(QUuid::WithoutBraces);
+            }
+            QStringList errors; project.history = loadNodeExecutions(dataDir_ + "/history/" + project.historyId, &errors);
+            for (const auto &entry : project.history) {
+                auto &result = project.results[entry.node]; ++result.executions;
+                result.state = entry.state; result.log = entry.log; result.output = entry.output;
+            }
+            projects_.push_back(std::move(project));
+            if (!errors.isEmpty()) reportError("一部の実行履歴を読み込めませんでした:\n" + errors.join('\n'));
+        }
     } catch (const std::exception &e) { reportError("設定の読み込みに失敗: " + QString::fromUtf8(e.what())); }
 }
 void Window::closeEvent(QCloseEvent *event) {
@@ -471,6 +578,8 @@ void Window::closeEvent(QCloseEvent *event) {
         if (QMessageBox::question(this, "終了", "実行を中止して終了しますか？") != QMessageBox::Yes) { event->ignore(); return; }
         runner_->cancel();
     }
+    flushHistory();
+    if (!pendingHistory_.empty() && QMessageBox::warning(this, "実行履歴の保存", "実行履歴を保存できていません。未保存の履歴を失っても終了しますか？", QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) { event->ignore(); return; }
     // Preserve every modified flow, not only the currently selected activity.
     for (auto &doc : documents_) if (doc.dirty && !smoke_) {
         try { doc.flow.save(doc.path); doc.dirty = false; }

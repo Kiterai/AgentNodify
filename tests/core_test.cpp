@@ -1,6 +1,8 @@
 #include "flow.h"
 #include "core_test.h"
 #include "runner.h"
+#include "history.h"
+#include <QUuid>
 #include <QtTest>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -163,15 +165,33 @@ using namespace an;
         Node branch; branch.id = 4; branch.kind = Kind::Branch; branch.rules = {{"count", "3", false}};
         f.nodes[4] = branch; f.edges = {{1, 3}, {3, 4}, {4, 3, 0, 0}, {4, 2, 1, 0}};
         QTemporaryDir dir; Runner r; QSignalSpy spy(&r, &Runner::finished);
+        std::vector<NodeExecution> history;
+        connect(&r, &Runner::executionChanged, &r, [&](const NodeExecution &entry) { if (entry.state != State::Running) history.push_back(entry); });
         QVERIFY2(r.start(f, dir.path(), config()), qPrintable(f.validate().join('\n'))); QVERIFY(spy.wait(15000));
         QVERIFY2(spy[0][0].toBool(), qPrintable(spy[0][1].toString()));
         QCOMPARE(r.results().at(3).executions, quint64(3));
         QCOMPARE(r.results().at(4).executions, quint64(3));
         QVERIFY(r.results().at(2).output == Json({{"count", 3}}));
+        QCOMPARE(history.size(), size_t(8));
+        int attempt = 0; QSet<QString> ids; std::map<Id, quint64> counts;
+        for (const auto &entry : history) {
+            QVERIFY(entry.startedAt.isValid()); QVERIFY(entry.finishedAt.isValid()); QVERIFY(entry.finishedAt >= entry.startedAt);
+            QVERIFY(entry.state == State::Succeeded); QVERIFY(!ids.contains(entry.id)); ids.insert(entry.id);
+            ++counts[entry.node];
+            if (entry.node == 3) {
+                ++attempt; QVERIFY(entry.output == Json({{"count", attempt}}));
+                QCOMPARE(entry.log.count("--- 実行"), 1);
+                QVERIFY(entry.log.contains(QString("--- 実行 %1 ---").arg(attempt)));
+            }
+        }
+        QCOMPARE(attempt, 3);
+        for (const auto &[id, result] : r.results()) QCOMPARE(counts[id], result.executions);
         // A second run must not reuse scheduled events or old FIFO contents.
         QFile::remove(dir.filePath("counter.txt")); spy.clear();
         QVERIFY(r.start(f, dir.path(), config())); QVERIFY(spy.wait(15000));
         QCOMPARE(r.results().at(3).executions, quint64(3));
+        QCOMPARE(history.size(), size_t(16));
+        for (size_t i = 8; i < history.size(); ++i) QVERIFY(!ids.contains(history[i].id));
     }
     void CoreTest::repeatedAnd() {
         auto f = simple();
@@ -237,7 +257,9 @@ using namespace an;
     }
     void CoreTest::failuresAndCancellation() {
         QTemporaryDir dir; auto f = simple(); f.nodes[3].prompt = "FAIL";
-        Runner r; QSignalSpy spy(&r, &Runner::finished); QVERIFY(r.start(f, dir.path(), config())); QVERIFY(spy.wait(15000));
+        Runner r; QSignalSpy spy(&r, &Runner::finished); std::vector<NodeExecution> history;
+        connect(&r, &Runner::executionChanged, &r, [&](const NodeExecution &entry) { if (entry.node == 3 && entry.state != State::Running) history.push_back(entry); });
+        QVERIFY(r.start(f, dir.path(), config())); QVERIFY(spy.wait(15000));
         QVERIFY(!spy[0][0].toBool()); QVERIFY(r.results().at(3).state == State::Failed);
         spy.clear(); f.nodes[3].prompt = "SLEEP"; QVERIFY(r.start(f, dir.path(), config()));
         QTRY_VERIFY(r.results().at(3).state == State::Running); r.cancel();
@@ -247,11 +269,37 @@ using namespace an;
         spy.clear(); f.nodes[3].prompt = "BAD_SCHEMA"; f.nodes[3].schema = schema(); QVERIFY(r.start(f, dir.path(), config())); QVERIFY(spy.wait(15000));
         QVERIFY(!spy[0][0].toBool());
         spy.clear(); c.codex = dir.filePath("missing.exe"); f = simple(); QVERIFY(r.start(f, dir.path(), c)); QVERIFY(spy.wait(10000)); QVERIFY(!spy[0][0].toBool());
+        QCOMPARE(history.size(), size_t(5)); QVERIFY(history[1].state == State::Cancelled);
+        for (size_t i = 0; i < history.size(); ++i) {
+            QVERIFY(history[i].startedAt.isValid() && history[i].finishedAt.isValid());
+            if (i != 1) { QVERIFY(history[i].state == State::Failed); QVERIFY(!history[i].log.isEmpty()); }
+        }
     }
     void CoreTest::rejectBeforeExecution() {
-        QTemporaryDir dir; Runner r; QSignalSpy spy(&r, &Runner::finished);
-        auto f = simple(); f.edges.push_back({3, 3, 0, 9}); QVERIFY(!r.start(f, dir.path(), config())); QCOMPARE(spy.count(), 1);
+        QTemporaryDir dir; Runner r; QSignalSpy spy(&r, &Runner::finished), history(&r, &Runner::executionChanged);
+        auto f = simple(); f.edges.push_back({3, 3, 0, 9}); QVERIFY(!r.start(f, dir.path(), config())); QCOMPARE(spy.count(), 1); QCOMPARE(history.count(), 0);
         QVERIFY(!r.running());
         spy.clear(); QVERIFY(!r.start(simple(), dir.filePath("nonexistent"), config())); QCOMPARE(spy.count(), 1);
+    }
+    void CoreTest::historyStorage() {
+        QTemporaryDir dir; QVERIFY(dir.isValid()); const auto path = dir.filePath("history");
+        QVERIFY(loadNodeExecutions(path).empty());
+        NodeExecution first; first.id = QUuid::createUuid().toString(QUuid::WithoutBraces); first.node = 3; first.title = "日本語ノード";
+        first.startedAt = QDateTime::currentDateTimeUtc(); first.finishedAt = first.startedAt.addMSecs(100); first.sequence = 1;
+        first.state = State::Succeeded; first.log = "1回目のログ\n"; first.output = {{"count", 1}};
+        saveNodeExecution(path, first);
+        auto second = first; second.id = QUuid::createUuid().toString(QUuid::WithoutBraces); second.sequence = 2;
+        second.state = State::Running; second.finishedAt = {}; second.output = nullptr; second.log = "2回目の途中";
+        saveNodeExecution(path, second);
+        QStringList errors; auto history = loadNodeExecutions(path, &errors); QVERIFY(errors.isEmpty()); QCOMPARE(history.size(), size_t(2));
+        QCOMPARE(history[0].id, first.id); QCOMPARE(history[0].title, first.title); QCOMPARE(history[0].startedAt, first.startedAt);
+        QCOMPARE(history[0].finishedAt, first.finishedAt); QCOMPARE(history[0].log, first.log); QVERIFY(history[0].output == first.output);
+        QVERIFY(history[1].state == State::Cancelled); QVERIFY(history[1].log.contains("中断")); QVERIFY(!history[1].finishedAt.isValid());
+        second.state = State::Failed; second.finishedAt = second.startedAt.addMSecs(200); second.log = "エラー"; saveNodeExecution(path, second);
+        QFile damaged(QDir(path).filePath("damaged.json")); QVERIFY(damaged.open(QIODevice::WriteOnly)); damaged.write("{broken"); damaged.close();
+        errors.clear(); history = loadNodeExecutions(path, &errors); QCOMPARE(history.size(), size_t(2)); QCOMPARE(errors.size(), 1);
+        QVERIFY(history[1].state == State::Failed); QCOMPARE(history[1].log, QString("エラー"));
+        auto invalid = first; invalid.id = "../outside"; QVERIFY_EXCEPTION_THROWN(saveNodeExecution(path, invalid), std::exception);
+        invalid = first; invalid.state = State::Skipped; QVERIFY_EXCEPTION_THROWN(saveNodeExecution(path, invalid), std::exception);
     }
 QTEST_GUILESS_MAIN(CoreTest)

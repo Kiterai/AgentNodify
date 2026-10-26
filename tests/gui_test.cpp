@@ -3,6 +3,8 @@
 #include "nodeform.h"
 #include "theme.h"
 #include "projectopener.h"
+#include "history.h"
+#include <QTemporaryDir>
 #include <QtTest>
 #include <QComboBox>
 #include <QDir>
@@ -353,6 +355,64 @@ void GuiTest::comboPopupWheel() {
     combo->hidePopup();
     QWheelEvent canvas(QPointF(5, 5), QPointF(window.editView_->viewport()->mapToGlobal(QPoint(5, 5))), QPoint(), QPoint(0, 120), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
     QApplication::sendEvent(window.editView_->viewport(), &canvas); QVERIFY(window.editView_->transform() != scale);
+}
+void GuiTest::nodeExecutionHistory() {
+    QTemporaryDir directory; QVERIFY(directory.isValid()); Window window(true); window.show();
+    const auto agent = window.editGraph_->addNode("agent"), branch = window.editGraph_->addNode("branch");
+    auto node = window.editGraph_->flow.nodes.at(agent); node.model = "fixture"; node.prompt = "COUNT_TO_3";
+    node.title = "ループの実行履歴"; node.schema = R"({"type":"object","properties":{"count":{"type":"integer"}},"required":["count"]})";
+    window.editGraph_->updateNode(node);
+    auto condition = window.editGraph_->flow.nodes.at(branch); condition.rules = {{"count", "3", false}}; window.editGraph_->updateNode(condition);
+    window.editGraph_->addConnection({1, 0, agent, 0}); window.editGraph_->addConnection({agent, 0, branch, 0});
+    window.editGraph_->addConnection({branch, 0, agent, 0}); window.editGraph_->addConnection({branch, 1, 2, 0});
+    window.editGraph_->setNodeData(1, NodeRole::Position, QPointF(0, 160)); window.editGraph_->setNodeData(agent, NodeRole::Position, QPointF(180, 40));
+    window.editGraph_->setNodeData(branch, NodeRole::Position, QPointF(650, 40)); window.editGraph_->setNodeData(2, NodeRole::Position, QPointF(1100, 160));
+    window.projects_.push_back({"履歴のテスト", directory.path(), window.documents_[0].path, {}}); window.refreshProjects();
+    window.config_.codex = QCoreApplication::applicationDirPath() + "/fake_agent.exe";
+#ifndef Q_OS_WIN
+    window.config_.codex = QCoreApplication::applicationDirPath() + "/fake_agent";
+#endif
+    window.tabs_->setCurrentIndex(1); window.selectWorkNode(agent);
+    auto *split = window.findChild<QSplitter *>("workDetailsSplitter"); QVERIFY(split); QCOMPARE(split->count(), 3); QCOMPARE(split->orientation(), Qt::Vertical);
+    QSignalSpy done(window.runner_, &Runner::finished); window.executeFlow(); QTRY_COMPARE(done.count(), 1); QVERIFY(done[0][0].toBool());
+    QCOMPARE(window.projects_[0].history.size(), size_t(8)); QCOMPARE(window.historyList_->count(), 3);
+    QVERIFY(window.output_->toPlainText().contains('3'));
+    window.historyList_->setCurrentRow(2); const auto firstId = window.selectedHistory_;
+    QVERIFY(window.log_->toPlainText().contains("--- 実行 1 ---")); QVERIFY(!window.log_->toPlainText().contains("--- 実行 2 ---"));
+    QVERIFY(window.output_->toPlainText().contains('1')); QVERIFY(window.historyList_->item(2)->text().contains(QDate::currentDate().toString("yyyy/MM/dd")));
+    const auto firstLog = window.log_->toPlainText();
+    QVERIFY(QFile::remove(directory.filePath("counter.txt"))); done.clear(); window.executeFlow(); QTRY_COMPARE(done.count(), 1); QVERIFY(done[0][0].toBool());
+    QCOMPARE(window.projects_[0].history.size(), size_t(16)); QCOMPARE(window.historyList_->count(), 6);
+    QCOMPARE(window.selectedHistory_, firstId); QCOMPARE(window.log_->toPlainText(), firstLog); QVERIFY(window.output_->toPlainText().contains('1'));
+    window.historyList_->setCurrentRow(0); QVERIFY(window.output_->toPlainText().contains('3'));
+    window.selectWorkNode(0); QCOMPARE(window.historyList_->count(), 16); // Flat node history, no flow-run group rows.
+    window.projects_.push_back({"別のプロジェクト", directory.path(), window.documents_[0].path, {}}); window.selectProject(1);
+    QCOMPARE(window.historyList_->count(), 0); QVERIFY(window.log_->toPlainText().isEmpty());
+    window.selectProject(0); window.selectWorkNode(agent); QCOMPARE(window.historyList_->count(), 6);
+    window.historyList_->setCurrentRow(5); QCOMPARE(window.log_->toPlainText(), firstLog);
+    QVERIFY(!window.followLatestHistory_); QTest::mouseClick(window.followHistoryButton_, Qt::LeftButton);
+    QVERIFY(window.followLatestHistory_); QCOMPARE(window.historyList_->currentRow(), 0);
+    window.workView_->setupScale(0.7); window.workView_->centerScene(); QCoreApplication::processEvents();
+    QVERIFY(window.grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-node-history.png")));
+}
+void GuiTest::historyAfterRestart() {
+    QTemporaryDir directory; QVERIFY(directory.isValid()); QVERIFY(QDir().mkpath(directory.filePath("flows")));
+    Window original(true); original.dataDir_ = directory.path();
+    original.documents_[0].path = directory.filePath("flows/test.json"); original.documents_[0].flow.save(original.documents_[0].path);
+    original.projects_.push_back({"保存テスト", directory.path(), original.documents_[0].path, {}}); original.refreshProjects();
+    NodeExecution entry; entry.id = QUuid::createUuid().toString(QUuid::WithoutBraces); entry.node = 1; entry.title = "保存したノード";
+    entry.startedAt = QDateTime::currentDateTimeUtc(); entry.finishedAt = entry.startedAt.addMSecs(10);
+    entry.state = State::Succeeded; entry.log = "保存したログ\n日本語"; entry.output = {{"saved", true}};
+    original.smoke_ = false; original.recordNodeExecution(entry); original.persist(); original.smoke_ = true;
+    QVERIFY(original.pendingHistory_.empty());
+    Window restored(true); restored.dataDir_ = directory.path(); restored.documents_.clear(); restored.projects_.clear(); restored.restore();
+    QCOMPARE(restored.projects_.size(), size_t(1)); QCOMPARE(restored.projects_[0].historyId, original.projects_[0].historyId);
+    QCOMPARE(restored.projects_[0].history.size(), size_t(1)); QCOMPARE(restored.projects_[0].history[0].startedAt, entry.startedAt);
+    restored.selectFlow(0); restored.selectWorkNode(1); QCOMPARE(restored.historyList_->count(), 1);
+    QCOMPARE(restored.log_->toPlainText(), entry.log); QVERIFY(restored.output_->toPlainText().contains("true"));
+    QCOMPARE(restored.selectedHistory_, entry.id);
+    Graph graph; graph.replace(Flow::initial()); const auto deleted = graph.addNode("agent"); QVERIFY(graph.deleteNode(deleted));
+    graph.replace(Flow::fromJson(graph.flow.toJson())); QVERIFY(graph.addNode("agent") > deleted);
 }
 }
 QTEST_MAIN(an::GuiTest)

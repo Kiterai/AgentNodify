@@ -15,7 +15,9 @@ Graph::~Graph() {
 }
 void Graph::replace(const Flow &value) {
     for (auto &[id, widget] : forms_) if (widget && !widget->graphicsProxyWidget()) delete widget;
-    flow = value; sizes_.clear(); states.clear(); forms_.clear(); emit modelReset();
+    flow = value;
+    if (!flow.nodes.empty()) flow.nextNodeId = qMax(flow.nextNodeId, quint64(flow.nodes.rbegin()->first) + 1);
+    sizes_.clear(); states.clear(); forms_.clear(); emit modelReset();
 }
 void Graph::updateNode(const Node &node) {
     if (readOnly || !nodeExists(node.id)) return;
@@ -45,7 +47,9 @@ NodeForm *Graph::form(Id id) const {
     return widget;
 }
 Id Graph::newNodeId() {
-    Id id = 1; while (flow.nodes.contains(id)) ++id; return id;
+    if (!flow.nodes.empty()) flow.nextNodeId = qMax(flow.nextNodeId, quint64(flow.nodes.rbegin()->first) + 1);
+    if (flow.nextNodeId >= InvalidNodeId) return InvalidNodeId;
+    return Id(flow.nextNodeId++);
 }
 std::unordered_set<Id> Graph::allNodeIds() const {
     std::unordered_set<Id> result; for (auto &[id, n] : flow.nodes) result.insert(id); return result;
@@ -68,6 +72,7 @@ Id Graph::addNode(QString type) {
     if (kind == Kind::Start || kind == Kind::End)
         for (auto &[id, n] : flow.nodes) if (n.kind == kind) return InvalidNodeId;
     Node n; n.id = newNodeId(); n.kind = kind; n.title = kindName(kind);
+    if (n.id == InvalidNodeId) return InvalidNodeId;
     n.position = {double((n.id % 4) * 220), double((n.id / 4) * 160)};
     if (kind == Kind::Branch) n.rules.push_back({"result", "ok", true});
     flow.nodes[n.id] = n; emit nodeCreated(n.id); emit edited(); return n.id;
@@ -166,7 +171,7 @@ void Graph::loadNode(const QJsonObject &obj) {
         auto n = f.nodes.begin()->second; n.id = Id(obj["id"].toInt());
         if (nodeExists(n.id)) return;
         if (n.kind == Kind::Start || n.kind == Kind::End) return;
-        flow.nodes[n.id] = n; emit nodeCreated(n.id); emit edited();
+        flow.nodes[n.id] = n; flow.nextNodeId = qMax(flow.nextNodeId, quint64(n.id) + 1); emit nodeCreated(n.id); emit edited();
     } catch (...) {}
 }
 }

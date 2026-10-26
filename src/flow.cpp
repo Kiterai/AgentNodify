@@ -92,11 +92,12 @@ Json Flow::toJson() const {
             {"prompt", s(n.prompt)}, {"schema", s(n.schema)}, {"inputs", n.inputs}, {"rules", rules}});
     }
     for (auto &e : edges) es.push_back({{"from", e.from}, {"to", e.to}, {"output", e.output}, {"input", e.input}});
-    return {{"version", 1}, {"name", s(name)}, {"nodes", ns}, {"edges", es}};
+    const auto next = qMax(nextNodeId, nodes.empty() ? quint64(1) : quint64(nodes.rbegin()->first) + 1);
+    return {{"version", 1}, {"name", s(name)}, {"nodes", ns}, {"edges", es}, {"nextNodeId", next}};
 }
 Flow Flow::fromJson(const Json &j) {
     if (j.at("version") != 1) error("未対応のフローファイル形式です");
-    Flow f; f.name = q(j.at("name").get<std::string>());
+    Flow f; f.name = q(j.at("name").get<std::string>()); f.nextNodeId = j.value("nextNodeId", quint64(1));
     for (auto &v : j.at("nodes")) {
         Node n; n.id = v.at("id").get<Id>(); n.kind = parseKind(v.at("kind"));
         n.title = q(v.at("title")); n.position = {v.at("x").get<double>(), v.at("y").get<double>()};
@@ -107,6 +108,7 @@ Flow Flow::fromJson(const Json &j) {
         if (n.inputs > 256) error("AND入力数は256以下にしてください");
         for (auto &r : v.at("rules")) n.rules.push_back({q(r.at("variable")), q(r.at("value")), r.at("equals").get<bool>()});
         if (!f.nodes.emplace(n.id, n).second) error("ノードIDが重複しています");
+        f.nextNodeId = qMax(f.nextNodeId, quint64(n.id) + 1);
     }
     for (auto &e : j.at("edges")) f.edges.push_back({e.at("from"), e.at("to"), e.at("output"), e.at("input")});
     return f;
