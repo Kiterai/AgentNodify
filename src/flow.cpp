@@ -224,7 +224,7 @@ QStringList Flow::validate() const {
     };
     for (auto &[id, n] : nodes) { if (n.kind == Kind::Start) trace(id, false); if (n.kind == Kind::End) trace(id, true); }
     for (auto &[id, n] : nodes) {
-        const auto label = QString("[%1: %2] ").arg(id).arg(n.title);
+        const auto label = QString("[%1] ").arg(n.title.isEmpty() ? kindName(n.kind) : n.title);
         if (!reachable.contains(id)) errors << label + "始端から到達できません";
         if (!terminal.contains(id)) errors << label + "終端に到達できません";
         for (unsigned p = 0; p < inputCount(n); ++p) if (!incoming.contains({id, p})) errors << label + QString("入力%1が未接続です").arg(p);

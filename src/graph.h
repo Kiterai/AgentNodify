@@ -4,17 +4,21 @@
 #include <QtNodes/AbstractGraphModel>
 #include <QtNodes/NodeData>
 #include <QSize>
+#include <QPointer>
+#include "nodeform.h"
 
 namespace an {
 class Graph : public QtNodes::AbstractGraphModel {
     Q_OBJECT
 public:
+    ~Graph() override;
     Flow flow;
     bool readOnly = false;
     std::map<Id, State> states;
     int frame = 0;
     void replace(const Flow &value);
     void updateNode(const Node &node);
+    NodeForm *form(Id id) const;
     QtNodes::NodeId newNodeId() override;
     std::unordered_set<Id> allNodeIds() const override;
     std::unordered_set<QtNodes::ConnectionId> allConnectionIds(Id id) const override;
@@ -36,7 +40,10 @@ public:
     void loadNode(const QJsonObject &json) override;
 signals:
     void edited();
+    void textEditRequested(unsigned int id, QString field);
+    void nodeActivated(unsigned int id);
 private:
     std::map<Id, QSize> sizes_;
+    mutable std::map<Id, QPointer<NodeForm>> forms_;
 };
 }

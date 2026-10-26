@@ -10,7 +10,13 @@ namespace {
 ConnectionId connection(const Edge &e) { return {e.from, e.output, e.to, e.input}; }
 Edge edge(ConnectionId c) { return {c.outNodeId, c.inNodeId, c.outPortIndex, c.inPortIndex}; }
 }
-void Graph::replace(const Flow &value) { flow = value; sizes_.clear(); states.clear(); emit modelReset(); }
+Graph::~Graph() {
+    for (auto &[id, widget] : forms_) if (widget && !widget->graphicsProxyWidget()) delete widget;
+}
+void Graph::replace(const Flow &value) {
+    for (auto &[id, widget] : forms_) if (widget && !widget->graphicsProxyWidget()) delete widget;
+    flow = value; sizes_.clear(); states.clear(); forms_.clear(); emit modelReset();
+}
 void Graph::updateNode(const Node &node) {
     if (readOnly || !nodeExists(node.id)) return;
     // Changing indexed ports invalidates attached edges, never silently reassign them.
@@ -19,7 +25,23 @@ void Graph::updateNode(const Node &node) {
         auto attached = allConnectionIds(node.id);
         for (auto c : attached) deleteConnection(c);
     }
-    flow.nodes[node.id] = node; emit modelReset(); emit edited();
+    auto updated = node; updated.position = old.position;
+    flow.nodes[node.id] = updated;
+    if (forms_.contains(node.id) && forms_.at(node.id)) forms_.at(node.id)->setNode(updated);
+    emit nodeUpdated(node.id); emit edited();
+}
+NodeForm *Graph::form(Id id) const {
+    if (readOnly || !nodeExists(id)) return nullptr;
+    const auto &node = flow.nodes.at(id);
+    if (node.kind == Kind::Start || node.kind == Kind::End) return nullptr;
+    if (forms_[id]) return forms_[id];
+    auto *self = const_cast<Graph *>(this);
+    auto *widget = new NodeForm(node); forms_[id] = widget;
+    connect(widget, &NodeForm::edited, self, [self, widget] { self->updateNode(widget->node()); });
+    connect(widget, &NodeForm::activated, self, [self, id] { emit self->nodeActivated(id); });
+    connect(widget, &NodeForm::textEditRequested, self, [self, id](const QString &field) { emit self->textEditRequested(id, field); });
+    connect(widget, &NodeForm::sizeChanged, self, [self, id] { if (self->nodeExists(id)) emit self->nodeUpdated(id); });
+    return widget;
 }
 Id Graph::newNodeId() {
     Id id = 1; while (flow.nodes.contains(id)) ++id; return id;
@@ -64,9 +86,9 @@ QVariant Graph::nodeData(Id id, NodeRole role) const {
     case NodeRole::Type: return kindKey(n.kind);
     case NodeRole::Position: return n.position;
     case NodeRole::Size: return sizes_.contains(id) ? sizes_.at(id) : QSize(180, 80);
-    case NodeRole::CaptionVisible: return true;
+    case NodeRole::CaptionVisible: return n.kind != Kind::Start && n.kind != Kind::End;
     case NodeRole::Caption: {
-        QString title = QString("%1 · %2").arg(id).arg(n.title);
+        QString title = n.title.isEmpty() ? kindName(n.kind) : n.title;
         if (states.contains(id)) {
             auto state = states.at(id);
             QString icon = state == State::Running ? QStringList{"◐", "◓", "◑", "◒"}.at(frame % 4) : state == State::Succeeded ? "✓" : state == State::Failed ? "!" : "·";
@@ -76,7 +98,7 @@ QVariant Graph::nodeData(Id id, NodeRole role) const {
     }
     case NodeRole::InPortCount: return flow.inputCount(n);
     case NodeRole::OutPortCount: return flow.outputCount(n);
-    case NodeRole::Widget: return QVariant::fromValue<QWidget *>(nullptr);
+    case NodeRole::Widget: return QVariant::fromValue<QWidget *>(form(id));
     case NodeRole::Style: {
         NodeStyle style;
         QColor accent = n.kind == Kind::Agent ? QColor("#74b9ff") : n.kind == Kind::Branch ? QColor("#ffc576") : QColor("#79d8bd");
@@ -88,6 +110,11 @@ QVariant Graph::nodeData(Id id, NodeRole role) const {
         style.NormalBoundaryColor = accent; style.SelectedBoundaryColor = QColor("#ffffff");
         style.GradientColor0 = style.GradientColor1 = style.GradientColor2 = style.GradientColor3 = QColor("#252d3b");
         style.FontColor = QColor("#ecf0f7"); style.FontColorFaded = QColor("#9caec7");
+        if (n.kind == Kind::Start || n.kind == Kind::End) {
+            style.GradientColor0 = style.GradientColor1 = style.GradientColor2 = style.GradientColor3 = QColor("#efc65e");
+            style.FontColor = style.FontColorFaded = QColor("#30260e");
+            accent = QColor("#8f6d18"); style.NormalBoundaryColor = accent;
+        }
         style.ConnectionPointColor = accent; style.FilledConnectionPointColor = accent;
         return style.toJson().toVariantMap();
     }
@@ -109,6 +136,7 @@ QVariant Graph::portData(Id id, PortType type, unsigned index, PortRole role) co
     if (role == PortRole::CaptionVisible) return true;
     if (role == PortRole::Caption) {
         auto &n = flow.nodes.at(id);
+        if (n.kind == Kind::Start || n.kind == Kind::End) return kindName(n.kind);
         if (type == PortType::In) return n.kind == Kind::And ? QString("入力 %1").arg(index) : QString("入力");
         if (n.kind == Kind::Branch) return index == n.rules.size() ? QString("else") : QString("if %1").arg(index);
         return QString("出力");
@@ -122,7 +150,8 @@ bool Graph::deleteConnection(ConnectionId c) {
 bool Graph::deleteNode(Id id) {
     if (readOnly || !nodeExists(id) || flow.nodes.at(id).kind == Kind::Start || flow.nodes.at(id).kind == Kind::End) return false;
     auto cs = allConnectionIds(id); for (auto c : cs) deleteConnection(c);
-    flow.nodes.erase(id); sizes_.erase(id); emit nodeDeleted(id); emit edited(); return true;
+    if (forms_.contains(id) && forms_.at(id) && !forms_.at(id)->graphicsProxyWidget()) delete forms_.at(id);
+    flow.nodes.erase(id); sizes_.erase(id); forms_.erase(id); emit nodeDeleted(id); emit edited(); return true;
 }
 QJsonObject Graph::saveNode(Id id) const {
     Flow f; f.nodes[id] = flow.nodes.at(id);

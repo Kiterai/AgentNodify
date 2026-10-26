@@ -1,10 +1,19 @@
 {
-  "rules": [
-    {
-      "shell": "git-bash",
-      "match": "prefix",
-      "pattern": "C:/Users/User1/Documents/dev/AgentNodify/build/Release/agentnodify_live_test.exe",
-      "effect": "allow"
+  "sandbox": {
+    "filesystem": {
+      "allowRead": [
+        "C:\\Users\\User1\\AppData\\Local\\Programs\\@opencode-aidesktop\\resources"
+      ]
+    },
+    "network": {
+      "allowedDomains": [
+        "api.openai.com",
+        "api.anthropic.com",
+        "auth.openai.com",
+        "chatgpt.com"
+      ]
     }
+  },
+  "rules": [
   ]
 }

@@ -6,7 +6,6 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFormLayout>
-#include <QHeaderView>
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QMenuBar>
@@ -18,11 +17,12 @@
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QSyntaxHighlighter>
-#include <QTableWidget>
+#include <QToolButton>
 #include <QTextCharFormat>
 #include <QUuid>
 #include <QVBoxLayout>
 #include <QRegularExpression>
+#include <QtNodes/internal/NodeGraphicsObject.hpp>
 
 namespace an {
 namespace {
@@ -96,48 +96,52 @@ void Window::buildUi() {
     tools->addAction("CLI設定…", this, [this] { settings(); });
     auto *help = menuBar()->addMenu("ヘルプ");
     help->addAction("操作方法", this, [this] {
-        QMessageBox::information(this, "操作方法", "左のボタンでノードを追加し、丸いポートをドラッグして接続します。\nノードをクリックしてパラメータを編集します。Deleteで選択要素を削除できます。\nAND入力は0-indexed、分岐はifの番号順・最後がelseです。\nポート数を変えると、そのノードの接続は解除されます。\nフローを保存し、プロジェクト作業タブでディレクトリを追加して実行します。\nCLIの認証と権限設定は各CLIで事前に行ってください。");
+        QMessageBox::information(this, "操作方法", "左のボタンでノードを追加し、丸いポートをドラッグして接続します。\nパラメータはノード内のフォームで編集します。複数行欄をクリックすると右ペインで編集できます。\nノードや追加ボタンにカーソルを置くと機能説明を表示します。Deleteで選択要素を削除できます。\nAND入力は0-indexed、分岐は上から順・最後がelseです。\nポート数を変えると、そのノードの接続は解除されます。\n自己ループはツールメニューの「接続を追加」から設定できます。\nフローを保存し、プロジェクト作業タブでディレクトリを追加して実行します。\nCLIの認証と権限設定は各CLIで事前に行ってください。");
     });
     auto *root = new QWidget; auto *row = new QHBoxLayout(root); row->setContentsMargins(0, 0, 0, 0); row->setSpacing(0);
-    auto *bar = new QWidget; bar->setFixedWidth(112); auto *barLayout = new QVBoxLayout(bar);
-    auto *brand = new QLabel("AN"); brand->setAlignment(Qt::AlignCenter); brand->setStyleSheet("font-size:24px;color:#87b9ff;font-weight:bold;padding:12px;"); barLayout->addWidget(brand);
-    activities_ = new QListWidget; activities_->setWordWrap(true); barLayout->addWidget(activities_, 1);
-    connect(activities_, &QListWidget::currentRowChanged, this, [this](int index) { selectFlow(index); });
-    button("＋", barLayout, [this] { newFlow(); }); row->addWidget(bar);
-    tabs_ = new QTabWidget; row->addWidget(tabs_, 1);
+    auto *bar = new QWidget; bar->setFixedWidth(88); auto *barLayout = new QVBoxLayout(bar); barLayout->setContentsMargins(2, 6, 2, 6);
+    auto *flowScroll = new QScrollArea; flowScroll->setObjectName("flowScroll"); flowScroll->setWidgetResizable(true);
+    flowScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    activities_ = new QWidget; activities_->setObjectName("flowRail"); activities_->setMinimumWidth(70);
+    activityLayout_ = new QVBoxLayout(activities_); activityLayout_->setContentsMargins(6, 10, 6, 10); activityLayout_->setSpacing(12);
+    flowScroll->setWidget(activities_); barLayout->addWidget(flowScroll, 1); row->addWidget(bar);
+    tabs_ = new QTabWidget; tabs_->setObjectName("mainTabs"); row->addWidget(tabs_, 1);
     editorSplit_ = new QSplitter;
     auto *left = new QWidget; auto *leftLayout = new QVBoxLayout(left);
     leftLayout->addWidget(new QLabel("ノードを追加"));
-    for (Kind k : {Kind::Start, Kind::Agent, Kind::And, Kind::Branch, Kind::End})
-        button("＋ " + kindName(k), leftLayout, [this, k] {
+    for (Kind k : {Kind::Start, Kind::Agent, Kind::And, Kind::Branch, Kind::End}) {
+        auto *add = button("＋ " + kindName(k), leftLayout, [this, k] {
             auto id = editGraph_->addNode(kindKey(k));
             if (id == QtNodes::InvalidNodeId) statusBar()->showMessage("始端・終端はそれぞれ1つだけです", 5000);
             else selectNode(id);
         });
-    button("接続を追加…", leftLayout, [this] { connectNodes(); });
+        add->setToolTip(nodeDescription(k)); add->setObjectName("addNode_" + kindKey(k));
+    }
     button("フローを検証", leftLayout, [this] { validateFlow(); });
-    auto *scroll = new QScrollArea; scroll->setWidgetResizable(true);
-    parameters_ = new QWidget; parameters_->setLayout(new QVBoxLayout); scroll->setWidget(parameters_); leftLayout->addWidget(scroll, 1);
-    left->setMinimumWidth(230); editorSplit_->addWidget(left);
+    leftLayout->addStretch(); left->setObjectName("nodePalette");
+    left->setMinimumWidth(180); editorSplit_->addWidget(left);
     editScene_ = new QtNodes::BasicGraphicsScene(*editGraph_, this); editView_ = new QtNodes::GraphicsView(editScene_);
     editView_->setScaleRange(0.15, 3); editorSplit_->addWidget(editView_);
+    editView_->setObjectName("flowEditorView");
     connect(editScene_, &QtNodes::BasicGraphicsScene::nodeClicked, this, [this](Id id) { selectNode(id); });
     connect(editGraph_, &QtNodes::AbstractGraphModel::nodeDeleted, this, [this](Id id) { if (selected_ == id) { selected_ = 0; textPane_->hide(); selectNode(0); } });
-    textPane_ = new QWidget; auto *textLayout = new QVBoxLayout(textPane_);
+    connect(editGraph_, &Graph::textEditRequested, this, [this](Id id, const QString &field) { selectNode(id); showText(field); });
+    connect(editGraph_, &Graph::nodeActivated, this, [this](Id id) { selectNode(id); });
+    textPane_ = new QWidget; textPane_->setObjectName("textEditorPane"); auto *textLayout = new QVBoxLayout(textPane_);
     auto *heading = new QHBoxLayout; textTitle_ = new QLabel; heading->addWidget(textTitle_, 1);
     button("閉じる", heading, [this] { textPane_->hide(); field_.clear(); }); textLayout->addLayout(heading);
-    text_ = new QPlainTextEdit; text_->setFont(QFont("Consolas", 11)); new Highlighter(text_->document()); textLayout->addWidget(text_, 1);
+    text_ = new QPlainTextEdit; text_->setObjectName("parameterEditor"); text_->setFont(QFont("Consolas", 11)); new Highlighter(text_->document()); textLayout->addWidget(text_, 1);
     textError_ = new QLabel; textError_->setWordWrap(true); textError_->setStyleSheet("color:#ff9d9d"); textLayout->addWidget(textError_);
     connect(text_, &QPlainTextEdit::textChanged, this, [this] {
         if (loading_ || !editGraph_->nodeExists(selected_) || field_.isEmpty()) return;
-        auto &n = editGraph_->flow.nodes.at(selected_);
+        auto n = editGraph_->flow.nodes.at(selected_);
         if (field_ == "schema") n.schema = text_->toPlainText(); else n.prompt = text_->toPlainText();
-        changed(); textError_->clear();
+        editGraph_->updateNode(n); textError_->clear();
         if (field_ == "schema" && !n.schema.trimmed().isEmpty()) {
             try { checkSchema(parseJson(n.schema)); } catch (const std::exception &e) { textError_->setText(QString::fromUtf8(e.what())); }
         }
     });
-    editorSplit_->addWidget(textPane_); textPane_->hide(); editorSplit_->setSizes({260, 830, 360}); editorSplit_->setStretchFactor(1, 1);
+    editorSplit_->addWidget(textPane_); textPane_->hide(); editorSplit_->setSizes({190, 830, 360}); editorSplit_->setStretchFactor(1, 1);
     tabs_->addTab(editorSplit_, "フロー編集");
     auto *workSplit = new QSplitter;
     auto *projectPane = new QWidget; auto *pl = new QVBoxLayout(projectPane); pl->addWidget(new QLabel("プロジェクト"));
@@ -157,6 +161,14 @@ void Window::buildUi() {
     stopButton_ = button("■ 停止", toolbar, [this] { runner_->cancel(); }); stopButton_->setEnabled(false); cl->addLayout(toolbar);
     workScene_ = new QtNodes::BasicGraphicsScene(*workGraph_, this); workView_ = new QtNodes::GraphicsView(workScene_); workView_->setScaleRange(0.15, 3); cl->addWidget(workView_, 1);
     connect(workScene_, &QtNodes::BasicGraphicsScene::nodeClicked, this, [this](Id id) { selectWorkNode(id); });
+    auto tooltips = [this](Graph *graph, QtNodes::BasicGraphicsScene *scene) {
+        auto update = [graph, scene](Id id) {
+            if (auto *item = scene->nodeGraphicsObject(id)) item->setToolTip(nodeDescription(graph->flow.nodes.at(id).kind));
+        };
+        connect(graph, &QtNodes::AbstractGraphModel::nodeCreated, this, update);
+        connect(graph, &QtNodes::AbstractGraphModel::modelReset, this, [graph, update] { for (auto &[id, node] : graph->flow.nodes) update(id); });
+    };
+    tooltips(editGraph_, editScene_); tooltips(workGraph_, workScene_);
     workSplit->addWidget(center);
     auto *details = new QWidget; auto *dl = new QVBoxLayout(details);
     nodeStatus_ = new QLabel("ノードを選択してください"); nodeStatus_->setWordWrap(true); dl->addWidget(nodeStatus_);
@@ -177,6 +189,14 @@ void Window::buildUi() {
         QLineEdit, QPlainTextEdit, QListWidget, QComboBox, QSpinBox, QTableWidget { background:#121925; border:1px solid #354259; padding:4px; selection-background-color:#3b5680; }
         QTabBar::tab { padding:12px 24px; } QTabBar::tab:selected { color:#9bc7ff; border-bottom:2px solid #83b6ff; }
         QSplitter::handle { background:#344055; width:5px; } QScrollArea { border:0; }
+        QWidget#flowRail { background:#141b27; border:1px solid #354259; border-radius:14px; }
+        QScrollArea#flowScroll { background:transparent; border:0; }
+        QToolButton[flowTile="true"] { background:#2b3b53; color:#dce9ff; border:2px solid transparent; border-radius:14px; padding:0; font-size:17px; font-weight:bold; }
+        QToolButton[flowTile="true"]:hover { background:#435c7e; border-color:#87afd9; }
+        QToolButton[flowTile="true"]:checked { background:#345580; border:3px solid #b5d5ff; }
+        QToolButton[flowTile="true"]:checked:hover { background:#466f9f; border-color:#e5f1ff; }
+        QToolButton#addFlowTile { background:#202c3e; color:#acd4ff; border:2px dashed #536c8f; font-size:28px; }
+        QToolButton#addFlowTile:hover { background:#3c5679; border-color:#c2dfff; color:white; }
     )");
     statusBar()->showMessage("フローを作成するか、既存のJSONフローを開いてください");
 }
@@ -187,9 +207,24 @@ void Window::changed() {
     setWindowTitle("AgentNodify — " + doc.flow.name + " *");
 }
 void Window::refreshActivities() {
-    QSignalBlocker block(activities_); activities_->clear();
-    for (auto &doc : documents_) { auto *item = new QListWidgetItem(doc.flow.name, activities_); item->setToolTip(doc.path); item->setSizeHint(QSize(80, 64)); }
-    activities_->setCurrentRow(current_);
+    while (auto *item = activityLayout_->takeAt(0)) {
+        if (auto *widget = item->widget()) { widget->hide(); widget->deleteLater(); }
+        delete item;
+    }
+    auto tile = [this](const QString &text, const QString &name, std::function<void()> action) {
+        auto *button = new QToolButton; button->setProperty("flowTile", true); button->setFixedSize(56, 56);
+        button->setText(text); button->setAccessibleName(name); button->setCursor(Qt::PointingHandCursor);
+        activityLayout_->addWidget(button, 0, Qt::AlignHCenter); connect(button, &QToolButton::clicked, this, std::move(action));
+        return button;
+    };
+    for (int i = 0; i < int(documents_.size()); ++i) {
+        const auto &doc = documents_[size_t(i)];
+        auto *button = tile(doc.flow.name.left(2), doc.flow.name, [this, i] { selectFlow(i); });
+        button->setObjectName("flowTile"); button->setCheckable(true); button->setChecked(i == current_);
+        button->setToolTip(doc.flow.name + "\n" + doc.path);
+    }
+    auto *add = tile("＋", "新しいフロー", [this] { newFlow(); }); add->setObjectName("addFlowTile"); add->setToolTip("新しいフローを追加");
+    activityLayout_->addStretch();
 }
 void Window::selectFlow(int index) {
     if (index < 0 || index >= int(documents_.size()) || runner_->running()) return;
@@ -201,49 +236,6 @@ void Window::selectFlow(int index) {
 }
 void Window::selectNode(Id id) {
     selected_ = id; field_.clear(); textPane_->hide();
-    auto *layout = parameters_->layout();
-    while (auto *item = layout->takeAt(0)) { if (item->widget()) item->widget()->deleteLater(); delete item; }
-    if (!editGraph_->nodeExists(id)) { layout->addWidget(new QLabel("ノードを選択して編集")); return; }
-    const auto n = editGraph_->flow.nodes.at(id);
-    layout->addWidget(new QLabel(kindName(n.kind) + QString(" #%1").arg(id)));
-    auto *title = new QLineEdit(n.title); layout->addWidget(new QLabel("名前")); layout->addWidget(title);
-    connect(title, &QLineEdit::editingFinished, this, [this, title, id] {
-        if (!editGraph_->nodeExists(id)) return;
-        editGraph_->flow.nodes.at(id).title = title->text(); emit editGraph_->nodeUpdated(id); changed();
-    });
-    if (n.kind == Kind::Agent) {
-        auto *agent = new QComboBox; agent->addItems({"Codex", "Claude Code", "OpenCode"}); agent->setCurrentText(n.agent);
-        layout->addWidget(new QLabel("エージェント")); layout->addWidget(agent);
-        auto *model = new QComboBox; model->setEditable(true);
-        auto populate = [model](const QString &a, const QString &value) {
-            QSignalBlocker block(model); model->clear(); model->addItem("");
-            if (a == "Codex") model->addItems({"gpt-6-luna"});
-            else if (a == "Claude Code") model->addItems({"haiku", "claude-haiku-5-5"});
-            else model->addItems({"openai/gpt-6-luna", "anthropic/claude-haiku-5-5"});
-            model->setCurrentText(value); model->setToolTip("空欄はCLI既定。モデルIDは利用環境に合わせて入力できます。");
-        }; populate(n.agent, n.model);
-        layout->addWidget(new QLabel("モデル（入力可）")); layout->addWidget(model);
-        connect(agent, &QComboBox::currentTextChanged, this, [this, id, populate](const QString &value) {
-            if (!editGraph_->nodeExists(id)) return;
-            auto &node = editGraph_->flow.nodes.at(id); node.agent = value; node.model.clear(); populate(value, ""); changed();
-        });
-        connect(model, &QComboBox::currentTextChanged, this, [this, id](const QString &value) {
-            if (editGraph_->nodeExists(id)) { editGraph_->flow.nodes.at(id).model = value; changed(); }
-        });
-        button("入力プロンプトを編集…", layout, [this] { showText("prompt"); });
-        button("出力JSON Schemaを編集…", layout, [this] { showText("schema"); });
-        auto *hint = new QLabel("変数: ${name} / ${obj.key}\n配列: ${items[0]} / ${[0].name}\nスキーマ省略時はテキスト出力"); hint->setWordWrap(true); layout->addWidget(hint);
-    } else if (n.kind == Kind::And) {
-        auto *count = new QSpinBox; count->setRange(1, 256); count->setValue(int(n.inputs));
-        layout->addWidget(new QLabel("入力ポート数")); layout->addWidget(count);
-        connect(count, &QSpinBox::valueChanged, this, [this, id](int value) { auto node = editGraph_->flow.nodes.at(id); node.inputs = unsigned(value); editGraph_->updateNode(node); });
-        auto *hint = new QLabel("全入力の発火を待ち、入力番号順の配列を出力します。\n発火後はリセットし、新しい全入力を待ちます。\n先着した入力はFIFOで保持します。\nポート数変更時は再接続してください。"); hint->setWordWrap(true); layout->addWidget(hint);
-    } else if (n.kind == Kind::Branch) {
-        button("条件を編集…", layout, [this] { editRules(); });
-        auto *hint = new QLabel("if 0 → if 1 → … → else\n最初に一致した出力に伝播します。\n比較値は文字列として比較します。"); hint->setWordWrap(true); layout->addWidget(hint);
-    }
-    if (n.kind != Kind::Start && n.kind != Kind::End) button("ノードを削除", layout, [this, id] { editGraph_->deleteNode(id); });
-    static_cast<QVBoxLayout *>(layout)->addStretch();
 }
 void Window::showText(const QString &field) {
     if (!editGraph_->nodeExists(selected_)) return;
@@ -251,28 +243,11 @@ void Window::showText(const QString &field) {
     textTitle_->setText(field == "schema" ? "出力スキーマ · JSON Schema Draft 7" : "入力プロンプト");
     const auto &n = editGraph_->flow.nodes.at(selected_); text_->setPlainText(field == "schema" ? n.schema : n.prompt);
     loading_ = false; textPane_->show(); text_->setFocus();
-}
-void Window::editRules() {
-    if (!editGraph_->nodeExists(selected_)) return;
-    auto node = editGraph_->flow.nodes.at(selected_);
-    QDialog dialog(this); dialog.setWindowTitle("分岐条件 — 上から順に評価、末尾はelse"); dialog.resize(700, 400);
-    auto *layout = new QVBoxLayout(&dialog);
-    auto *table = new QTableWidget(0, 3); table->setHorizontalHeaderLabels({"条件変数", "比較", "条件値（文字列）"}); table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch); layout->addWidget(table);
-    auto add = [table](const Rule &r) {
-        int row = table->rowCount(); table->insertRow(row);
-        table->setItem(row, 0, new QTableWidgetItem(r.variable)); table->setItem(row, 2, new QTableWidgetItem(r.value));
-        auto *combo = new QComboBox; combo->addItems({"等しい", "異なる"}); combo->setCurrentIndex(r.equals ? 0 : 1); table->setCellWidget(row, 1, combo);
-    };
-    for (auto &r : node.rules) add(r);
-    auto *buttons = new QHBoxLayout; button("＋ 条件", buttons, [add] { add({"", "", true}); });
-    button("− 選択行", buttons, [table] { if (table->currentRow() >= 0) table->removeRow(table->currentRow()); }); layout->addLayout(buttons);
-    layout->addWidget(new QLabel("条件数を変更すると、このノードの接続は解除されます。最後の出力は常にelseです。"));
-    auto *box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel); layout->addWidget(box);
-    connect(box, &QDialogButtonBox::accepted, &dialog, &QDialog::accept); connect(box, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    if (dialog.exec() != QDialog::Accepted) return;
-    node.rules.clear();
-    for (int i = 0; i < table->rowCount(); ++i) node.rules.push_back({table->item(i, 0)->text(), table->item(i, 2)->text(), static_cast<QComboBox *>(table->cellWidget(i, 1))->currentIndex() == 0});
-    editGraph_->updateNode(node);
+    const auto id = selected_;
+    QTimer::singleShot(0, this, [this, id] {
+        if (selected_ == id && textPane_->isVisible())
+            if (auto *item = editScene_->nodeGraphicsObject(id)) editView_->ensureVisible(item, 30, 30);
+    });
 }
 void Window::connectNodes() {
     if (runner_->running()) return;
@@ -281,7 +256,7 @@ void Window::connectNodes() {
     auto *from = new QComboBox, *to = new QComboBox;
     auto *output = new QSpinBox, *input = new QSpinBox;
     for (auto &[id, node] : editGraph_->flow.nodes) {
-        auto label = QString("%1 · %2").arg(id).arg(node.title);
+        auto label = node.title.isEmpty() ? kindName(node.kind) : node.title;
         if (editGraph_->flow.outputCount(node)) from->addItem(label, id);
         if (editGraph_->flow.inputCount(node)) to->addItem(label, id);
     }
@@ -309,7 +284,7 @@ void Window::connectNodes() {
 void Window::newFlow() {
     if (runner_->running()) return;
     Document doc; doc.flow = Flow::initial(); doc.flow.name = QString("フロー %1").arg(documents_.size() + 1); doc.path = uniquePath(dataDir_ + "/flows"); doc.dirty = true;
-    documents_.push_back(doc); refreshActivities(); selectFlow(int(documents_.size()) - 1);
+    documents_.push_back(doc); selectFlow(int(documents_.size()) - 1);
 }
 void Window::openFlow() {
     if (runner_->running()) return;

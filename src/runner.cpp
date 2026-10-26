@@ -111,7 +111,8 @@ void Runner::fail(Id id, const QString &message) {
     results_[id].state = State::Failed; results_[id].log += "\n" + message; emit changed(id);
     active_ = false; stopJobs();
     for (auto &[other, r] : results_) if (r.state == State::Running || r.state == State::Pending) { r.state = State::Cancelled; emit changed(other); }
-    emit finished(false, QString("ノード%1: %2").arg(id).arg(message));
+    const auto &node = flow_.nodes.at(id);
+    emit finished(false, (node.title.isEmpty() ? kindName(node.kind) : node.title) + ": " + message);
 }
 void Runner::complete(Id id, const Json &output, int selected) {
     auto &r = results_[id]; r.state = State::Succeeded;
@@ -212,6 +213,7 @@ void Runner::launch(Id id, const Json &input) {
         if (!n.schema.trimmed().isEmpty()) args << "--json-schema" << n.schema;
     } else {
         program = config_.opencode; args << "run" << "--format" << "json";
+        if (config_.opencodeStandalone) args << "--standalone";
         if (!n.model.isEmpty()) args << "--model" << n.model;
         // OpenCode CLI has no documented native output-schema flag.
         if (!n.schema.trimmed().isEmpty()) prompt += "\nReturn only JSON (no Markdown) matching this JSON Schema:\n" + n.schema;

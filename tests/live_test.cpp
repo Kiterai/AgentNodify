@@ -60,8 +60,14 @@ int main(int argc, char **argv) {
         flow.edges = {{1, 3}, {3, 4}, {4, 5, 0, 0}, {4, 6, 0, 0}, {5, 7, 0, 0}, {6, 7, 0, 1}, {7, 8}, {8, 4}, {4, 2, 1, 0}};
         expected = {{"count", 2}};
     }
-    QTemporaryDir directory; Runner runner;
+    QTemporaryDir directory;
+    if (!directory.isValid()) {
+        QTextStream(stderr) << "Cannot create temporary project: " << directory.errorString() << '\n'; return 2;
+    }
+    Runner runner;
     AgentConfig config; config.codex = config.claude = config.opencode = parser.value("program");
+    // Live tests must not share the user's managed OpenCode service/port.
+    config.opencodeStandalone = true;
     config.timeoutSeconds = qBound(1, parser.value("timeout").toInt(), 600);
     Json events = Json::array();
     QObject::connect(&runner, &Runner::fired, &app, [&](Id id, quint64 execution, const QString &json) {

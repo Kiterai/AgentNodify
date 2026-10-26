@@ -33,10 +33,12 @@ private:
     Runner *runner_;
     QtNodes::BasicGraphicsScene *editScene_, *workScene_;
     QtNodes::GraphicsView *editView_, *workView_;
-    QListWidget *activities_, *projectList_;
+    QWidget *activities_;
+    QVBoxLayout *activityLayout_;
+    QListWidget *projectList_;
     QTabWidget *tabs_;
     QSplitter *editorSplit_;
-    QWidget *parameters_, *textPane_;
+    QWidget *textPane_;
     QPlainTextEdit *text_, *log_, *output_;
     QLabel *textTitle_, *textError_, *status_, *nodeStatus_;
     QPushButton *runButton_, *stopButton_;
@@ -55,7 +57,6 @@ private:
     void addProject();
     void executeFlow();
     void settings();
-    void editRules();
     void connectNodes();
     void persist();
     void restore();

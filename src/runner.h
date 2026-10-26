@@ -21,6 +21,7 @@ struct AgentConfig {
     QString claude = "claude";
     QString opencode = "opencode";
     int timeoutSeconds = 600;
+    bool opencodeStandalone = false;
 };
 // Every firing enqueues an event. Ordinary nodes consume one event; AND consumes
 // exactly one event from every input FIFO, then waits for a fresh complete set.

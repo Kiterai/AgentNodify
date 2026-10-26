@@ -84,17 +84,22 @@ using namespace an;
     }
     void CoreTest::cli_data() {
         QTest::addColumn<QString>("agent"); QTest::addColumn<bool>("structured");
+        QTest::addColumn<bool>("standalone");
         for (QString agent : {"Codex", "Claude Code", "OpenCode"}) {
-            QTest::newRow(qPrintable(agent + " text")) << agent << false;
-            QTest::newRow(qPrintable(agent + " JSON")) << agent << true;
+            QTest::newRow(qPrintable(agent + " text")) << agent << false << false;
+            QTest::newRow(qPrintable(agent + " JSON")) << agent << true << false;
         }
+        QTest::newRow("OpenCode standalone text") << QString("OpenCode") << false << true;
+        QTest::newRow("OpenCode standalone JSON") << QString("OpenCode") << true << true;
     }
     void CoreTest::cli() {
         QFETCH(QString, agent); QFETCH(bool, structured);
+        QFETCH(bool, standalone);
         QTemporaryDir dir; QFile marker(dir.filePath("marker.txt")); QVERIFY(marker.open(QIODevice::WriteOnly)); marker.close();
         auto f = simple(agent); f.nodes[3].prompt = "CHECK_CWD quote \" and $() 日本語\nhello";
         if (structured) f.nodes[3].schema = schema();
-        Runner r; QSignalSpy spy(&r, &Runner::finished); QVERIFY(r.start(f, dir.path(), config()));
+        auto cfg = config(); cfg.opencodeStandalone = standalone;
+        Runner r; QSignalSpy spy(&r, &Runner::finished); QVERIFY(r.start(f, dir.path(), cfg));
         QVERIFY(spy.wait(15000)); QVERIFY2(spy[0][0].toBool(), qPrintable(spy[0][1].toString()));
         QVERIFY(r.results().at(2).output == (structured ? Json{{"result", "ok"}} : Json("hello")));
     }
