@@ -18,6 +18,7 @@ public:
     std::map<Id, State> states;
     int frame = 0;
     void replace(const Flow &value);
+    void setHighlightedNode(Id id);
     void updateNode(const Node &node);
     NodeForm *form(Id id) const;
     QtNodes::NodeId newNodeId() override;
@@ -44,6 +45,7 @@ signals:
     void textEditRequested(unsigned int id, QString field);
     void nodeActivated(unsigned int id);
 private:
+    Id highlightedNode_ = 0;
     std::map<Id, QSize> sizes_;
     mutable std::map<Id, QPointer<NodeForm>> forms_;
 };

@@ -16,8 +16,16 @@ Graph::~Graph() {
 void Graph::replace(const Flow &value) {
     for (auto &[id, widget] : forms_) if (widget && !widget->graphicsProxyWidget()) delete widget;
     flow = value;
+    if (!nodeExists(highlightedNode_)) highlightedNode_ = 0;
     if (!flow.nodes.empty()) flow.nextNodeId = qMax(flow.nextNodeId, quint64(flow.nodes.rbegin()->first) + 1);
     sizes_.clear(); states.clear(); forms_.clear(); emit modelReset();
+}
+void Graph::setHighlightedNode(Id id) {
+    if (!nodeExists(id)) id = 0;
+    if (highlightedNode_ == id) return;
+    const auto previous = highlightedNode_; highlightedNode_ = id;
+    if (nodeExists(previous)) emit nodeUpdated(previous);
+    if (nodeExists(id)) emit nodeUpdated(id);
 }
 void Graph::updateNode(const Node &node) {
     if (readOnly || !nodeExists(node.id)) return;
@@ -122,6 +130,15 @@ QVariant Graph::nodeData(Id id, NodeRole role) const {
             accent = QColor("#8f6d18"); style.NormalBoundaryColor = accent;
         }
         style.ConnectionPointColor = accent; style.FilledConnectionPointColor = accent;
+        if (readOnly) {
+            // Work selection belongs to the details pane, not graphics focus.
+            // Native scene selection may disappear on a background/focus click.
+            style.SelectedBoundaryColor = style.NormalBoundaryColor;
+            if (id == highlightedNode_) {
+                style.NormalBoundaryColor = style.SelectedBoundaryColor = QColor("#ffffff");
+                style.PenWidth = style.HoveredPenWidth = 4.0f;
+            }
+        }
         return style.toJson().toVariantMap();
     }
     default: return {};

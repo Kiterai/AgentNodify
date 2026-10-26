@@ -1,5 +1,6 @@
 #pragma once
 #include "graph.h"
+#include "progressview.h"
 #include <QMainWindow>
 #include <QListWidget>
 #include <QTabWidget>
@@ -55,7 +56,9 @@ private:
     QTabWidget *tabs_;
     QSplitter *editorSplit_;
     QWidget *textPane_;
-    QPlainTextEdit *text_, *log_, *output_;
+    QPlainTextEdit *text_;
+    ProgressView *log_;
+    ContentView *output_;
     QLabel *textTitle_, *textError_, *status_, *nodeStatus_;
     QPushButton *runButton_, *stopButton_;
     void buildUi();

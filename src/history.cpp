@@ -32,7 +32,7 @@ void saveNodeExecution(const QString &directory, const NodeExecution &execution)
     Json value = {{"version", 1}, {"id", text(execution.id)}, {"node", execution.node}, {"title", text(execution.title)},
         {"startedAt", text(execution.startedAt.toUTC().toString(Qt::ISODateWithMs))},
         {"finishedAt", text(execution.finishedAt.toUTC().toString(Qt::ISODateWithMs))},
-        {"state", text(stateKey(execution.state))}, {"log", text(execution.log)}, {"output", execution.output}, {"sequence", execution.sequence}};
+        {"state", text(stateKey(execution.state))}, {"log", text(execution.log)}, {"output", execution.output}, {"sequence", execution.sequence}, {"structuredOutput", execution.structuredOutput}};
     QSaveFile file(QDir(directory).filePath(uuid.toString(QUuid::WithoutBraces) + ".json"));
     const auto bytes = QByteArray::fromStdString(value.dump());
     if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit())
@@ -54,6 +54,7 @@ std::vector<NodeExecution> loadNodeExecutions(const QString &directory, QStringL
             if (!execution.startedAt.isValid()) throw std::runtime_error("実行履歴の日時が不正です");
             execution.state = parseState(string(value, "state")); execution.log = string(value, "log");
             execution.output = value.at("output"); execution.sequence = value.value("sequence", quint64(0));
+            execution.structuredOutput = value.value("structuredOutput", false);
             if (execution.state == State::Running) {
                 execution.state = State::Cancelled;
                 execution.log += "\n[前回の実行は終了を確認できなかったため、中断として表示します]\n";

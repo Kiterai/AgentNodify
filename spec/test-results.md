@@ -8,8 +8,38 @@ Windows 11 / MSVC 2022 / Qt 6.12.0 Release構成。
 - コアのQtTest: 30 passed / 0 failed。
 - GUIのQtTest: 17 passed / 0 failed。
 - モデル一覧取得のQtTest: 22 passed / 0 failed。
+- 進捗表示のQtTest: 10 passed / 0 failed。
 - GUI起動・編集・読み取り専用グラフのスモークテスト: 成功。
-- CTest: `core` / `gui` / `catalog` / `gui_smoke` の4件すべて成功。
+- CTest: `core` / `gui` / `catalog` / `progress` / `gui_smoke` の5件すべて成功。
+
+### CLI進捗の整形表示
+
+- Codexの公式[非対話実行](https://developers.openai.com/codex/noninteractive)と[SDKイベント定義](https://github.com/openai/codex/blob/main/sdk/typescript/src/items.ts)、Claude Codeの[CLI参照](https://code.claude.com/docs/en/cli-reference)と[streaming-output](https://platform.claude.com/docs/en/agent-sdk/streaming-output)、OpenCode V2の[CLI](https://opencode.ai/v2/docs/cli/commands/)と[OpenAPI](https://opencode.ai/v2/openapi.json)を確認した。
+- 保存済みの実CLI応答を読み、CLIの`item.*`、`assistant/user/result`、`text/tool_use`の形を確認。実装した`ProgressParser`でもローカル再生し、結果を`build/progress-replay-results.txt`へ保存した（新たな推論は行っていない）。
+
+| 再生した実CLIログ | 発言・最終応答 | ツール | ファイルアクセス |
+|---|---:|---:|---:|
+| Codexのファイル作成テスト | 2 | 0 | 0 |
+| Claude Codeのファイル作成テスト | 1 | 1 | 1 |
+| OpenCodeのファイル作成テスト | 1 | 1 | 1 |
+
+Codexの保存済みテストはポリシー拒否で、構造化ツールイベントが出ていない。そのためコマンド・MCP・Web検索・ファイル変更の解釈は公式定義に基づくfixtureで確認し、拒否のstderrは簡易表示とした。
+
+- Claude Codeはインストール済みCLIの`--help`でも`--include-partial-messages`対応を確認した。
+- 3形式のツールIDによる開始・更新・結果の統合、Claudeの並列ツール結果の対応、テキスト／入力JSONの差分と完全メッセージの重複防止を検証。
+- ツールの入力・出力が初期状態で独立して閉じており、更新でも開閉状態が残り、別の実行に切り替えると閉じることを確認。
+- ファイル名と読取・書込・作成・変更・削除、失敗・中止の状態を検証。OpenCodeではV2の`state.content`と既存の`state.output`、ネストしたパッチメタデータも検証した。
+- 600文字の文字列で500文字＋「...以下 100文字」、550個の絵文字で500個＋「...以下 50文字」、12要素の配列で8要素＋「...他 4件の項目」を確認。JSON文字列スカラーにも対応する。
+- Markdownが`QTextBrowser`で太字・コードブロック等を表示し、リンクの自動遷移・画像のファイル取得が無効であることを確認。
+- 未知イベント、壊れたJSON、行途中で分割された入力、改行なしの末尾テキスト、履歴の再生、ログ末尾追従とスクロール位置の維持を検証。
+- 画像は`build/gui-progress-log.png`（ツール詳細を展開した例）、ログは`build/progress-results.txt`。`agentnodify_progress_probe`は保存済みのテストレポートだけを解釈し、CLI起動・ファイル操作・推論は行わない。
+
+### 作業画面の選択枠・右ペイン余白
+
+- 進行状況と出力の各領域の上余白が8pxであることを検証。
+- ノード本体・フォーム内の選択で白い太枠になり、シーンの選択解除・背景クリック・ログや履歴へのフォーカス移動でも維持されることを検証。
+- 別ノードへのクリックで枠が移り、旧ノードの通常枠が復元すること、始端・終端の黄色い塗りを変えないことを確認。
+- 実行状態の更新と同一プロジェクトのタブ切替でも白枠が維持されることを確認。
 
 ### ノード単位の実行履歴
 

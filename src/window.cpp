@@ -217,17 +217,18 @@ void Window::buildUi() {
         showWorkResult();
     });
     connect(historyList_, &QListWidget::itemClicked, this, [this](QListWidgetItem *) { followLatestHistory_ = false; followHistoryButton_->setChecked(false); });
-    auto *logPane = new QWidget; auto *ll = new QVBoxLayout(logPane); ll->setContentsMargins(0, 0, 0, 0);
-    ll->addWidget(new QLabel("進行状況 / CLIログ")); log_ = new QPlainTextEdit; log_->setReadOnly(true); ll->addWidget(log_, 1); detailSplit->addWidget(logPane);
-    auto *outputPane = new QWidget; auto *ol = new QVBoxLayout(outputPane); ol->setContentsMargins(0, 0, 0, 0);
-    ol->addWidget(new QLabel("次段への出力")); output_ = new QPlainTextEdit; output_->setReadOnly(true); new Highlighter(output_->document()); ol->addWidget(output_, 1); detailSplit->addWidget(outputPane);
+    auto *logPane = new QWidget; auto *ll = new QVBoxLayout(logPane); ll->setContentsMargins(0, 8, 0, 0);
+    ll->addWidget(new QLabel("進行状況 / CLIログ")); log_ = new ProgressView; ll->addWidget(log_, 1); detailSplit->addWidget(logPane);
+    auto *outputPane = new QWidget; auto *ol = new QVBoxLayout(outputPane); ol->setContentsMargins(0, 8, 0, 0);
+    ol->addWidget(new QLabel("次段への出力")); output_ = new ContentView;
+    auto *outputScroll = new QScrollArea; outputScroll->setWidgetResizable(true); outputScroll->setWidget(output_); ol->addWidget(outputScroll, 1); detailSplit->addWidget(outputPane);
     detailSplit->setSizes({180, 280, 220});
     workSplit->addWidget(details); workSplit->setSizes({230, 780, 330}); workSplit->setStretchFactor(1, 1);
     tabs_->addTab(workSplit, "プロジェクト作業"); setCentralWidget(root);
     connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
         if (index != 1 || runner_->running()) return;
         if (project_ >= 0) selectProject(project_);
-        else workGraph_->replace(editGraph_->flow);
+        else { workGraph_->replace(editGraph_->flow); selectWorkNode(workGraph_->nodeExists(workSelected_) ? workSelected_ : 0); }
     });
     setStyleSheet(R"(
         QMainWindow, QWidget { background:#191f2a; color:#dce5f3; }
@@ -237,7 +238,7 @@ void Window::buildUi() {
         QMenu::item:selected { background:#3b5680; }
         QPushButton { background:#2d3b50; border:1px solid #40536c; border-radius:5px; padding:7px 9px; }
         QPushButton:hover { background:#3c506d; } QPushButton:disabled { color:#738198; }
-        QLineEdit, QPlainTextEdit, QListWidget, QComboBox, QSpinBox, QTableWidget { background:#121925; border:1px solid #354259; padding:4px; selection-background-color:#3b5680; }
+        QLineEdit, QPlainTextEdit, QTextBrowser, QTreeWidget, QListWidget, QComboBox, QSpinBox, QTableWidget { background:#121925; border:1px solid #354259; padding:4px; selection-background-color:#3b5680; }
         QTabBar::tab { padding:12px 24px; } QTabBar::tab:selected { color:#9bc7ff; border-bottom:2px solid #83b6ff; }
         QSplitter::handle { background:#344055; width:5px; } QScrollArea { border:0; }
         QWidget#flowRail { background:#141b27; border:1px solid #354259; border-radius:14px; }
@@ -398,13 +399,18 @@ void Window::refreshProjects() {
 }
 void Window::selectProject(int index) {
     if (runner_->running() || index < 0 || index >= int(projects_.size())) return;
+    const bool sameProject = project_ == index;
     project_ = index; auto &p = projects_[size_t(index)]; workGraph_->replace(editGraph_->flow);
     for (auto &[id, r] : p.results) if (workGraph_->nodeExists(id)) workGraph_->states[id] = r.state;
     for (auto &[id, n] : workGraph_->flow.nodes) emit workGraph_->nodeUpdated(id);
-    workView_->centerScene(); status_->setText(p.directory); workSelected_ = 0; selectWorkNode(0);
+    workView_->centerScene(); status_->setText(p.directory);
+    if (sameProject && (workSelected_ == 0 || workGraph_->nodeExists(workSelected_))) {
+        workGraph_->setHighlightedNode(workSelected_); refreshWorkHistory();
+    } else selectWorkNode(0);
 }
 void Window::selectWorkNode(Id id) {
     workSelected_ = id; selectedHistory_.clear(); followLatestHistory_ = true;
+    workGraph_->setHighlightedNode(id);
     refreshWorkHistory();
 }
 void Window::refreshWorkHistory() {
@@ -442,26 +448,22 @@ void Window::showWorkResult() {
         if (it != history.end()) execution = &*it;
     }
     const QString key = execution ? execution->id : QString("current:%1:%2").arg(project_).arg(workSelected_);
-    const bool same = displayedExecution_ == key; displayedExecution_ = key;
-    const int scroll = log_->verticalScrollBar()->value();
-    const bool atBottom = log_->verticalScrollBar()->value() == log_->verticalScrollBar()->maximum();
-    auto updateLog = [this, same, scroll, atBottom](const QString &value) {
-        if (log_->toPlainText() != value) log_->setPlainText(value);
-        log_->verticalScrollBar()->setValue(!same || atBottom ? log_->verticalScrollBar()->maximum() : scroll);
+    displayedExecution_ = key;
+    auto render = [this, &key](const QString &log, State state, const Json *output = nullptr, bool structured = false) {
+        log_->setProgress(log, key, state, output, structured);
+        if (output) output_->setValue(*output, true, structured || log_->finalIsJson()); else output_->setPlainText({});
     };
-    auto updateOutput = [this](const QString &value) { if (output_->toPlainText() != value) output_->setPlainText(value); };
     if (execution) {
         nodeStatus_->setText(execution->title + " — " + stateName(execution->state) + "\n" + execution->startedAt.toLocalTime().toString("yyyy/MM/dd HH:mm:ss.zzz"));
-        updateLog(execution->log); updateOutput(execution->state == State::Succeeded ? display(execution->output) : QString()); return;
+        render(execution->log, execution->state, execution->state == State::Succeeded ? &execution->output : nullptr, execution->structuredOutput); return;
     }
-    updateOutput({});
-    if (!workGraph_->nodeExists(workSelected_)) { updateLog({}); nodeStatus_->setText("ノードを選択してください"); return; }
+    if (!workGraph_->nodeExists(workSelected_)) { render({}, State::Pending); nodeStatus_->setText("ノードを選択してください"); return; }
     const auto &node = workGraph_->flow.nodes.at(workSelected_);
     const auto title = node.title.isEmpty() ? kindName(node.kind) : node.title;
-    if (project_ < 0 || !projects_[size_t(project_)].results.contains(workSelected_)) { updateLog({}); nodeStatus_->setText(title + " — 待機"); return; }
+    if (project_ < 0 || !projects_[size_t(project_)].results.contains(workSelected_)) { render({}, State::Pending); nodeStatus_->setText(title + " — 待機"); return; }
     const auto &r = projects_[size_t(project_)].results.at(workSelected_);
-    nodeStatus_->setText(title + " — " + stateName(r.state) + QString("（実行 %1 回）").arg(r.executions)); updateLog(r.log);
-    updateOutput(r.state == State::Succeeded ? display(r.output) : QString());
+    nodeStatus_->setText(title + " — " + stateName(r.state) + QString("（実行 %1 回）").arg(r.executions));
+    render(r.log, r.state, r.state == State::Succeeded ? &r.output : nullptr, !node.schema.trimmed().isEmpty());
 }
 void Window::recordNodeExecution(const NodeExecution &value) {
     if (project_ < 0) return;

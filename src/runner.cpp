@@ -72,6 +72,7 @@ void Runner::beginExecution(Id id) {
     auto &r = results_[id]; ++r.executions; r.state = State::Running; r.log.clear(); r.output = nullptr;
     NodeExecution execution; execution.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     execution.node = id; execution.title = flow_.nodes.at(id).title;
+    execution.structuredOutput = !flow_.nodes.at(id).schema.trimmed().isEmpty();
     if (execution.title.isEmpty()) execution.title = kindName(flow_.nodes.at(id).kind);
     execution.startedAt = QDateTime::currentDateTimeUtc(); activeExecutions_[id] = execution;
     emit executionChanged(activeExecutions_.at(id));
@@ -207,7 +208,7 @@ void Runner::launch(Id id, const Json &input) {
         if (!n.effort.isEmpty()) args << "-c" << ("model_reasoning_effort=" + QString::fromStdString(Json(n.effort.toStdString()).dump()));
         args << "-";
     } else if (n.agent == "Claude Code") {
-        program = config_.claude; args << "-p" << "--verbose" << "--output-format" << "stream-json";
+        program = config_.claude; args << "-p" << "--verbose" << "--output-format" << "stream-json" << "--include-partial-messages";
         if (config_.workspaceWrite) args << "--permission-mode" << "acceptEdits";
         if (!n.effort.isEmpty()) args << "--effort" << n.effort;
         if (!n.model.isEmpty()) args << "--model" << n.model;

@@ -236,6 +236,26 @@ void GuiTest::workSelection() {
     effort->setCurrentIndex(effort->findData("high"));
     QCOMPARE(window.editGraph_->flow.nodes.at(id).effort, QString("high"));
     QCOMPARE(Flow::fromJson(window.editGraph_->flow.toJson()).nodes.at(id).effort, QString("high"));
+    auto nodeStyle = [&](Id nodeId) { return NodeStyle(QJsonObject::fromVariantMap(window.workGraph_->nodeData(nodeId, NodeRole::Style).toMap())); };
+    auto selectedStyle = nodeStyle(id);
+    QCOMPARE(selectedStyle.NormalBoundaryColor, QColor("#ffffff"));
+    QCOMPARE(selectedStyle.SelectedBoundaryColor, QColor("#ffffff"));
+    QVERIFY(selectedStyle.PenWidth >= 4.0f); QVERIFY(selectedStyle.HoveredPenWidth >= 4.0f);
+    window.workScene_->clearSelection(); window.log_->setFocus(); QCoreApplication::processEvents();
+    QVERIFY(!item->isSelected()); QCOMPARE(nodeStyle(id).NormalBoundaryColor, QColor("#ffffff"));
+    QTest::mouseClick(window.workView_->viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(5, 5));
+    QCOMPARE(window.workSelected_, id); QCOMPARE(nodeStyle(id).NormalBoundaryColor, QColor("#ffffff"));
+    auto *end = window.workScene_->nodeGraphicsObject(2);
+    const auto endPoint = window.workView_->mapFromScene(end->mapToScene(end->boundingRect().center()));
+    QTest::mouseClick(window.workView_->viewport(), Qt::LeftButton, Qt::NoModifier, endPoint);
+    QCOMPARE(window.workSelected_, 2u); QCOMPARE(nodeStyle(2).NormalBoundaryColor, QColor("#ffffff"));
+    QVERIFY(nodeStyle(id).NormalBoundaryColor != QColor("#ffffff")); QVERIFY(nodeStyle(id).PenWidth < nodeStyle(2).PenWidth);
+    QCOMPARE(nodeStyle(2).GradientColor0, QColor("#efc65e")); // Keep the terminal's yellow fill.
+    window.workGraph_->states[2] = State::Failed; emit window.workGraph_->nodeUpdated(2);
+    window.historyList_->setFocus(); QCoreApplication::processEvents();
+    QCOMPARE(nodeStyle(2).NormalBoundaryColor, QColor("#ffffff"));
+    window.tabs_->setCurrentIndex(0); window.tabs_->setCurrentIndex(1);
+    QCOMPARE(window.workSelected_, 2u); QCOMPARE(nodeStyle(2).NormalBoundaryColor, QColor("#ffffff"));
 }
 void GuiTest::flowRemoval() {
     Window window(true);
@@ -374,6 +394,8 @@ void GuiTest::nodeExecutionHistory() {
 #endif
     window.tabs_->setCurrentIndex(1); window.selectWorkNode(agent);
     auto *split = window.findChild<QSplitter *>("workDetailsSplitter"); QVERIFY(split); QCOMPARE(split->count(), 3); QCOMPARE(split->orientation(), Qt::Vertical);
+    QCOMPARE(split->widget(1)->layout()->contentsMargins().top(), 8);
+    QCOMPARE(split->widget(2)->layout()->contentsMargins().top(), 8);
     QSignalSpy done(window.runner_, &Runner::finished); window.executeFlow(); QTRY_COMPARE(done.count(), 1); QVERIFY(done[0][0].toBool());
     QCOMPARE(window.projects_[0].history.size(), size_t(8)); QCOMPARE(window.historyList_->count(), 3);
     QVERIFY(window.output_->toPlainText().contains('3'));

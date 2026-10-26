@@ -28,6 +28,7 @@ struct NodeExecution {
     QString log;
     Json output;
     quint64 sequence = 0; // Assigned by the project's persistent history.
+    bool structuredOutput = false;
 };
 struct AgentConfig {
     QString codex = "codex";

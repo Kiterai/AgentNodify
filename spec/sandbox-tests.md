@@ -149,6 +149,7 @@ CodexはWindows既定TLSで`workspace routing discovery failed`となりまし�
 | モデル一覧：Claude Code | 成功（13件、制御プロトコル初期化応答の`models`） |
 | モデル一覧：OpenCode | 成功（25件、`models --standalone`） |
 | CTest catalog | 成功（QtTest 22 passed / 0 failed） |
+| CTest progress | 成功（QtTest 10 passed / 0 failed、実CLI応答に基づくfixture・Markdown/JSON UI） |
 
 最新のサンドボックス内実テストは3エージェント×4ケースの全12件が成功。
 以前のOpenCodeの並列起動2回の失敗（`Standalone server exited before reporting readiness`）は
