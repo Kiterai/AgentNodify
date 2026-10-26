@@ -2,6 +2,7 @@
 #include <QAbstractTextDocumentLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QStyleOptionToolButton>
 #include <QTextBlock>
@@ -167,7 +168,7 @@ public:
 protected:
     void paintEvent(QPaintEvent *) override {
         QPainter painter(this); QStyleOptionToolButton option; initStyleOption(&option);
-        if (isEnabled() && (option.state & QStyle::State_MouseOver)) {
+        if (isEnabled() && ((option.state & QStyle::State_MouseOver) || property("rowHovered").toBool())) {
             option.palette.setColor(QPalette::ButtonText, QColor("#ffffff"));
             option.palette.setColor(QPalette::WindowText, QColor("#ffffff"));
         }
@@ -177,17 +178,83 @@ protected:
         style()->drawPrimitive(arrowType() == Qt::DownArrow ? QStyle::PE_IndicatorArrowDown : QStyle::PE_IndicatorArrowRight, &option, &painter, this);
     }
 };
+class ToggleRow : public QWidget {
+public:
+    void setToggle(QToolButton *toggle) {
+        if (toggle_ && toggle_ != toggle) { toggle_->setProperty("rowHovered", false); toggle_->update(); }
+        toggle_ = toggle; setCursor(toggle ? Qt::PointingHandCursor : Qt::ArrowCursor); updateHover();
+    }
+protected:
+    void enterEvent(QEnterEvent *event) override { QWidget::enterEvent(event); hovered_ = true; updateHover(); }
+    void leaveEvent(QEvent *event) override { QWidget::leaveEvent(event); hovered_ = false; updateHover(); }
+    void hideEvent(QHideEvent *event) override { QWidget::hideEvent(event); hovered_ = false; updateHover(); }
+    void mousePressEvent(QMouseEvent *event) override {
+        if (event->button() == Qt::LeftButton && toggle_ && toggle_->isEnabled()) { pressed_ = true; event->accept(); }
+        else QWidget::mousePressEvent(event);
+    }
+    void mouseReleaseEvent(QMouseEvent *event) override {
+        if (event->button() == Qt::LeftButton && pressed_) {
+            pressed_ = false;
+            if (toggle_ && toggle_->isEnabled() && rect().contains(event->position().toPoint())) toggle_->click();
+            event->accept();
+        } else QWidget::mouseReleaseEvent(event);
+    }
+private:
+    QToolButton *toggle_ = nullptr;
+    bool pressed_ = false;
+    bool hovered_ = false;
+    void updateHover() {
+        if (toggle_) { toggle_->setProperty("rowHovered", hovered_); toggle_->update(); }
+    }
+};
+void setProgressStatus(QLabel *label, const QString &status) {
+    label->setText(progressStatus(status));
+    label->setStyleSheet("color:" + QString(status == "succeeded" ? "#79d99b" : status == "failed" ? "#ff8585" : "#dce5f3") + ";");
+}
+class CommandPreview : public QLabel {
+public:
+    CommandPreview() {
+        setObjectName("commandPreview"); setTextFormat(Qt::PlainText);
+        setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred); setMinimumWidth(0);
+        setStyleSheet("color:#aeb7c4;");
+    }
+    void setCommand(const QString &command) {
+        line_ = command;
+        for (const auto ch : {QChar('\n'), QChar('\r'), QChar('\t'), QChar(0x2028), QChar(0x2029)}) line_.replace(ch, ' ');
+        setMaximumWidth(fontMetrics().horizontalAdvance(line_));
+        updateText();
+    }
+protected:
+    void resizeEvent(QResizeEvent *event) override { QLabel::resizeEvent(event); updateText(); }
+private:
+    QString line_;
+    void updateText() {
+        const auto fm = fontMetrics();
+        if (fm.horizontalAdvance(line_) <= width()) { setText(line_); return; }
+        const QString dots = "...";
+        const int available = qMax(0, width() - fm.horizontalAdvance(dots));
+        qsizetype low = 0, high = line_.size();
+        while (low < high) {
+            const auto middle = (low + high + 1) / 2;
+            if (fm.horizontalAdvance(line_.left(middle)) <= available) low = middle; else high = middle - 1;
+        }
+        if (low > 0 && line_[low - 1].isHighSurrogate()) --low;
+        setText(line_.left(low) + (width() >= fm.horizontalAdvance(dots) ? dots : QString()));
+    }
+};
 class Detail : public QWidget {
 public:
     Detail(const QString &title, const QString &name, QWidget *parent, QLabel *heading = nullptr) : QWidget(parent) {
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
         auto *layout = new QVBoxLayout(this); layout->setContentsMargins(0, 0, 0, 0); layout->setSpacing(4);
-        auto *header = new QHBoxLayout; header->setContentsMargins(0, 0, 0, 0); header->setSpacing(8);
+        if (heading) { headerRow_ = new ToggleRow; headerRow_->setObjectName("fallbackHeader"); }
+        auto *header = new QHBoxLayout(headerRow_); header->setContentsMargins(0, 0, 0, 0); header->setSpacing(8);
         if (heading) { heading->setWordWrap(false); header->addWidget(heading); }
         toggle_ = new DisclosureButton; toggle_->setText(title); toggle_->setObjectName(name);
         toggle_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon); toggle_->setArrowType(Qt::RightArrow);
         toggle_->setAutoRaise(true); toggle_->setCursor(Qt::PointingHandCursor); toggle_->setCheckable(true);
-        header->addWidget(toggle_, 0, Qt::AlignLeft); header->addStretch(); layout->addLayout(header);
+        header->addWidget(toggle_, 0, Qt::AlignLeft); header->addStretch();
+        if (headerRow_) { headerRow_->setToggle(toggle_); layout->addWidget(headerRow_); } else layout->addLayout(header);
         connect(toggle_, &QToolButton::toggled, this, [this](bool expanded) {
             toggle_->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
             if (expanded && !content_) { content_ = new ContentView(this); this->layout()->addWidget(content_); }
@@ -196,10 +263,12 @@ public:
     }
     void setValue(const Json &value, bool available) {
         value_ = value; available_ = available;
+        if (headerRow_) headerRow_->setToggle(available ? toggle_ : nullptr);
         if (content_ && toggle_->isChecked()) content_->setValue(available ? value : Json("未取得"), false);
     }
 private:
     QToolButton *toggle_;
+    ToggleRow *headerRow_ = nullptr;
     ContentView *content_ = nullptr;
     Json value_;
     bool available_ = false;
@@ -259,22 +328,55 @@ public:
         if (kind != ProgressKind::Message) {
             heading_ = new QLabel; heading_->setObjectName("progressHeading"); heading_->setTextFormat(Qt::PlainText); heading_->setWordWrap(true);
             auto font = heading_->font(); font.setBold(true); heading_->setFont(font);
-            if (kind != ProgressKind::Simple) layout->addWidget(heading_);
+            if (kind != ProgressKind::Simple && kind != ProgressKind::Tool && kind != ProgressKind::FileAccess) layout->addWidget(heading_);
         }
         if (kind == ProgressKind::Message) { content_ = new ContentView(this); layout->addWidget(content_); }
         else if (kind == ProgressKind::Tool) {
+            commandHeader_ = new ToggleRow; commandHeader_->setObjectName("commandHeader");
+            auto *row = new QHBoxLayout(commandHeader_); row->setContentsMargins(0, 0, 0, 0); row->setSpacing(4);
+            heading_->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
+            row->addWidget(heading_);
+            commandPreview_ = new CommandPreview; row->addWidget(commandPreview_, 1);
+            status_ = new QLabel; status_->setObjectName("toolStatus"); status_->setTextFormat(Qt::PlainText); status_->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred); row->addWidget(status_);
+            commandToggle_ = new DisclosureButton; commandToggle_->setObjectName("commandToggle"); commandToggle_->setAutoRaise(true);
+            commandToggle_->setCursor(Qt::PointingHandCursor); commandToggle_->setCheckable(true); commandToggle_->setArrowType(Qt::RightArrow);
+            commandToggle_->setAccessibleName("コマンド全体を表示"); row->addWidget(commandToggle_);
+            row->addStretch();
+            layout->addWidget(commandHeader_);
+            commandFull_ = new QLabel; commandFull_->setObjectName("commandFull"); commandFull_->setTextFormat(Qt::PlainText);
+            commandFull_->setMinimumWidth(0); commandFull_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+            commandFull_->setWordWrap(true); commandFull_->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
+            commandFull_->setStyleSheet("color:#aeb7c4; margin-left:12px;"); commandFull_->hide(); layout->addWidget(commandFull_);
+            connect(commandToggle_, &QToolButton::toggled, this, [this](bool expanded) {
+                commandToggle_->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow); commandFull_->setVisible(expanded);
+            });
             input_ = new Detail("入力", "toolInputToggle", this); output_ = new Detail("出力", "toolOutputToggle", this); layout->addWidget(input_); layout->addWidget(output_);
             input_->layout()->setContentsMargins(12, 0, 0, 0); output_->layout()->setContentsMargins(12, 0, 0, 0);
+        } else if (kind == ProgressKind::FileAccess) {
+            auto *row = new QHBoxLayout; row->setContentsMargins(0, 0, 0, 0); row->setSpacing(4);
+            row->addWidget(heading_);
+            status_ = new QLabel; status_->setObjectName("fileStatus"); status_->setTextFormat(Qt::PlainText);
+            row->addWidget(status_); row->addStretch(); layout->addLayout(row);
         } else if (kind == ProgressKind::Simple) { details_ = new Detail("詳細", "eventDetailToggle", this, heading_); layout->addWidget(details_); }
     }
     void update(const ProgressItem &item) {
+        layout()->setContentsMargins(4, item.spaceBefore ? 12 : 2, 4, 2);
         if (kind_ == ProgressKind::Message) { content_->setValue(item.content, true, item.jsonContent); }
         else if (kind_ == ProgressKind::Tool) {
-            heading_->setText(item.name + " · " + progressStatus(item.status));
+            const bool command = !item.commandLabel.isEmpty();
+            heading_->setText(command ? item.commandLabel : item.name); heading_->setWordWrap(!command);
+            commandPreview_->setVisible(command); commandPreview_->setCommand(item.command);
+            commandToggle_->setVisible(command); commandFull_->setText(item.command); commandFull_->setVisible(command && commandToggle_->isChecked());
+            commandHeader_->setToggle(command ? commandToggle_ : nullptr);
+            commandToggle_->setAccessibleName(item.commandLabel == "glob" ? "パターン全体を表示" : "コマンド全体を表示");
+            setProgressStatus(status_, item.status);
+            input_->setVisible(!command);
             input_->setValue(item.input, item.hasInput); output_->setValue(item.output, item.hasOutput);
         } else if (kind_ == ProgressKind::FileAccess) {
-            const auto name = item.path.section('/', -1); heading_->setText(item.name + " · " + (name.isEmpty() ? item.path : name) + " · " + progressStatus(item.status)); heading_->setToolTip("<qt>" + item.path.toHtmlEscaped() + "</qt>");
-        } else {
+            const auto name = item.path.section('/', -1); heading_->setText(item.name + " · " + (name.isEmpty() ? item.path : name)); heading_->setToolTip("<qt>" + item.path.toHtmlEscaped() + "</qt>");
+            setProgressStatus(status_, item.status);
+        } else if (kind_ == ProgressKind::Thinking) { heading_->setText("思考中"); }
+        else {
             heading_->setText(item.name + (item.name.isEmpty() || item.text.isEmpty() ? "" : " · ") + shortString(item.text));
             details_->findChild<QToolButton *>("eventDetailToggle")->setVisible(!item.content.is_null()); details_->setValue(item.content, !item.content.is_null());
         }
@@ -282,6 +384,10 @@ public:
 private:
     ProgressKind kind_;
     QLabel *heading_ = nullptr;
+    QLabel *status_ = nullptr, *commandFull_ = nullptr;
+    CommandPreview *commandPreview_ = nullptr;
+    DisclosureButton *commandToggle_ = nullptr;
+    ToggleRow *commandHeader_ = nullptr;
     ContentView *content_ = nullptr;
     Detail *input_ = nullptr, *output_ = nullptr, *details_ = nullptr;
 };
@@ -313,7 +419,7 @@ void ProgressView::setProgress(const QString &log, const QString &executionKey, 
     if (state != State::Running && state != State::Pending) parser_.finish(state);
     if (finalOutput) parser_.finalResponse(*finalOutput, structuredOutput);
     for (const auto &entry : parser_.items()) {
-        if (entry.finalResponse) { delete cards_.take(entry.key); continue; }
+        if (entry.finalResponse || entry.hidden) { delete cards_.take(entry.key); continue; }
         auto *card = cards_.value(entry.key, nullptr);
         if (!card) { card = new Card(entry.kind, widget()); cards_[entry.key] = card; layout_->insertWidget(layout_->count() - 1, card); }
         card->update(entry);

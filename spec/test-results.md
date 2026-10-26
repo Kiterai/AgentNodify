@@ -2,6 +2,33 @@
 
 ## 自動テスト
 
+### 開閉アイコンの位置と行ホバーの一致
+
+- コマンド／globの開閉ボタンを状態のすぐ右（間隔4px）に移動。長さの異なるコマンド2件で位置が一律に揃わず、各状態の直後に置かれることを検証。
+- ヘッダー行の表題・概要・状態・余白にホバーするとボタンの文字・アイコンが強調され、行外では戻ることを検証。フォールバックも表題・余白で同じ描画になることを確認。
+- Release全ターゲットの再ビルドとCTest全5件が成功。進捗表示QtTestは25件成功。
+
+### 制御イベント・クリック範囲・追加ファイル操作
+
+- Claude Codeのrate limit／system initとCodexのthread startedが非表示になり、警告等の他イベントは残ることを検証。
+- コマンド概要・状態・行の余白と、フォールバックの表題・余白・矢印をクリックして開閉できること、矢印クリックが二重反転しないこと、状態の左間隔が4px以内になることを検証。
+- 実ログのOpenCode globの`pattern/limit`、patchの`patchText`とネストしたファイルメタデータ、Claude Writeの`file_path/content`を確認した。globの概要・全文・独立した出力の開閉を検証し、`build/gui-glob.png`へ画像を保存。
+- ファイル操作の未着色は、ファイルアクセス専用ラベルに状態の色分けが実装されていなかったことが原因。ツールと共通の描画関数へ統一し、Codexのファイル変更、Claude Read/Write、OpenCode patchの成功／失敗色を検証。
+- patch／Writeはファイル操作行にまとめて汎用ツールとの重複を除去。入力未取得時からファイル操作表示への切替、メタデータだけのpatch、後着の実行中イベントで完了を取り消さないことも検証。
+- 進捗表示QtTestは24件成功。
+- 当初は残存プロセスのロックで実行ファイルの再リンクが止まっていたが、後続の開閉アイコン改修時にロックが解消し、実行ファイルを含む再ビルドと新しい実行ファイルの`gui_smoke`が成功した。
+
+### 思考・実行境界・シェル実行の表示
+
+- コマンドの表題と本文を分離し、太字の表題・灰色の1行概要・右端のコマンド全文開閉を実装。長文と改行を含むコマンド、リサイズ時の`...`省略、プレーンテキストでの全文表示、ログ更新時の開閉維持と独立した出力の開閉を検証。
+- コマンド実行と通常ツールの「完了」が緑、「失敗」が赤となることを検証。進捗表示QtTestは20件成功。
+- 許可されたAppDataの保存済み実行ログを読み、Claude Codeのthinking開始・差分・署名・`system.thinking_tokens`、PowerShellの`input.command`、Codexの実際の`turn.started`と`command_execution`、OpenCodeの`step_start/step_finish`を確認した。CLI起動や新たな推論は行っていない。
+- Claudeのストリーミング開始と完全thinkingを「思考中」1項目に統合し、内容・署名・トークン推定・制御イベントを非表示にすることを検証。元のログは保持する。
+- OpenCode/Codexの境界イベント自体は非表示にし、後続項目に10pxの追加余白を適用すること、連続する終了・開始で二重加算しないこと、既存項目更新で余白が失われないことを検証。
+- Codexの「シェル実行 コマンド」とClaudeの「PowerShell コマンド」、入力の非表示、出力の初期折りたたみと更新時の開閉維持を検証。画像は`build/gui-command-Codex.png`・`build/gui-command-Claude.png`。
+- 実際の保存ログ3件を`agentnodify_progress_probe`で再生。Claudeは思考6項目／コマンド8件、Codexはコマンド2件／境界1箇所、OpenCodeは境界2箇所を検出。内容を複製せず集計だけを`build/progress-structure-replay.txt`へ保存した。
+- 進捗表示QtTestは19件成功。サンドボックス内CTest全5件が成功。
+
 ### 境界のないログ表示
 
 - インラインコードの背景を左右3px・上下2px広げて半径3pxで角丸描画。描画ピクセルで余白と角丸を検証。複数行コードブロックは左右余白を6pxへ縮小し、上下の背景余白を10pxへ拡大した。
@@ -28,7 +55,7 @@ Windows 11 / MSVC 2022 / Qt 6.12.0 Release構成。
 - コアのQtTest: 30 passed / 0 failed。
 - GUIのQtTest: 17 passed / 0 failed。
 - モデル一覧取得のQtTest: 22 passed / 0 failed。
-- 進捗表示のQtTest: 10 passed / 0 failed。
+- 進捗表示のQtTest: 25 passed / 0 failed。
 - GUI起動・編集・読み取り専用グラフのスモークテスト: 成功。
 - CTest: `core` / `gui` / `catalog` / `progress` / `gui_smoke` の5件すべて成功。
 

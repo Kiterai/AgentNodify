@@ -47,7 +47,8 @@ QString progressStatus(const QString &status) {
 ProgressItem &ProgressParser::item(const QString &key, ProgressKind kind) {
     auto it = indexes_.find(key);
     if (it != indexes_.end()) return items_[it.value()];
-    indexes_[key] = items_.size(); items_.push_back({}); auto &result = items_.back(); result.key = key; result.kind = kind; return result;
+    indexes_[key] = items_.size(); items_.push_back({}); auto &result = items_.back(); result.key = key; result.kind = kind;
+    result.spaceBefore = pendingBoundary_; pendingBoundary_ = false; return result;
 }
 void ProgressParser::append(const QString &chunk) {
     pending_ += chunk;
@@ -101,7 +102,8 @@ void ProgressParser::file(const QString &key, const QString &path, const QString
     if (!directory_.isEmpty() && QDir::isRelativePath(normalized)) normalized = QDir(directory_).filePath(normalized);
     normalized = QDir::cleanPath(normalized);
     auto &entry = item(key + ":file:" + access + ":" + normalized, ProgressKind::FileAccess);
-    entry.path = normalized; entry.name = access; entry.status = status;
+    entry.path = normalized; entry.name = access;
+    if (entry.status.isEmpty() || entry.status == "running" || status != "running") entry.status = status;
 }
 void ProgressParser::files(const QString &key, const QString &name, const Json &raw, const QString &status) {
     const auto input = expandedInput(raw); if (!input.is_object()) return;
@@ -136,12 +138,33 @@ void ProgressParser::tool(const QString &key, const QString &name, const QString
     if (entry.status.isEmpty() || entry.status == "running" || status != "running") entry.status = status;
     if (input) { entry.input = *input; entry.hasInput = true; }
     if (output) { entry.output = *output; entry.hasOutput = true; }
+    if (key.startsWith("codex:") && entry.name == "command_execution") entry.commandLabel = "シェル実行";
+    else if (key.startsWith("claude:tool:") && entry.name.compare("PowerShell", Qt::CaseInsensitive) == 0) entry.commandLabel = "PowerShell";
+    else if (key.startsWith("opencode:") && entry.name == "glob") entry.commandLabel = "glob";
+    if (!entry.commandLabel.isEmpty()) entry.command = str(expandedInput(entry.input), entry.commandLabel == "glob" ? "pattern" : "command");
     // Copy before adding file rows, which may reallocate items_.
     const auto toolName = entry.name; const auto arguments = entry.input; const auto effectiveStatus = entry.status;
     files(key, toolName, arguments, effectiveStatus);
+    summarizeFileTool(key);
+}
+void ProgressParser::summarizeFileTool(const QString &key) {
+    auto &entry = item(key, ProgressKind::Tool);
+    if (!((key.startsWith("opencode:") && entry.name == "patch") ||
+        (key.startsWith("claude:tool:") && entry.name.compare("Write", Qt::CaseInsensitive) == 0))) return;
+    for (auto &file : items_) if (file.kind == ProgressKind::FileAccess && file.key.startsWith(key + ":file:")) {
+        entry.hidden = true;
+        if (entry.spaceBefore) { file.spaceBefore = true; entry.spaceBefore = false; }
+        return;
+    }
 }
 void ProgressParser::event(const Json &value) {
     const auto type = str(value, "type");
+    if (type == "turn.started" || type == "turn.start" || type == "turn.completed" ||
+        type == "step_start" || type == "step_finish" || type == "step-start" || type == "step-finish") {
+        pendingBoundary_ = !items_.empty(); return;
+    }
+    if (type == "rate_limit_event" || type == "thread.started" ||
+        (type == "system" && (str(value, "subtype") == "thinking_tokens" || str(value, "subtype") == "init"))) return;
     if (type == "assistant" || type == "user" || type == "result" || type == "stream_event") { claude(value); return; }
     if (type.startsWith("item.") && value.contains("item") && value["item"].is_object()) {
         const auto &data = value["item"]; const auto kind = str(data, "type");
@@ -202,9 +225,14 @@ void ProgressParser::event(const Json &value) {
                 file(key, path, accessOf(str(change, "status")), status);
             }
         }
+        summarizeFileTool(key);
         return;
     }
     simple(value);
+}
+void ProgressParser::thinking(const QString &message, int index) {
+    auto &entry = item("claude:thinking:" + message + ":" + QString::number(index), ProgressKind::Thinking);
+    entry.name = "思考中";
 }
 void ProgressParser::claude(const Json &value) {
     const auto type = str(value, "type");
@@ -221,12 +249,18 @@ void ProgressParser::claude(const Json &value) {
             } else if (blockType == "text") {
                 const auto key = "claude:text:" + claudeMessage_ + ":" + QString::number(index); blocks_[index] = {key, {}, false};
                 auto &entry = item(key, ProgressKind::Message); entry.name = "エージェント"; entry.content = str(block, "text").toStdString();
+            } else if (blockType == "thinking" || blockType == "redacted_thinking") {
+                thinking(claudeMessage_, index);
+                blocks_[index] = {"claude:thinking:" + claudeMessage_ + ":" + QString::number(index), {}, false, true};
             } else simple(value, blockType);
             return;
         }
+        if (kind == "content_block_delta" && event.contains("delta") &&
+            (str(event["delta"], "type") == "thinking_delta" || str(event["delta"], "type") == "signature_delta")) return;
         if (kind == "content_block_delta" && event.contains("delta") && blocks_.contains(index)) {
             claudeBlock_ = index;
             auto &block = blocks_[index]; const auto &delta = event["delta"];
+            if (block.thinking) return;
             if (!block.tool && str(delta, "type") == "text_delta") {
                 auto &entry = item(block.key, ProgressKind::Message); entry.content = (stringValue(entry.content) + str(delta, "text")).toStdString();
             } else if (block.tool && str(delta, "type") == "input_json_delta") {
@@ -257,6 +291,9 @@ void ProgressParser::claude(const Json &value) {
                 // complete blocks may intentionally contain exactly the same text.
                 if (key.isEmpty()) key = prefix + (str(value, "uuid").isEmpty() ? QString::number(line_) : str(value, "uuid")) + ":" + QString::number(index);
                 auto &entry = item(key, ProgressKind::Message); entry.name = "エージェント"; entry.content = text.toStdString();
+            } else if (type == "assistant" && (kind == "thinking" || kind == "redacted_thinking")) {
+                const int thinkingIndex = messageId == claudeMessage_ && message["content"].size() == 1 && claudeBlock_ >= 0 ? claudeBlock_ : index;
+                thinking(messageId, thinkingIndex);
             } else if (kind == "tool_use") {
                 const Json input = block.value("input", Json::object());
                 tool("claude:tool:" + str(block, "id"), str(block, "name"), "running", &input, nullptr);

@@ -2,6 +2,7 @@
   "sandbox": {
     "filesystem": {
       "allowRead": [
+        "C:\\Users\\User1\\AppData\\Roaming\\AgentNodify\\AgentNodify\\history",
         "C:\\Users\\User1\\AppData\\Local\\Programs\\@opencode-aidesktop\\resources"
       ]
     },
@@ -14,6 +15,5 @@
       ]
     }
   },
-  "rules": [
-  ]
+  "rules": []
 }

@@ -16,6 +16,15 @@ private slots:
     void inlineCodeBackground();
     void disclosureHover();
     void longMarkdownMessage();
+    void claudeThinking();
+    void executionBoundaries();
+    void commandPresentation();
+    void commandElisionAndStatus();
+    void ignoredControlEvents();
+    void rowClickTargets();
+    void rowHoverAndIconPlacement();
+    void globPresentation();
+    void fileToolPresentation();
     void fallbackAndPartialLines();
 };
 }
