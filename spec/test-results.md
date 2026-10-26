@@ -6,7 +6,7 @@ Windows 11 / MSVC 2022 / Qt 6.12.0 Release構成。
 ノード内フォームへのGUI改修後にReleaseビルドを完了し、以下がすべて成功。
 
 - コアのQtTest: 26 passed / 0 failed。
-- GUIのQtTest: 8 passed / 0 failed。
+- GUIのQtTest: 9 passed / 0 failed。
 - モデル一覧取得のQtTest: 22 passed / 0 failed。
 - GUI起動・編集・読み取り専用グラフのスモークテスト: 成功。
 - CTest: `core` / `gui` / `catalog` / `gui_smoke` の4件すべて成功。
@@ -20,6 +20,8 @@ GUIではフォーム編集・右ペイン同期・折り返しと改行によ�
 画像確認用の出力は`build/gui-editor.png`、詳細ログは`build/gui-results.txt` / `build/core-results.txt`。
 モデル一覧の回帰テストには3つのCLIプロトコル、Codexのページ送り・重複除去・非表示モデル、
 異常応答・出力上限・タイムアウト、キャッシュ、CLI変更、設定済みIDを変更しないUI更新を含む。
+選択式ボックスについて、エージェント・モデル・分岐条件・接続先の候補リストの文字色・背景色・選択色と、選択操作を検証した。
+画像確認用の出力は`build/gui-combo-popup.png`。
 
 ### 実CLIからのモデル一覧取得
 

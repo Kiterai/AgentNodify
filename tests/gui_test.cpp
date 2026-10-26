@@ -1,6 +1,7 @@
 #include "gui_test.h"
 #include "window.h"
 #include "nodeform.h"
+#include "theme.h"
 #include <QtTest>
 #include <QComboBox>
 #include <QDir>
@@ -15,6 +16,7 @@
 #include <QToolButton>
 #include <QTextBlock>
 #include <QTextLayout>
+#include <QStyledItemDelegate>
 #include <QtNodes/NodeStyle>
 #include <QtNodes/internal/NodeGraphicsObject.hpp>
 
@@ -156,6 +158,29 @@ void GuiTest::widgetLifetime() {
     graph.deleteNode(id); QVERIFY(form.isNull());
     graph.readOnly = true; graph.replace(Flow::initial());
     QVERIFY(graph.nodeData(1, NodeRole::Widget).value<QWidget *>() == nullptr);
+}
+void GuiTest::comboPopupColors() {
+    Node agent; agent.kind = Kind::Agent; NodeForm agentForm(agent);
+    Node branch; branch.kind = Kind::Branch; branch.rules.push_back({"status", "ok", true}); NodeForm branchForm(branch);
+    QComboBox connection; connection.addItems({"始端", "エージェント", "終端"}); styleComboBoxPopup(&connection);
+    QList<QComboBox *> combos = agentForm.findChildren<QComboBox *>();
+    combos.append(branchForm.findChildren<QComboBox *>()); combos.append(&connection);
+    QCOMPARE(combos.size(), 4);
+    for (auto *combo : combos) {
+        auto *view = combo->view(); view->ensurePolished();
+        QVERIFY(qobject_cast<QStyledItemDelegate *>(view->itemDelegate()));
+        for (auto group : {QPalette::Active, QPalette::Inactive}) {
+            QCOMPARE(view->palette().color(group, QPalette::Text), QColor("#e6edf8"));
+            QCOMPARE(view->palette().color(group, QPalette::HighlightedText), QColor("#ffffff"));
+            QCOMPARE(view->palette().color(group, QPalette::Base), QColor("#17202e"));
+        }
+    }
+    connection.resize(240, 35); connection.show(); connection.showPopup(); QCoreApplication::processEvents();
+    QVERIFY(connection.view()->grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-combo-popup.png")));
+    const auto second = connection.model()->index(1, 0);
+    QTest::mouseClick(connection.view()->viewport(), Qt::LeftButton, Qt::NoModifier, connection.view()->visualRect(second).center());
+    QCOMPARE(connection.currentIndex(), 1);
+    connection.hidePopup();
 }
 }
 QTEST_MAIN(an::GuiTest)

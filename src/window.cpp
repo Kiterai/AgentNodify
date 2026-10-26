@@ -1,4 +1,5 @@
 #include "window.h"
+#include "theme.h"
 #include <QApplication>
 #include <QCloseEvent>
 #include <QComboBox>
@@ -259,6 +260,7 @@ void Window::connectNodes() {
     QDialog dialog(this); dialog.setWindowTitle("接続を追加 — 自己ループも指定可能");
     auto *layout = new QVBoxLayout(&dialog); auto *form = new QFormLayout;
     auto *from = new QComboBox, *to = new QComboBox;
+    styleComboBoxPopup(from); styleComboBoxPopup(to);
     auto *output = new QSpinBox, *input = new QSpinBox;
     for (auto &[id, node] : editGraph_->flow.nodes) {
         auto label = node.title.isEmpty() ? kindName(node.kind) : node.title;

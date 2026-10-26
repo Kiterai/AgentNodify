@@ -1,4 +1,5 @@
 #include "nodeform.h"
+#include "theme.h"
 #include <QComboBox>
 #include <QFormLayout>
 #include <QEvent>
@@ -102,6 +103,7 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
         auto *combo = new ModelCombo; model_ = combo; model_->setObjectName("nodeModel"); model_->setEditable(true); model_->setCompleter(nullptr);
         model_->lineEdit()->setPlaceholderText("CLI既定");
         model_->setMinimumContentsLength(10); model_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+        styleComboBoxPopup(agent_); styleComboBoxPopup(model_);
         auto *modelRow = new QWidget; auto *modelLayout = new QHBoxLayout(modelRow); modelLayout->setContentsMargins(0, 0, 0, 0); modelLayout->setSpacing(4);
         modelLayout->addWidget(model_, 1); refreshModels_ = new QPushButton("↻"); refreshModels_->setObjectName("refreshModels"); refreshModels_->setFixedWidth(30);
         modelLayout->addWidget(refreshModels_);
@@ -214,6 +216,7 @@ void NodeForm::rebuildRules() {
         auto *variable = new QLineEdit(node_.rules[i].variable); variable->setObjectName("ruleVariable"); variable->setPlaceholderText("前段の変数名"); layout->addWidget(variable);
         auto *comparison = new QHBoxLayout;
         auto *op = new QComboBox; op->setObjectName("ruleOperator"); op->addItems({"等しい", "異なる"}); op->setCurrentIndex(node_.rules[i].equals ? 0 : 1);
+        styleComboBoxPopup(op);
         auto *value = new QLineEdit(node_.rules[i].value); value->setObjectName("ruleValue"); value->setPlaceholderText("比較する値");
         variable->installEventFilter(this); value->installEventFilter(this); op->installEventFilter(this);
         comparison->addWidget(op); comparison->addWidget(value, 1); layout->addLayout(comparison); rulesLayout_->addWidget(card);

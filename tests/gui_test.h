@@ -12,5 +12,6 @@ private slots:
     void terminalAppearance();
     void editorAndFlowRail();
     void widgetLifetime();
+    void comboPopupColors();
 };
 }
