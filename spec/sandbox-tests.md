@@ -153,6 +153,7 @@ CodexはWindows既定TLSで`workspace routing discovery failed`となりまし�
 | CTest script | 成功（QtTest 36 passed / 0 failed / 0 skipped、システムPython 3.15.1／Node.js 24.22.1、stdin/stdout・cwd・ループ・AND・エラー・中止） |
 | CTest shell | 成功（QtTest 23 passed / 0 failed / 0 skipped、システムPowerShell、変数・JSON結果・保存先基準cwd・ループ・AND・出力上限） |
 | CTest coordinator | 成功（QtTest 27 passed / 0 failed / 0 skipped、fake_agent使用、プロジェクト作成・非同期開始・待機・並列・循環検出・中止） |
+| CTest instance | 成功（QtTest 6 passed / 0 failed、別プロセスによる重複拒否・通常解放・強制終了後の回復・ファイルエラー） |
 
 最新のサンドボックス内実テストは3エージェント×4ケースの全12件が成功。
 以前のOpenCodeの並列起動2回の失敗（`Standalone server exited before reporting readiness`）は
