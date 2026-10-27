@@ -38,6 +38,14 @@ bool Coordinator::running(const QString &projectId) const {
     for (const auto &[key, session] : sessions_) if (session->active && session->projectId == projectId) return true;
     return false;
 }
+std::optional<Flow> Coordinator::activeFlow(const QString &projectId) const {
+    for (const auto &[key, session] : sessions_) if (session->active && session->projectId == projectId) return session->flow;
+    return {};
+}
+void Coordinator::cancelProject(const QString &projectId) {
+    const auto id = projectId;
+    for (const auto &[key, session] : sessions_) if (session->active && session->projectId == id && session->runner) session->runner->cancel();
+}
 void Coordinator::cancelAll() {
     stopping_ = true;
     // Cancellation callbacks can detach waiters, but never erase sessions.
@@ -63,14 +71,17 @@ bool Coordinator::reaches(const QString &from, const QString &to, std::set<QStri
     return false;
 }
 bool Coordinator::start(const Project &project, Runner *runner) {
+    const Project target = project; // Registry updates from signals may reallocate projects.
     if (runner && (runner->running() || callers_.contains(runner))) return false;
+    if (running(target.id)) return false;
     const auto identity = key(project.flowPath, project.directory);
     if (stopping_ || (sessions_.contains(identity) && sessions_.at(identity)->active)) return false;
     auto flow = flows.find(project.flowPath);
     if (flow == flows.end() || !QFileInfo(project.directory).isDir() || !flow->second.validate().isEmpty()) return false;
     for (const auto &[id, node] : flow->second.nodes) if (node.kind == Kind::Agent && node.model.isEmpty()) return false;
+    const Flow snapshot = flow->second; const AgentConfig settings = config;
     if (!runner) runner = new Runner(this);
-    auto session = std::make_shared<Session>(); session->projectId = project.id; session->runner = runner; session->active = true;
+    auto session = std::make_shared<Session>(); session->projectId = target.id; session->flow = snapshot; session->runner = runner; session->active = true;
     sessions_[identity] = session; callers_[runner] = identity;
     runner->hostHandler = [this](Runner *caller, Id id, const Node &node, const QString &path, Runner::HostCompletion done) { operation(caller, id, node, path, std::move(done)); };
     runner->cancelHostOperations = [this](Runner *caller) { detach(caller); };
@@ -85,12 +96,13 @@ bool Coordinator::start(const Project &project, Runner *runner) {
         session->active = false; session->success = false; session->error = "target_cancelled";
         auto waiters = std::move(session->waiters); session->waiters.clear(); detach(runner); callers_.erase(runner);
         for (const auto &waiter : waiters) if (waiter.caller) waiter.complete({}, session->error);
+        emit sessionFinished(session->projectId, false, "実行を中止しました");
         emit activityChanged();
     });
-    connect(runner, &Runner::finished, this, [this, runner, session, flow = flow->second](bool ok, const QString &) {
+    connect(runner, &Runner::finished, this, [this, runner, session](bool ok, const QString &message) {
         session->active = false; session->success = ok; session->error = "target_failed";
         bool terminal = false, failed = false;
-        for (const auto &[id, node] : flow.nodes) {
+        for (const auto &[id, node] : session->flow.nodes) {
             auto result = runner->results().find(id);
             if (result != runner->results().end() && result->second.state == State::Cancelled) session->error = "target_cancelled";
             if (result != runner->results().end() && result->second.state == State::Failed) failed = true;
@@ -102,10 +114,11 @@ bool Coordinator::start(const Project &project, Runner *runner) {
         for (const auto &waiter : waiters) if (waiter.caller) waiter.complete(session->output, session->success ? QString() : session->error);
         runner->disconnect(this);
         if (runner->parent() == this) runner->deleteLater();
+        emit sessionFinished(session->projectId, ok, message);
         emit activityChanged();
     });
-    emit sessionStarted(project.id);
-    const bool started = runner->start(flow->second, project.directory, config, project.flowPath);
+    emit sessionStarted(target.id);
+    const bool started = runner->start(snapshot, target.directory, settings, target.flowPath);
     emit activityChanged(); return started;
 }
 void Coordinator::operation(Runner *caller, Id, const Node &node, const QString &path, Runner::HostCompletion complete) {

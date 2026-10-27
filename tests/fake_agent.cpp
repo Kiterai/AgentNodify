@@ -15,6 +15,9 @@ int main(int argc, char **argv) {
     QFile input; if (!input.open(stdin, QIODevice::ReadOnly)) return 11; QByteArray prompt;
     if (!args.contains("run")) prompt = input.readAll();
     else prompt = args.last().toUtf8();
+    if(prompt.startsWith("CHECK_WHOLE_INPUT\n")) {
+        QFile expected("whole-input.txt"); if(!expected.open(QIODevice::ReadOnly) || prompt.mid(QByteArray("CHECK_WHOLE_INPUT\n").size())!=expected.readAll()) return 30;
+    }
     if (prompt.contains("FAIL")) return 7;
     if (prompt.contains("SLEEP")) QThread::sleep(5);
     if (prompt.contains("SHORT_DELAY")) QThread::msleep(80);

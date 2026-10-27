@@ -7,9 +7,23 @@
 #include <QKeyEvent>
 #include <QtNodes/internal/NodeGraphicsObject.hpp>
 #include <QtNodes/internal/ConnectionGraphicsObject.hpp>
+#include <QtNodes/BasicGraphicsScene>
 #include <cmath>
 
 namespace an {
+void GraphView::zoomToNode(QtNodes::NodeId id) {
+    auto *graphScene = dynamic_cast<QtNodes::BasicGraphicsScene *>(scene());
+    auto *node = graphScene ? graphScene->nodeGraphicsObject(id) : nullptr;
+    if (!node) return;
+    const auto bounds = node->sceneBoundingRect(); constexpr qreal margin = 32;
+    if (bounds.isEmpty() || viewport()->width() <= 2 * margin || viewport()->height() <= 2 * margin) return;
+    const auto scale = qMin(1.5, qMin((viewport()->width() - 2 * margin) / bounds.width(), (viewport()->height() - 2 * margin) / bounds.height()));
+    if (!std::isfinite(scale) || scale <= 0) return;
+    const QSizeF visible(viewport()->width() / scale, viewport()->height() / scale);
+    const QRectF centered(bounds.center() - QPointF(visible.width() / 2, visible.height() / 2), visible);
+    setSceneRect(sceneRect().united(centered.adjusted(-margin / scale, -margin / scale, margin / scale, margin / scale)));
+    setTransform(QTransform::fromScale(scale, scale)); centerOn(bounds.center()); emit scaleChanged(scale);
+}
 void GraphView::zoomToFit() {
     if (!scene()) return;
     QRectF bounds;

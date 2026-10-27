@@ -660,6 +660,49 @@ void GuiTest::simplifiedCliSettings() {
     QVERIFY(!current.contains("timeout")); QVERIFY(!current.contains("workspaceWrite"));
     QCOMPARE(QString::fromStdString(current.at("claude")), QString("custom-claude"));
 }
+void GuiTest::interactionWhileWaiting() {
+    QTemporaryDir directory; Window window(true); window.show(); auto flow=Flow::initial();
+    Node input; input.id=3; input.kind=Kind::UserInput; flow.nodes[3]=input;
+    Node agent; agent.id=4; agent.kind=Kind::Agent; agent.model="fixture"; agent.prompt="RESPONSE_TWO"; flow.nodes[4]=agent; flow.edges={{1,3},{3,4},{4,2}};
+    const auto path=directory.filePath("main.flow.json"); window.documents_[0]={flow,path,true}; window.selectFlow(0);
+    for(QString name:{"First","Second"}) {const auto folder=directory.filePath(name); QVERIFY(QDir().mkpath(folder)); window.projects_.push_back({name,folder,path,{}});}
+    window.refreshProjects(); window.tabs_->setCurrentIndex(1); window.config_.codex=QCoreApplication::applicationDirPath()+"/fake_agent";
+#ifdef Q_OS_WIN
+    window.config_.codex+=".exe";
+#endif
+    QSignalSpy primary(window.runner_,&Runner::finished); window.executeFlow(); QTRY_COMPARE(window.inputPrompts_.size(),size_t(1)); const auto first=window.inputPrompts_[0].request.id;
+    window.inputText_->setPlainText("draft stays"); QVERIFY(window.activities_->isEnabled()); QVERIFY(window.projectList_->isEnabled()); QVERIFY(window.tabs_->isTabEnabled(0)); QVERIFY(!window.runButton_->isEnabled());
+    window.projectList_->setCurrentRow(1); QCOMPARE(window.project_,1); QVERIFY(window.runButton_->isEnabled()); QVERIFY(window.inputPanel_->isHidden()); QVERIFY(window.inputText_->toPlainText().isEmpty()); QVERIFY(!window.stopButton_->isEnabled());
+    window.tabs_->setCurrentIndex(0); auto edited=window.editGraph_->flow.nodes.at(4); edited.prompt="Say hello"; window.editGraph_->updateNode(edited);
+    QVERIFY(window.saveFlow()); QCOMPARE(Flow::load(path).nodes.at(4).prompt,QString("Say hello")); QVERIFY(window.coordinator_->running(window.projects_[0].historyId)); QVERIFY(window.projects_[0].results.at(3).state==State::Running);
+    const auto nextFlow=window.editGraph_->flow; QVERIFY(window.editGraph_->deleteNode(3)); QCOMPARE(window.inputPrompts_[0].request.id,first);
+    window.selectProject(0); QVERIFY(window.workGraph_->nodeExists(3)); QVERIFY(window.workGraph_->flow.nodes.at(4).prompt=="RESPONSE_TWO");
+    window.editGraph_->replace(nextFlow); window.changed();
+    bool settingsOpened=false; QTimer::singleShot(0,&window,[&]{auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget()); QVERIFY(dialog); settingsOpened=true; dialog->reject();}); window.settings(); QVERIFY(settingsOpened);
+    window.newFlow(); QCOMPARE(window.documents_.size(),size_t(2)); QCOMPARE(window.current_,1); QCOMPARE(window.inputPrompts_[0].request.id,first);
+    window.documents_[1].path=directory.filePath("unused.flow.json"); window.documents_[1].dirty=false;
+    QTimer::singleShot(0,&window,[]{if(auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) box->button(QMessageBox::Yes)->click();}); window.removeFlow(1); QCOMPARE(window.documents_.size(),size_t(1)); QVERIFY(window.coordinator_->running(window.projects_[0].historyId));
+    window.selectFlow(0); window.selectProject(0); QVERIFY(window.workGraph_->flow.nodes.at(4).prompt=="RESPONSE_TWO");
+    window.selectProject(1); window.tabs_->setCurrentIndex(1); QVERIFY(window.runButton_->isEnabled()); window.executeFlow(); QTRY_COMPARE(window.inputPrompts_.size(),size_t(2));
+    QString second; for(const auto &prompt:window.inputPrompts_) if(prompt.projectId==window.projects_[1].historyId) second=prompt.request.id;
+    QVERIFY(!second.isEmpty()); QVERIFY(window.inputText_->toPlainText().isEmpty()); QVERIFY(window.coordinator_->running(window.projects_[0].historyId)); QVERIFY(window.coordinator_->running(window.projects_[1].historyId));
+    QVERIFY(window.coordinator_->submitUserInput(second,"second",0)); QTRY_VERIFY(!window.coordinator_->running(window.projects_[1].historyId)); QCOMPARE(primary.count(),0); QVERIFY(window.busy()); QVERIFY(window.runButton_->isEnabled());
+    QVERIFY(window.projects_[1].results.at(2).output=="hello"); QCOMPARE(window.project_,1); QVERIFY(window.inputPanel_->isHidden());
+    window.selectProject(0); QCOMPARE(window.inputText_->toPlainText(),QString("draft stays")); window.selectProject(1);
+    QVERIFY(window.coordinator_->submitUserInput(first,"first",0)); QTRY_COMPARE(primary.count(),1); QVERIFY(primary[0][0].toBool()); QVERIFY(!window.busy()); QCOMPARE(window.project_,1);
+    QVERIFY(window.projects_[0].results.at(2).output=="two"); QVERIFY(window.projects_[1].results.at(2).output=="hello"); QCOMPARE(window.projects_[0].history.size(),size_t(4)); QCOMPARE(window.projects_[1].history.size(),size_t(4));
+    window.selectWorkNode(4); QVERIFY(window.output_->toPlainText().contains("hello"));
+}
+void GuiTest::removeProjectsWhileWaiting() {
+    QTemporaryDir directory; Window window(true); window.show(); auto flow=Flow::initial(); Node input; input.id=3; input.kind=Kind::UserInput; flow.nodes[3]=input; flow.edges={{1,3},{3,2}};
+    window.editGraph_->replace(flow); window.changed(); const auto path=window.documents_[0].path;
+    window.projects_.push_back({"Waiting",directory.path(),path,{}}); window.projects_.push_back({"Unused",directory.path(),path,{}}); window.refreshProjects(); window.tabs_->setCurrentIndex(1); window.executeFlow(); QTRY_COMPARE(window.inputPrompts_.size(),size_t(1));
+    window.inputText_->setPlainText("kept"); auto *idleRemove=window.projectList_->itemWidget(window.projectList_->item(1))->findChild<QToolButton *>("removeProject"); QVERIFY(idleRemove); QTest::mouseClick(idleRemove,Qt::LeftButton);
+    QCOMPARE(window.projects_.size(),size_t(1)); QVERIFY(window.busy()); QCOMPARE(window.inputText_->toPlainText(),QString("kept"));
+    auto click=[&](QMessageBox::StandardButton answer){QTimer::singleShot(0,&window,[answer]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); box->button(answer)->click();}); auto *remove=window.projectList_->itemWidget(window.projectList_->item(0))->findChild<QToolButton *>("removeProject"); QVERIFY(remove); QTest::mouseClick(remove,Qt::LeftButton);};
+    click(QMessageBox::No); QCOMPARE(window.projects_.size(),size_t(1)); QVERIFY(window.busy()); QCOMPARE(window.inputPrompts_.size(),size_t(1));
+    click(QMessageBox::Yes); QVERIFY(window.projects_.empty()); QVERIFY(!window.busy()); QVERIFY(window.inputPrompts_.empty()); QVERIFY(QFileInfo(directory.path()).isDir());
+}
 void GuiTest::projectStatusIndicators() {
     QTemporaryDir directory; Window window(true); window.show();
     const auto flowPath = window.documents_[0].path;
@@ -701,7 +744,7 @@ void GuiTest::projectStatusIndicators() {
     flow=Flow::initial(); Node input; input.id=3; input.kind=Kind::UserInput; flow.nodes[3]=input; flow.edges={{1,3},{3,2}};
     window.editGraph_->replace(flow); window.changed(); window.executeFlow(); QTRY_COMPARE(window.inputPrompts_.size(),size_t(1)); verify(0,true,true); verify(1,false,false);
     QVERIFY(window.coordinator_->start(window.coordinator_->projects[1])); QTRY_COMPARE(window.inputPrompts_.size(),size_t(2)); verify(0,true,true); verify(1,true,true); verify(2,false,false);
-    QVERIFY(!window.projectList_->isEnabled()); QVERIFY(window.projectList_->grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-project-status-icons.png")));
+    QVERIFY(window.projectList_->isEnabled()); QVERIFY(window.projectList_->grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-project-status-icons.png")));
     QString first,second;
     for (const auto &prompt:window.inputPrompts_) if(prompt.projectId==window.projects_[0].historyId) first=prompt.request.id; else second=prompt.request.id;
     QVERIFY(window.coordinator_->submitUserInput(first,"first",0)); QTRY_VERIFY(!window.coordinator_->running(window.projects_[0].historyId)); QVERIFY(window.busy()); verify(0,false,false); verify(1,true,true);
@@ -765,9 +808,12 @@ void GuiTest::userInputWorkPanel() {
     QSignalSpy done(window.runner_,&Runner::finished); window.executeFlow(); QTRY_COMPARE(window.inputPrompts_.size(),size_t(1));
     QVERIFY(window.inputPanel_->isVisible()); QVERIFY(window.inputMessage_->toPlainText().contains("hello")); QVERIFY(window.inputText_->isEnabled()); QVERIFY(window.busy());
     QVERIFY(window.inputPanel_->geometry().top() > window.workView_->geometry().bottom());
+    QCoreApplication::processEvents();
+    QVERIFY(window.inputText_->geometry().top()-window.inputMessage_->geometry().bottom()<=5);
+    for(auto *label:window.inputPanel_->findChildren<QLabel *>()) QVERIFY(label->text()!=QString("ユーザー入力待ち"));
     const QString answer = "日本語の回答\n{\"value\":42}"; window.inputText_->setPlainText(answer);
     QVERIFY(!window.close()); QVERIFY(window.busy()); window.showWindow(); QCOMPARE(window.inputText_->toPlainText(),answer);
-    QCoreApplication::processEvents(); static_cast<GraphView *>(window.workView_)->zoomToFit(); QVERIFY(window.grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-user-input-work.png")));
+    window.focusUserInputNode(); QCoreApplication::processEvents(); QVERIFY(window.grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-user-input-work.png")));
     QPushButton *choice = nullptr;
     for (auto *candidate : window.inputPanel_->findChildren<QPushButton *>("userInputChoice")) if (candidate->property("choiceIndex").toInt()==1 && candidate->isVisible()) choice=candidate;
     QVERIFY(choice); QCOMPARE(choice->text(),QString("別の経路")); QTest::mouseClick(choice,Qt::LeftButton);
@@ -784,15 +830,43 @@ void GuiTest::userInputParallelProjects() {
     window.editGraph_->replace(parent); window.changed(); window.documents_.push_back({child,childPath,false});
     window.projects_.push_back({"Parent",directory.path(),window.documents_[0].path,{}}); window.projects_.push_back({"Child",directory.path(),childPath,{}}); window.refreshProjects(); window.tabs_->setCurrentIndex(1);
     QSignalSpy done(window.runner_,&Runner::finished); window.executeFlow(); QTRY_COMPARE(window.inputPrompts_.size(),size_t(2));
-    const auto firstId = window.inputSelector_->currentData().toString(); window.inputText_->setPlainText("draft one"); window.inputSelector_->setCurrentIndex(1); const auto secondId = window.inputSelector_->currentData().toString();
-    QVERIFY(firstId != secondId); window.inputText_->setPlainText("draft two"); window.inputSelector_->setCurrentIndex(0); QCOMPARE(window.inputText_->toPlainText(),QString("draft one")); window.inputSelector_->setCurrentIndex(1); QCOMPARE(window.inputText_->toPlainText(),QString("draft two"));
+    QCOMPARE(window.inputSelector_->count(),1); const auto firstId = window.inputSelector_->currentData().toString(); window.inputText_->setPlainText("draft one");
+    window.selectFlow(1); window.selectProject(1); QCOMPARE(window.inputSelector_->count(),1); const auto secondId = window.inputSelector_->currentData().toString();
+    QVERIFY(firstId != secondId); window.inputText_->setPlainText("draft two"); window.selectFlow(0); window.selectProject(0); QCOMPARE(window.inputText_->toPlainText(),QString("draft one"));
     QString parentRequest, childRequest;
     for (const auto &prompt : window.inputPrompts_) { if (prompt.projectId == window.projects_[0].historyId) parentRequest=prompt.request.id; else childRequest=prompt.request.id; }
     QVERIFY(!parentRequest.isEmpty()); QVERIFY(!childRequest.isEmpty());
-    QVERIFY(window.coordinator_->submitUserInput(parentRequest,"parent answer",0)); QTRY_COMPARE(done.count(),1); QVERIFY(done[0][0].toBool()); QVERIFY(window.busy()); QVERIFY(!window.runButton_->isEnabled());
-    QCOMPARE(window.inputPrompts_.size(),size_t(1)); QCOMPARE(window.inputSelector_->currentData().toString(),childRequest); QVERIFY(window.inputSelector_->currentText().contains("Child"));
+    QVERIFY(window.coordinator_->submitUserInput(parentRequest,"parent answer",0)); QTRY_COMPARE(done.count(),1); QVERIFY(done[0][0].toBool()); QVERIFY(window.busy()); QVERIFY(window.runButton_->isEnabled());
+    QCOMPARE(window.inputPrompts_.size(),size_t(1)); QVERIFY(window.inputPanel_->isHidden()); QCOMPARE(window.inputSelector_->count(),0); QVERIFY(!window.stopButton_->isEnabled());
+    window.selectFlow(1); window.selectProject(1); QCOMPARE(window.inputSelector_->currentData().toString(),childRequest); QCOMPARE(window.inputSelector_->currentText(),kindName(Kind::UserInput)); QCOMPARE(window.inputText_->toPlainText(),QString("draft two"));
     QVERIFY(window.coordinator_->submitUserInput(childRequest,"child answer",0)); QTRY_VERIFY(!window.busy()); QVERIFY(window.inputPrompts_.empty()); QVERIFY(!window.inputPanel_->isVisible());
     QVERIFY(window.projects_[0].results.at(2).output == "parent answer"); QVERIFY(window.projects_[1].results.at(2).output == "child answer"); QCOMPARE(window.projects_[1].history.size(),size_t(3));
+}
+void GuiTest::scopedInputSelectionAndStop() {
+    QTemporaryDir directory; Window window(true); window.show(); auto flow=Flow::initial();
+    for (Id id : {3u,4u}) { Node node; node.id=id; node.kind=Kind::UserInput; node.title=QString("Question %1").arg(id); node.position={double(id*700),0}; flow.nodes[id]=node; }
+    flow.edges={{1,3},{1,4},{3,2},{4,2}}; window.editGraph_->replace(flow); window.changed();
+    const auto path=window.documents_[0].path;
+    for (QString name : {"First","Second"}) { const auto folder=directory.filePath(name); QVERIFY(QDir().mkpath(folder)); window.projects_.push_back({name,folder,path,{}}); }
+    window.refreshProjects(); window.tabs_->setCurrentIndex(1); window.executeFlow(); QTRY_COMPARE(window.inputSelector_->count(),2);
+    QCOMPARE(window.inputSelector_->itemText(0),QString("Question 3")); QCOMPARE(window.inputSelector_->itemText(1),QString("Question 4"));
+    window.inputText_->setPlainText("first draft"); window.inputSelector_->setCurrentIndex(1); window.inputText_->setPlainText("second draft");
+    QTRY_COMPARE(window.workSelected_,Id(4));
+    auto *item=window.workScene_->nodeGraphicsObject(4); QVERIFY(item);
+    QTRY_VERIFY(window.workView_->mapToScene(window.workView_->viewport()->rect()).boundingRect().contains(item->sceneBoundingRect()));
+    const auto center=window.workView_->mapToScene(window.workView_->viewport()->rect().center()); QVERIFY(QLineF(center,item->sceneBoundingRect().center()).length()<5);
+    window.inputSelector_->setCurrentIndex(0); QCOMPARE(window.inputText_->toPlainText(),QString("first draft")); window.inputSelector_->setCurrentIndex(1);
+    auto *split=window.workInputSplit_; QCoreApplication::processEvents(); const int before=split->sizes()[1]; auto *handle=split->handle(1);
+    QTest::mousePress(handle,Qt::LeftButton); QTest::mouseMove(handle,QPoint(handle->width()/2,-45),20); QTest::mouseRelease(handle,Qt::LeftButton,Qt::NoModifier,QPoint(handle->width()/2,-45));
+    QTRY_VERIFY(split->sizes()[1]!=before); const int height=split->sizes()[1];
+    window.selectProject(1); QVERIFY(window.inputPanel_->isHidden()); QCOMPARE(window.inputSelector_->count(),0); QVERIFY(!window.stopButton_->isEnabled());
+    window.selectProject(0); QCOMPARE(window.inputSelector_->currentIndex(),1); QCOMPARE(window.inputText_->toPlainText(),QString("second draft")); QTRY_VERIFY(qAbs(split->sizes()[1]-height)<5);
+    window.selectProject(1); window.executeFlow(); QTRY_COMPARE(window.inputPrompts_.size(),size_t(4)); QCOMPARE(window.inputSelector_->count(),2);
+    QTest::mouseClick(window.stopButton_,Qt::LeftButton); QTRY_VERIFY(!window.coordinator_->running(window.projects_[1].historyId)); QVERIFY(window.coordinator_->running(window.projects_[0].historyId));
+    QVERIFY(window.inputPanel_->isHidden()); QCOMPARE(window.inputSelector_->count(),0); QCOMPARE(window.inputPrompts_.size(),size_t(2));
+    window.selectProject(0); QCOMPARE(window.inputSelector_->currentIndex(),1); QCOMPARE(window.inputText_->toPlainText(),QString("second draft"));
+    window.project_=-1; window.refreshUserInputPanel(); QVERIFY(window.inputPanel_->isHidden()); QCOMPARE(window.inputSelector_->count(),0);
+    window.selectProject(0); QTest::mouseClick(window.stopButton_,Qt::LeftButton); QTRY_VERIFY(!window.busy()); QVERIFY(window.inputPanel_->isHidden());
 }
 void GuiTest::contextCheckboxColors() {
     Node node; node.id = 3; node.kind = Kind::Agent; NodeForm form(node); form.show(); QCoreApplication::processEvents();

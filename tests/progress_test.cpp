@@ -43,6 +43,20 @@ void ProgressTest::protocols_data() {
     QTest::addColumn<QString>("agent");
     for (QString name : {"Codex", "Claude Code", "OpenCode"}) QTest::newRow(qPrintable(name)) << name;
 }
+void ProgressTest::compactInputMessage() {
+    ContentView view; view.setObjectName("userInputMessage"); view.setCompactMessage(3); view.resize(360,100); view.show(); view.setPlainText("Short message");
+    auto *browser=view.findChild<QTextBrowser *>(); auto *tree=view.findChild<QTreeWidget *>(); QVERIFY(browser); QVERIFY(tree);
+    QTRY_VERIFY(browser->height()<browser->fontMetrics().lineSpacing()*2); QVERIFY(!browser->verticalScrollBar()->isVisible()); QCOMPARE(browser->frameShape(),QFrame::NoFrame);
+    QCOMPARE(browser->document()->documentMargin(),qreal(0)); QVERIFY(browser->styleSheet().isEmpty()); QVERIFY(view.styleSheet().contains("background:transparent"));
+    view.setPlainText("one\n\ntwo\n\nthree\n\nfour\n\nfive");
+    QTRY_VERIFY(browser->verticalScrollBar()->isVisible()); QVERIFY(browser->height()<=int(std::ceil(browser->fontMetrics().lineSpacing()*1.15))*3);
+    view.setPlainText(QString("wrapped words ").repeated(100)); QTRY_VERIFY(browser->verticalScrollBar()->maximum()>0);
+    view.setPlainText("Short again"); QTRY_VERIFY(!browser->verticalScrollBar()->isVisible()); QTRY_VERIFY(browser->height()<browser->fontMetrics().lineSpacing()*2);
+    Json value=Json::object(); for(int i=0;i<12;++i) value["field"+std::to_string(i)]=i; view.setValue(value,true,true);
+    QTRY_VERIFY(tree->isVisible()); QTRY_VERIFY(tree->verticalScrollBar()->maximum()>0); QCOMPARE(tree->frameShape(),QFrame::NoFrame); QVERIFY(tree->height()<100);
+    ContentView normal; normal.resize(360,100); normal.show(); normal.setPlainText(QString("line\n\n").repeated(20));
+    QTRY_VERIFY(normal.findChild<QTextBrowser *>()->height()>200);
+}
 void ProgressTest::protocols() {
     QFETCH(QString, agent); ProgressParser parser; parser.append(fixture(agent)); parser.finish(State::Succeeded); parser.finalResponse("**Finished**\n");
     const auto tools = ofKind(parser, ProgressKind::Tool); QCOMPARE(tools.size(), 1);

@@ -69,7 +69,7 @@ QString nodeDescription(Kind kind) {
     case Kind::ProjectCreate: return "指定フローにプロジェクトを登録し、必要なディレクトリを作成します。出力はresult: success / failedとpathまたはreasonです。同じフロー・パスの重複は失敗します。相対パスは実行元プロジェクト基準で、${name}等を使用できます。";
     case Kind::FlowRun: return "指定フロー・プロジェクトを非同期に開始します。出力はresult: started / already / failedです。相対パスは実行元プロジェクト基準で、${name}等を使用できます。";
     case Kind::FlowWait: return "指定フロー・プロジェクトの実行終了を待ち、終端の入力を出力します。完了済みなら直ちに返します。未開始・失敗・中止・循環待機はエラーになります。相対パスは実行元プロジェクト基準で、${name}等を使用できます。";
-    case Kind::Agent: return "選択したエージェントへ1タスクを渡します。前段の値は ${name}、${obj.key}、${items[0]} で参照できます。入力を受けるたびに実行します。出力スキーマは省略可能です。";
+    case Kind::Agent: return "選択したエージェントへ1タスクを渡します。入力全体は ${#}、個別の値は ${name}、${obj.key}、${items[0]} で参照できます。${#}はスキーマ未指定の文字列入力でも使用できます。入力を受けるたびに実行します。出力スキーマは省略可能です。";
     case Kind::Script: return "PythonまたはJavaScriptファイルをシステムのPython／Node.jsで実行します。前段データをUTF-8のJSONで標準入力へ渡し、標準出力を次段へ渡します（JSON、または文字列）。相対パスはプロジェクト基準です。実行ディレクトリの省略時はスクリプトのある場所を使います。";
     case Kind::Shell: return "シェルコマンドを実行します（Windows: PowerShell、その他: /bin/sh）。前段の値を ${name} 等でそのまま置換します。出力は exit_code・stdout・stderr を持つJSONです。実行ディレクトリの省略時・相対パスの基準はフローの保存先です。信頼できる入力だけを使用してください。";
     case Kind::All: return "全入力の発火を待ち、入力ポート番号順の配列を出力します。発火後は待ち合わせ状態をリセットし、再び新しい全入力を待ちます。先着した入力はFIFOで保持します。入力数を減らすと、削除した入力端への接続だけを消します。";

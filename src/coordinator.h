@@ -1,6 +1,7 @@
 #pragma once
 #include "runner.h"
 #include <QPointer>
+#include <optional>
 
 namespace an {
 // All calls run on the GUI/event-loop thread. Sessions outlive their callers;
@@ -18,6 +19,8 @@ public:
     bool start(const Project &project, Runner *runner = nullptr);
     bool running() const;
     bool running(const QString &projectId) const;
+    std::optional<Flow> activeFlow(const QString &projectId) const;
+    void cancelProject(const QString &projectId);
     void cancelAll();
     bool submitUserInput(const QString &requestId, const QString &text, unsigned choice);
 signals:
@@ -26,12 +29,14 @@ signals:
     void resultChanged(QString projectId, unsigned int node, const an::Result &result);
     void activityChanged();
     void sessionStarted(QString projectId);
+    void sessionFinished(QString projectId, bool success, QString message);
     void userInputRequested(QString projectId, const an::UserInputRequest &request);
     void userInputClosed(QString requestId);
 private:
     struct Waiter { QPointer<Runner> caller; Runner::HostCompletion complete; };
     struct Session {
         QString projectId;
+        Flow flow;
         QPointer<Runner> runner;
         bool active = false, success = false;
         Json output;

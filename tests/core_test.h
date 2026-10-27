@@ -9,6 +9,8 @@ class CoreTest : public QObject {
     an::AgentConfig config();
 private slots:
     void variables();
+    void wholeInputPrompt_data();
+    void wholeInputPrompt();
     void schemas();
     void roundtrip();
     void invalidFlows();

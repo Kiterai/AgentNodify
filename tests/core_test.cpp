@@ -114,6 +114,47 @@ using namespace an;
         QVERIFY_EXCEPTION_THROWN(resolve(j, "a..b"), std::exception);
         QVERIFY_EXCEPTION_THROWN(resolve(j, "foobar[-1]"), std::exception);
         QCOMPARE(interpolate("${a}", {{"a", "${do_not_expand}"}}), QString("${do_not_expand}"));
+        QCOMPARE(interpolate("before ${#} after", "日本語\n${not_expanded}"), QString("before 日本語\n${not_expanded} after"));
+        QCOMPARE(interpolate("${#}", "{\"a\":1}"), QString("{\"a\":1}"));
+        QCOMPARE(interpolate("${#}", ""), QString());
+        QCOMPARE(interpolate("${#}", Json{{"a",1}}), QString("{\n  \"a\": 1\n}"));
+        QCOMPARE(interpolate("${#}", Json::array({1,2})), QString("[\n  1,\n  2\n]"));
+        QCOMPARE(interpolate("${#}/${#}", Json()), QString("null/null"));
+        QCOMPARE(interpolate("${#}", true), QString("true")); QCOMPARE(interpolate("${#}", 42.5), QString("42.5"));
+        QCOMPARE(interpolate("${a} | ${#}", Json{{"a","b"}}), QString("b | {\n  \"a\": \"b\"\n}"));
+        QVERIFY(resolve(j,"#") == j); QVERIFY(schemaAt(Json{{"type","string"}},"#") == Json({{"type","string"}}));
+        QVERIFY(schemaAt(Json(),"#").is_null());
+        QVERIFY_EXCEPTION_THROWN(resolve(j,"#.a"),std::exception); QVERIFY_EXCEPTION_THROWN(schemaAt(Json(),"#[0]"),std::exception);
+    }
+    void CoreTest::wholeInputPrompt_data() {
+        QTest::addColumn<QString>("agent"); QTest::addColumn<QString>("source");
+        for(QString agent:{"Codex","Claude Code","OpenCode"}) for(QString source:{"user","agent","object","array","null","number","bool","start"})
+            QTest::newRow(qPrintable(agent+" "+source)) << agent << source;
+    }
+    void CoreTest::wholeInputPrompt() {
+        QFETCH(QString,agent); QFETCH(QString,source); QTemporaryDir directory; auto flow=Flow::initial(); Json payload;
+        if(source=="user") payload="日本語\n${do_not_expand}";
+        else if(source=="agent") payload="hello";
+        else if(source=="object") payload={{"name","日本語"},{"items",{1,true,nullptr}}};
+        else if(source=="array") payload=Json::array({"x",{{"nested",42}}});
+        else if(source=="number") payload=42.5;
+        else if(source=="bool") payload=true;
+        else if(source=="start") payload=Json::object();
+        Node target; target.id=4; target.kind=Kind::Agent; target.agent=agent; target.model="fixture"; target.prompt="CHECK_WHOLE_INPUT\n${#}"; flow.nodes[4]=target;
+        if(source=="start") flow.edges={{1,4},{4,2}};
+        else {
+            Node producer; producer.id=3;
+            if(source=="user") producer.kind=Kind::UserInput;
+            else if(source=="agent") {producer.kind=Kind::Agent;producer.agent=agent;producer.model="fixture";producer.prompt="Say hello";}
+            else {producer.kind=Kind::FlowWait;producer.targetFlow="fixture";producer.projectPath=".";}
+            flow.nodes[3]=producer; flow.edges={{1,3},{3,4},{4,2}};
+        }
+        QVERIFY2(flow.validate().isEmpty(),qPrintable(flow.validate().join('\n')));
+        QFile expected(directory.filePath("whole-input.txt")); QVERIFY(expected.open(QIODevice::WriteOnly)); expected.write(display(payload).toUtf8()); expected.close();
+        Runner runner; runner.hostHandler=[payload](Runner *,Id,const Node &,const QString &,Runner::HostCompletion done){done(payload,{});};
+        connect(&runner,&Runner::userInputRequested,&runner,[&](const UserInputRequest &request){QVERIFY(runner.submitUserInput(request.id,display(payload),0));});
+        QSignalSpy done(&runner,&Runner::finished); QVERIFY(runner.start(flow,directory.path(),config())); QTRY_COMPARE_WITH_TIMEOUT(done.count(),1,10000); QVERIFY2(done[0][0].toBool(),qPrintable(done[0][1].toString()));
+        QVERIFY(runner.results().at(2).output=="hello");
     }
     void CoreTest::schemas() {
         try {

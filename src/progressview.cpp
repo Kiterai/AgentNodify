@@ -62,11 +62,21 @@ public:
         connect(document()->documentLayout(), &QAbstractTextDocumentLayout::documentSizeChanged, this, [this] { resizeContent(); });
     }
     void resizeContent() {
+        if (resizing_) return;
+        QScopedValueRollback<bool> guard(resizing_, true);
+        if (lineLimit_ > 0) {
+            const int wanted = qMax(1, int(std::ceil(document()->documentLayout()->documentSize().height())) + 2 * frameWidth());
+            const int cap = int(std::ceil(fontMetrics().lineSpacing() * 1.15)) * lineLimit_;
+            setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+            if (height() != qMin(wanted, cap)) setFixedHeight(qMin(wanted, cap));
+            return;
+        }
         const int wanted = int(std::ceil(document()->documentLayout()->documentSize().height())) + 2 * frameWidth() + 12;
         setVerticalScrollBarPolicy(!markdown_ && wanted > 420 ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);
         const auto height = markdown_ ? qMax(32, wanted) : qBound(32, wanted, 420);
         if (this->height() != height) setFixedHeight(height);
     }
+    void setLineLimit(int lines) { lineLimit_ = qMax(1, lines); document()->setDocumentMargin(0); resizeContent(); }
     void styleMarkdown() {
         markdown_ = true;
         for (auto block = document()->begin(); block.isValid(); block = block.next()) {
@@ -106,6 +116,8 @@ protected:
     void resizeEvent(QResizeEvent *event) override { QTextBrowser::resizeEvent(event); resizeContent(); }
 private:
     bool markdown_ = false;
+    int lineLimit_ = 0;
+    bool resizing_ = false;
     void paintInlineCode(QPainter &painter, const QTextBlock &block, const QPointF &offset) {
         const auto *layout = block.layout(); if (!layout) return;
         const auto origin = document()->documentLayout()->blockBoundingRect(block).topLeft() + offset;
@@ -151,12 +163,15 @@ public:
         const int rowHeight = qMax(1, sizeHintForRow(0));
         const int scrollbar = horizontalScrollBar()->maximum() > 0 ? horizontalScrollBar()->sizeHint().height() : 0;
         const int wanted = qMax(1, rows) * rowHeight + 2 * frameWidth() + scrollbar;
-        if (height() != qMin(wanted, 360)) setFixedHeight(qMin(wanted, 360));
+        const int cap = lineLimit_ > 0 ? rowHeight * lineLimit_ + 2 * frameWidth() + scrollbar : 360;
+        if (height() != qMin(wanted, cap)) setFixedHeight(qMin(wanted, cap));
     }
+    void setLineLimit(int lines) { lineLimit_ = qMax(1, lines); resizeContent(); }
 protected:
     void resizeEvent(QResizeEvent *event) override { QTreeWidget::resizeEvent(event); resizeContent(); }
 private:
     bool resizing_ = false;
+    int lineLimit_ = 0;
 };
 // Allocate text and icon separately: native RTL tool-button layouts can place
 // the arrow over the text when borderless style-sheet padding is zero.
@@ -284,6 +299,11 @@ ContentView::ContentView(QWidget *parent) : QWidget(parent) {
     setFocusProxy(browser_);
 }
 void ContentView::setPlainText(const QString &text) { setValue(Json(text.toStdString())); }
+void ContentView::setCompactMessage(int maxLines) {
+    setStyleSheet("QWidget#userInputMessage, QTextBrowser, QTreeWidget { background:transparent; color:#dce5f3; border:0; padding:0; } QTreeWidget::item:selected { background:#3b5680; color:white; }");
+    browser_->setFrameShape(QFrame::NoFrame); tree_->setFrameShape(QFrame::NoFrame);
+    static_cast<Browser *>(browser_)->setLineLimit(maxLines); static_cast<Tree *>(tree_)->setLineLimit(maxLines);
+}
 void ContentView::setValue(const Json &value, bool markdown, bool forceJson) {
     if (initialized_ && value_ == value && markdown_ == markdown && forceJson_ == forceJson) return;
     value_ = value; markdown_ = markdown; forceJson_ = forceJson; const bool first = !initialized_; initialized_ = true;

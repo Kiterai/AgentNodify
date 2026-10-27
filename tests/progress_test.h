@@ -16,6 +16,7 @@ private slots:
     void inlineCodeBackground();
     void disclosureHover();
     void longMarkdownMessage();
+    void compactInputMessage();
     void claudeThinking();
     void executionBoundaries();
     void commandPresentation();

@@ -170,6 +170,7 @@ Flow Flow::load(const QString &path) {
 Json parseJson(const QString &text) { return Json::parse(s(text)); }
 QString display(const Json &v) { return v.is_string() ? q(v.get<std::string>()) : q(v.dump(2)); }
 Json resolve(const Json &value, const QString &path) {
+    if (path == "#") return value;
     Json current = value;
     for (auto &p : parts(path)) {
         if (p.index) {
@@ -213,6 +214,7 @@ void validateOutput(const Json &schema, const Json &output) {
     validator.set_root_schema(schema); validator.validate(output);
 }
 Json schemaAt(const Json &schema, const QString &path) {
+    if (path == "#") return schema;
     const auto segments = parts(path);
     std::function<Json(Json, const Json &, size_t)> walk = [&](Json current, const Json &root, size_t index) -> Json {
         // Script output is dynamic: validate variable syntax here, its value at execution.

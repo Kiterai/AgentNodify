@@ -40,6 +40,7 @@ private slots:
     void userInputNodeForm();
     void userInputWorkPanel();
     void userInputParallelProjects();
+    void scopedInputSelectionAndStop();
     void projectStatusIndicators();
     void createdProjectStatusIcons();
     void appendedOutputsPreservePaths();
@@ -48,5 +49,7 @@ private slots:
     void removedOutputsPreservePaths();
     void bulkPortReduction();
     void reducedUserInputExecutesSurvivingPath();
+    void interactionWhileWaiting();
+    void removeProjectsWhileWaiting();
 };
 }

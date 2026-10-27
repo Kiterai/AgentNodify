@@ -38,6 +38,7 @@ private:
         std::map<Id, Result> results;
         QString historyId = QUuid::createUuid().toString(QUuid::WithoutBraces);
         std::vector<NodeExecution> history;
+        std::optional<Flow> runFlow;
     };
     std::vector<Document> documents_;
     std::vector<Project> projects_;
@@ -56,6 +57,10 @@ private:
     Runner *runner_;
     Coordinator *coordinator_;
     bool busy() const;
+    void updateExecutionUi();
+    void syncCoordinatorRegistry();
+    bool confirmStopProjects(const QStringList &ids);
+    bool suppressRunWarnings_ = false;
     void refreshFlowChoices();
     ModelCatalog *modelCatalog_;
     QtNodes::BasicGraphicsScene *editScene_, *workScene_;
@@ -80,12 +85,16 @@ private:
     struct InputPrompt { QString projectId; UserInputRequest request; QString draft; };
     std::vector<InputPrompt> inputPrompts_;
     QString activeInput_;
+    std::map<QString, QString> selectedInputs_;
+    QSplitter *workInputSplit_ = nullptr;
+    int inputPaneHeight_ = 230;
     QWidget *inputPanel_ = nullptr;
     QComboBox *inputSelector_ = nullptr;
     ContentView *inputMessage_ = nullptr;
     QPlainTextEdit *inputText_ = nullptr;
     QHBoxLayout *inputButtons_ = nullptr;
     void refreshUserInputPanel();
+    void focusUserInputNode();
     void buildUi();
     void refreshActivities();
     void selectFlow(int index);
