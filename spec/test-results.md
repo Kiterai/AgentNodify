@@ -2,6 +2,32 @@
 
 ## 自動テスト
 
+### シェル実行ノード
+
+- システムのPowerShellをサンドボックス内で実行し、シェル用QtTestは23 passed / 0 failed / 0 skipped。新たなエージェント推論や権限回避は行っていない。ログは`build/shell-results.txt`。
+- コマンド・実行ディレクトリの保存／復元、空コマンド・不正変数の検証、固定の出力スキーマ（exit_code/stdout/stderr）による後段参照を検証。
+- 日本語・引用符・複数行・空出力、標準出力と標準エラーの分離、非ゼロ終了コードを含むJSON結果、JSON形式のstdoutを文字列として保持することを確認。
+- 保存先基準の既定／相対ディレクトリ、絶対ディレクトリ、プロジェクトと異なるcwd/PWD、Flow::loadからの保存元パス、「名前を付けて保存」相当の実行時パス上書きを検証。
+- 非ゼロ終了後の変数置換と分岐、3回のループと個別履歴、並列AND合流を検証。起動前の保存先不足・ディレクトリ不存在、タイムアウト、中止、stdout/stderr各32MiB上限も検証した。
+- PowerShellの進捗表示とEncodedCommand由来のCLIXMLがstderrに混入するケースを確認したため、テキスト出力・進捗非表示・通常のCommand起動に統一。cmdletのWrite-Errorもテキストで取得できることを検証。
+- GUIの追加ボタン、複数行コマンドの右ペイン編集、実行ディレクトリのGUI選択とキャンセル、読み取り専用の作業フォームを検証。GUIから実行し、プロジェクトではなくフロー保存先で起動することを確認。画像は`build/gui-shell-node.png`。
+- `examples/shell.flow.json`の実行も確認。Windows以外の`/bin/sh`分岐は実装済みだが、このWindows環境では未実行。
+- GUIテストは20件成功。ReleaseビルドとCTest `core` / `script` / `shell` / `gui` / `catalog` / `progress` / `gui_smoke` 全7件が成功。
+
+### スクリプトノード
+
+- パス欄に参照ボタンを追加。Python／JavaScript別のファイルフィルター、日本語・空白を含むファイルとディレクトリのGUI選択、ノードへの即時反映、キャンセル時の不変性、読み取り専用時の無効化をQtTestで確認。
+- システムのPython 3.15.1／Node.js 24.22.1で実行。スクリプト用QtTestは36 passed / 0 failed / 0 skipped。すべてサンドボックス内で実行し、新たなエージェント推論・インストール・権限回避は行っていない。
+- 言語・ファイルパス・実行ディレクトリのフォーム、JSON保存／復元、旧フローの既定値、未対応言語・空パス、入力／出力各1ポートを検証。
+- 日本語・空白・引用符を含むファイル名、プロジェクト基準の相対パス、既定のスクリプトディレクトリと指定ディレクトリ、cwdとPWDの一致をPython／Node.jsの両方で検証。
+- UTF-8のJSON標準入力に配列・真偽値・null・改行・引用符・展開しない`${...}`を含むデータを渡し、型と内容を保持することを確認。標準出力のJSON文字列・数値・配列・null・プレーンテキスト・空文字列を検証。
+- 標準出力は次段へ渡し、標準エラーだけがログへ残ること、履歴の実行番号・ランタイム・ディレクトリ・JSON判定の保存／復元を確認。スクリプトのJSON形式stderrがCLIイベントと誤認されて消えないこともGUIで検証。
+- ファイル／実行ディレクトリ不存在、非ゼロ終了、タイムアウト、中止、不正UTF-8、32MiB出力上限を検証。失敗した回は終端へデータを渡さない。
+- Python／Node.jsの各3回のループと独立した履歴、両言語の並列AND合流、動的な出力の変数参照と不正な変数構文を検証。
+- `examples/script.flow.json`と`examples/scripts/transform.py`・`transform.js`を実際に再生し、Python→JavaScriptのデータ受け渡しを確認。
+- GUIテストは19件成功。フォームの即時反映、読み取り専用の作業フォーム、追加ボタン、紫色のノードを確認。画像は`build/gui-script-node.png`、スクリプトテストログは`build/script-results.txt`。
+- ReleaseビルドとCTest `core` / `script` / `gui` / `catalog` / `progress` / `gui_smoke` 全6件が成功。
+
 ### 開閉アイコンの位置と行ホバーの一致
 
 - コマンド／globの開閉ボタンを状態のすぐ右（間隔4px）に移動。長さの異なるコマンド2件で位置が一律に揃わず、各状態の直後に置かれることを検証。
@@ -53,11 +79,13 @@ Windows 11 / MSVC 2022 / Qt 6.12.0 Release構成。
 ノード内フォームへのGUI改修後にReleaseビルドを完了し、以下がすべて成功。
 
 - コアのQtTest: 30 passed / 0 failed。
-- GUIのQtTest: 17 passed / 0 failed。
+- GUIのQtTest: 20 passed / 0 failed。
+- スクリプト実行のQtTest: 36 passed / 0 failed。
+- シェル実行のQtTest: 23 passed / 0 failed。
 - モデル一覧取得のQtTest: 22 passed / 0 failed。
 - 進捗表示のQtTest: 25 passed / 0 failed。
 - GUI起動・編集・読み取り専用グラフのスモークテスト: 成功。
-- CTest: `core` / `gui` / `catalog` / `progress` / `gui_smoke` の5件すべて成功。
+- CTest: `core` / `script` / `shell` / `gui` / `catalog` / `progress` / `gui_smoke` の7件すべて成功。
 
 ### CLI進捗の整形表示
 

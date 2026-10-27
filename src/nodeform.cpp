@@ -2,6 +2,11 @@
 #include "theme.h"
 #include <QComboBox>
 #include <QFormLayout>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QGraphicsProxyWidget>
+#include <QGraphicsScene>
+#include <QGraphicsView>
 #include <QEvent>
 #include <QKeyEvent>
 #include <QLabel>
@@ -25,12 +30,19 @@ public:
     std::function<void()> beforePopup;
     void showPopup() override { if (beforePopup) beforePopup(); QComboBox::showPopup(); }
 };
+QWidget *dialogOwner(QWidget *widget) {
+    if (auto *proxy = widget->graphicsProxyWidget(); proxy && proxy->scene() && !proxy->scene()->views().isEmpty())
+        return proxy->scene()->views().first()->window();
+    return widget->window();
+}
 }
 QString nodeDescription(Kind kind) {
     switch (kind) {
     case Kind::Start: return "フローの処理を開始します。開始時に空のオブジェクト {} を1回出力します。";
     case Kind::End: return "フローの処理の終わりを表します。前段から受け取ったデータを最終出力にします。";
     case Kind::Agent: return "選択したエージェントへ1タスクを渡します。前段の値は ${name}、${obj.key}、${items[0]} で参照できます。入力を受けるたびに実行します。出力スキーマは省略可能です。";
+    case Kind::Script: return "PythonまたはJavaScriptファイルをシステムのPython／Node.jsで実行します。前段データをUTF-8のJSONで標準入力へ渡し、標準出力を次段へ渡します（JSON、または文字列）。相対パスはプロジェクト基準です。実行ディレクトリの省略時はスクリプトのある場所を使います。";
+    case Kind::Shell: return "シェルコマンドを実行します（Windows: PowerShell、その他: /bin/sh）。前段の値を ${name} 等でそのまま置換します。出力は exit_code・stdout・stderr を持つJSONです。実行ディレクトリの省略時・相対パスの基準はフローの保存先です。信頼できる入力だけを使用してください。";
     case Kind::And: return "全入力の発火を待ち、入力ポート番号順の配列を出力します。発火後は待ち合わせ状態をリセットし、再び新しい全入力を待ちます。先着した入力はFIFOで保持します。ポート数の変更時は再接続が必要です。";
     case Kind::Branch: return "上から順に条件を評価し、最初に一致した出力へ伝播します。一致しない場合はelseへ進みます。比較は文字列で行います。条件数の変更時は再接続が必要です。";
     }
@@ -100,6 +112,14 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
     title_ = new QLineEdit(node.title); title_->setObjectName("nodeTitle"); form->addRow("名前", title_);
     connect(title_, &QLineEdit::textEdited, this, [this](const QString &text) { node_.title = text; publish(); });
     layout->addLayout(form);
+    auto addPreview = [this, layout](const QString &label, const QString &field, const QString &text) {
+        layout->addWidget(new QLabel(label));
+        auto *preview = new TextPreview; preview->setObjectName(field + "Preview");
+        preview->setPlaceholderText(field == "prompt" ? "クリックして入力プロンプトを編集" : field == "shellCommand" ? "クリックしてシェルコマンドを編集" : "任意 · クリックしてJSON Schemaを編集");
+        preview->setPlainText(text); layout->addWidget(preview);
+        connect(preview, &TextPreview::editRequested, this, [this, field] { emit textEditRequested(field); });
+        connect(preview, &TextPreview::heightChanged, this, &NodeForm::scheduleResize); return preview;
+    };
     if (node.kind == Kind::Agent) {
         agent_ = new QComboBox; agent_->setObjectName("nodeAgent"); agent_->addItems({"Codex", "Claude Code", "OpenCode"}); agent_->setCurrentText(node.agent);
         auto *combo = new ModelCombo; model_ = combo; model_->setObjectName("nodeModel"); model_->setEditable(false);
@@ -136,17 +156,62 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
             populateEfforts();
             publish();
         });
-        auto addPreview = [this, layout](const QString &label, const QString &field, const QString &text) {
-            layout->addWidget(new QLabel(label));
-            auto *preview = new TextPreview; preview->setObjectName(field + "Preview");
-            preview->setPlaceholderText(field == "prompt" ? "クリックして入力プロンプトを編集" : "任意 · クリックしてJSON Schemaを編集");
-            preview->setPlainText(text); layout->addWidget(preview);
-            connect(preview, &TextPreview::editRequested, this, [this, field] { emit textEditRequested(field); });
-            connect(preview, &TextPreview::heightChanged, this, &NodeForm::scheduleResize);
-            return preview;
-        };
         prompt_ = addPreview("入力プロンプト", "prompt", node.prompt);
         schema_ = addPreview("出力スキーマ（任意）", "schema", node.schema);
+    } else if (node.kind == Kind::Script) {
+        scriptLanguage_ = new QComboBox; scriptLanguage_->setObjectName("scriptLanguage");
+        scriptLanguage_->addItem("Python", "python"); scriptLanguage_->addItem("JavaScript (Node.js)", "javascript");
+        styleComboBoxPopup(scriptLanguage_);
+        if (scriptLanguage_->findData(node.scriptLanguage) < 0) scriptLanguage_->addItem(node.scriptLanguage + "（未対応）", node.scriptLanguage);
+        scriptLanguage_->setCurrentIndex(scriptLanguage_->findData(node.scriptLanguage));
+        scriptPath_ = new QLineEdit(node.scriptPath); scriptPath_->setObjectName("scriptPath"); scriptPath_->setPlaceholderText("例: scripts/transform.py");
+        scriptDirectory_ = new QLineEdit(node.scriptDirectory); scriptDirectory_->setObjectName("scriptDirectory"); scriptDirectory_->setPlaceholderText("省略時: スクリプトのあるディレクトリ");
+        scriptPath_->setToolTip("スクリプトファイルの絶対パス、またはプロジェクトからの相対パス");
+        scriptDirectory_->setToolTip("絶対パス、またはプロジェクトからの相対パス。空ならスクリプトのあるディレクトリ");
+        auto pathRow = [](QLineEdit *edit, QPushButton *browse) {
+            auto *row = new QWidget; auto *layout = new QHBoxLayout(row); layout->setContentsMargins(0, 0, 0, 0); layout->setSpacing(4);
+            edit->setMinimumWidth(0); layout->addWidget(edit, 1); layout->addWidget(browse); return row;
+        };
+        scriptFileBrowse_ = new QPushButton("参照…"); scriptFileBrowse_->setObjectName("scriptFileBrowse"); scriptFileBrowse_->setToolTip("スクリプトファイルを選択"); scriptFileBrowse_->setAccessibleName("スクリプトファイルを選択");
+        scriptDirectoryBrowse_ = new QPushButton("参照…"); scriptDirectoryBrowse_->setObjectName("scriptDirectoryBrowse"); scriptDirectoryBrowse_->setToolTip("実行ディレクトリを選択"); scriptDirectoryBrowse_->setAccessibleName("実行ディレクトリを選択");
+        form->addRow("言語", scriptLanguage_); form->addRow("ファイルパス", pathRow(scriptPath_, scriptFileBrowse_)); form->addRow("実行ディレクトリ", pathRow(scriptDirectory_, scriptDirectoryBrowse_));
+        connect(scriptLanguage_, &QComboBox::currentIndexChanged, this, [this] { if (!updating_) { node_.scriptLanguage = scriptLanguage_->currentData().toString(); publish(); } });
+        connect(scriptPath_, &QLineEdit::textEdited, this, [this](const QString &text) { node_.scriptPath = text; publish(); });
+        connect(scriptDirectory_, &QLineEdit::textEdited, this, [this](const QString &text) { node_.scriptDirectory = text; publish(); });
+        connect(scriptFileBrowse_, &QPushButton::clicked, this, [this] {
+            if (readOnly_) return;
+            QFileDialog dialog(dialogOwner(this), "スクリプトファイルを選択"); dialog.setObjectName("scriptFileDialog");
+            dialog.setFileMode(QFileDialog::ExistingFile); dialog.setAcceptMode(QFileDialog::AcceptOpen);
+            dialog.setNameFilter(node_.scriptLanguage == "javascript" ? "JavaScript (*.js *.mjs *.cjs);;すべてのファイル (*)" : "Python (*.py *.pyw);;すべてのファイル (*)");
+            if (!node_.scriptPath.isEmpty() && QFileInfo(node_.scriptPath).exists()) dialog.selectFile(node_.scriptPath);
+            if (dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty()) return;
+            node_.scriptPath = dialog.selectedFiles().first(); scriptPath_->setText(node_.scriptPath); publish();
+        });
+        connect(scriptDirectoryBrowse_, &QPushButton::clicked, this, [this] {
+            if (readOnly_) return;
+            QFileDialog dialog(dialogOwner(this), "実行ディレクトリを選択"); dialog.setObjectName("scriptDirectoryDialog");
+            dialog.setFileMode(QFileDialog::Directory); dialog.setOption(QFileDialog::ShowDirsOnly); dialog.setAcceptMode(QFileDialog::AcceptOpen);
+            if (!node_.scriptDirectory.isEmpty() && QFileInfo(node_.scriptDirectory).isDir()) dialog.setDirectory(node_.scriptDirectory);
+            else if (QFileInfo(node_.scriptPath).isFile()) dialog.setDirectory(QFileInfo(node_.scriptPath).absolutePath());
+            if (dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty()) return;
+            node_.scriptDirectory = dialog.selectedFiles().first(); scriptDirectory_->setText(node_.scriptDirectory); publish();
+        });
+    } else if (node.kind == Kind::Shell) {
+        shellDirectory_ = new QLineEdit(node.shellDirectory); shellDirectory_->setObjectName("shellDirectory"); shellDirectory_->setMinimumWidth(0);
+        shellDirectory_->setPlaceholderText("省略時: フローの保存ディレクトリ"); shellDirectory_->setToolTip("絶対パス、またはフローの保存先からの相対パス");
+        shellDirectoryBrowse_ = new QPushButton("参照…"); shellDirectoryBrowse_->setObjectName("shellDirectoryBrowse"); shellDirectoryBrowse_->setToolTip("シェルの実行ディレクトリを選択");
+        auto *row = new QWidget; auto *rowLayout = new QHBoxLayout(row); rowLayout->setContentsMargins(0, 0, 0, 0); rowLayout->setSpacing(4);
+        rowLayout->addWidget(shellDirectory_, 1); rowLayout->addWidget(shellDirectoryBrowse_); form->addRow("実行ディレクトリ", row);
+        shellCommand_ = addPreview("コマンド内容", "shellCommand", node.shellCommand);
+        connect(shellDirectory_, &QLineEdit::textEdited, this, [this](const QString &text) { node_.shellDirectory = text; publish(); });
+        connect(shellDirectoryBrowse_, &QPushButton::clicked, this, [this] {
+            if (readOnly_) return;
+            QFileDialog dialog(dialogOwner(this), "シェルの実行ディレクトリを選択"); dialog.setObjectName("shellDirectoryDialog");
+            dialog.setFileMode(QFileDialog::Directory); dialog.setOption(QFileDialog::ShowDirsOnly); dialog.setAcceptMode(QFileDialog::AcceptOpen);
+            if (!node_.shellDirectory.isEmpty() && QFileInfo(node_.shellDirectory).isDir()) dialog.setDirectory(node_.shellDirectory);
+            if (dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty()) return;
+            node_.shellDirectory = dialog.selectedFiles().first(); shellDirectory_->setText(node_.shellDirectory); publish();
+        });
     } else if (node.kind == Kind::And) {
         inputs_ = new QSpinBox; inputs_->setObjectName("nodeInputs"); inputs_->setRange(1, 256); inputs_->setValue(int(node.inputs));
         inputs_->setToolTip("入力ポート数を変更すると、このノードの接続は解除されます。");
@@ -165,7 +230,7 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
 }
 bool NodeForm::eventFilter(QObject *object, QEvent *event) {
     if (event->type() == QEvent::FocusIn || event->type() == QEvent::MouseButtonPress) emit activated();
-    const bool preview = qobject_cast<TextPreview *>(object) || (prompt_ && object == prompt_->viewport()) || (schema_ && object == schema_->viewport());
+    const bool preview = qobject_cast<TextPreview *>(object) || (prompt_ && object == prompt_->viewport()) || (schema_ && object == schema_->viewport()) || (shellCommand_ && object == shellCommand_->viewport());
     if (readOnly_ && !preview &&
         (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease ||
          event->type() == QEvent::KeyPress || event->type() == QEvent::Wheel || event->type() == QEvent::InputMethod)) return true;
@@ -173,6 +238,9 @@ bool NodeForm::eventFilter(QObject *object, QEvent *event) {
 }
 void NodeForm::setReadOnly(bool readOnly) {
     readOnly_ = readOnly;
+    if (scriptFileBrowse_) scriptFileBrowse_->setEnabled(!readOnly);
+    if (scriptDirectoryBrowse_) scriptDirectoryBrowse_->setEnabled(!readOnly);
+    if (shellDirectoryBrowse_) shellDirectoryBrowse_->setEnabled(!readOnly);
     for (auto *widget : findChildren<QWidget *>()) {
         widget->installEventFilter(this);
         if (auto *edit = qobject_cast<QLineEdit *>(widget)) edit->setReadOnly(readOnly);
@@ -229,6 +297,14 @@ void NodeForm::setNode(const Node &node) {
     if (prompt_ && prompt_->toPlainText() != node.prompt) prompt_->setPlainText(node.prompt);
     if (schema_ && schema_->toPlainText() != node.schema) schema_->setPlainText(node.schema);
     if (inputs_) inputs_->setValue(int(node.inputs));
+    if (scriptLanguage_) {
+        if (scriptLanguage_->findData(node.scriptLanguage) < 0) scriptLanguage_->addItem(node.scriptLanguage + "（未対応）", node.scriptLanguage);
+        scriptLanguage_->setCurrentIndex(scriptLanguage_->findData(node.scriptLanguage));
+    }
+    if (scriptPath_ && scriptPath_->text() != node.scriptPath) scriptPath_->setText(node.scriptPath);
+    if (scriptDirectory_ && scriptDirectory_->text() != node.scriptDirectory) scriptDirectory_->setText(node.scriptDirectory);
+    if (shellDirectory_ && shellDirectory_->text() != node.shellDirectory) shellDirectory_->setText(node.shellDirectory);
+    if (shellCommand_ && shellCommand_->toPlainText() != node.shellCommand) shellCommand_->setPlainText(node.shellCommand);
     if (effort_) {
         if (effort_->findData(node.effort) < 0) effort_->addItem(node.effort, node.effort);
         effort_->setCurrentIndex(effort_->findData(node.effort));

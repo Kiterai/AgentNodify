@@ -410,11 +410,12 @@ bool ProgressView::finalIsJson() const {
         if (it->kind == ProgressKind::Message && it->name == "最終応答") return it->jsonContent;
     return false;
 }
-void ProgressView::setProgress(const QString &log, const QString &executionKey, State state, const Json *finalOutput, bool structuredOutput, const QString &directory) {
+void ProgressView::setProgress(const QString &log, const QString &executionKey, State state, const Json *finalOutput, bool structuredOutput, const QString &directory, bool plainLog) {
     const bool changed = key_ != executionKey || !log.startsWith(raw_);
     const auto scroll = verticalScrollBar()->value(); QScopedValueRollback<bool> guard(adjustingScroll_, true);
     if (changed) { followBottom_ = true; reset(); key_ = executionKey; }
     parser_.setDirectory(directory);
+    parser_.setPlainLog(plainLog);
     parser_.append(log.mid(raw_.size())); raw_ = log;
     if (state != State::Running && state != State::Pending) parser_.finish(state);
     if (finalOutput) parser_.finalResponse(*finalOutput, structuredOutput);

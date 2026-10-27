@@ -127,7 +127,7 @@ void Window::buildUi() {
     editorSplit_ = new QSplitter;
     auto *left = new QWidget; auto *leftLayout = new QVBoxLayout(left);
     leftLayout->addWidget(new QLabel("ノードを追加"));
-    for (Kind k : {Kind::Start, Kind::Agent, Kind::And, Kind::Branch, Kind::End}) {
+    for (Kind k : {Kind::Start, Kind::Agent, Kind::Script, Kind::Shell, Kind::And, Kind::Branch, Kind::End}) {
         auto *add = button("＋ " + kindName(k), leftLayout, [this, k] {
             auto id = editGraph_->addNode(kindKey(k));
             if (id == QtNodes::InvalidNodeId) statusBar()->showMessage("始端・終端はそれぞれ1つだけです", 5000);
@@ -162,7 +162,7 @@ void Window::buildUi() {
     connect(text_, &QPlainTextEdit::textChanged, this, [this] {
         if (loading_ || !editGraph_->nodeExists(selected_) || field_.isEmpty()) return;
         auto n = editGraph_->flow.nodes.at(selected_);
-        if (field_ == "schema") n.schema = text_->toPlainText(); else n.prompt = text_->toPlainText();
+        if (field_ == "schema") n.schema = text_->toPlainText(); else if (field_ == "shellCommand") n.shellCommand = text_->toPlainText(); else n.prompt = text_->toPlainText();
         editGraph_->updateNode(n); textError_->clear();
         if (field_ == "schema" && !n.schema.trimmed().isEmpty()) {
             try { checkSchema(parseJson(n.schema)); } catch (const std::exception &e) { textError_->setText(QString::fromUtf8(e.what())); }
@@ -306,9 +306,11 @@ void Window::selectNode(Id id) {
 }
 void Window::showText(const QString &field) {
     if (!editGraph_->nodeExists(selected_)) return;
+    const auto &n = editGraph_->flow.nodes.at(selected_);
+    if (!((n.kind == Kind::Agent && (field == "prompt" || field == "schema")) || (n.kind == Kind::Shell && field == "shellCommand"))) return;
     field_ = field; loading_ = true; textError_->clear();
-    textTitle_->setText(field == "schema" ? "出力スキーマ · JSON Schema Draft 7" : "入力プロンプト");
-    const auto &n = editGraph_->flow.nodes.at(selected_); text_->setPlainText(field == "schema" ? n.schema : n.prompt);
+    textTitle_->setText(field == "schema" ? "出力スキーマ · JSON Schema Draft 7" : field == "shellCommand" ? "シェルコマンド" : "入力プロンプト");
+    text_->setPlainText(field == "schema" ? n.schema : field == "shellCommand" ? n.shellCommand : n.prompt);
     loading_ = false; textPane_->show(); text_->setFocus();
     const auto id = selected_;
     QTimer::singleShot(0, this, [this, id] {
@@ -448,13 +450,13 @@ void Window::showWorkResult() {
     }
     const QString key = execution ? execution->id : QString("current:%1:%2").arg(project_).arg(workSelected_);
     displayedExecution_ = key;
-    auto render = [this, &key](const QString &log, State state, const Json *output = nullptr, bool structured = false, const QString &directory = QString()) {
-        log_->setProgress(log, key, state, output, structured, directory);
+    auto render = [this, &key](const QString &log, State state, const Json *output = nullptr, bool structured = false, const QString &directory = QString(), bool plainLog = false) {
+        log_->setProgress(log, key, state, output, structured, directory, plainLog);
         if (output) output_->setValue(*output, true, structured || log_->finalIsJson()); else output_->setPlainText({});
     };
     if (execution) {
         nodeStatus_->setText(execution->title + " — " + stateName(execution->state) + "\n" + execution->startedAt.toLocalTime().toString("yyyy/MM/dd HH:mm:ss.zzz"));
-        render(execution->log, execution->state, execution->state == State::Succeeded ? &execution->output : nullptr, execution->structuredOutput, execution->directory); return;
+        render(execution->log, execution->state, execution->state == State::Succeeded ? &execution->output : nullptr, execution->structuredOutput, execution->directory, execution->agent == "Python" || execution->agent == "Node.js" || execution->agent == "PowerShell" || execution->agent == "sh"); return;
     }
     if (!workGraph_->nodeExists(workSelected_)) { render({}, State::Pending); nodeStatus_->setText("ノードを選択してください"); return; }
     const auto &node = workGraph_->flow.nodes.at(workSelected_);
@@ -462,7 +464,7 @@ void Window::showWorkResult() {
     if (project_ < 0 || !projects_[size_t(project_)].results.contains(workSelected_)) { render({}, State::Pending); nodeStatus_->setText(title + " — 待機"); return; }
     const auto &r = projects_[size_t(project_)].results.at(workSelected_);
     nodeStatus_->setText(title + " — " + stateName(r.state) + QString("（実行 %1 回）").arg(r.executions));
-    render(r.log, r.state, r.state == State::Succeeded ? &r.output : nullptr, !node.schema.trimmed().isEmpty());
+    render(r.log, r.state, r.state == State::Succeeded ? &r.output : nullptr, node.kind == Kind::Shell || (node.kind == Kind::Agent && !node.schema.trimmed().isEmpty()), {}, node.kind == Kind::Script || node.kind == Kind::Shell);
 }
 void Window::recordNodeExecution(const NodeExecution &value) {
     if (project_ < 0) return;
@@ -500,11 +502,11 @@ void Window::executeFlow() {
     if (project_ < 0 || runner_->running()) { status_->setText("プロジェクトを選択してください"); return; }
     auto errors = editGraph_->flow.validate(); if (!errors.isEmpty()) { reportError(errors.join('\n')); return; }
     errors = modelSelectionErrors(editGraph_->flow); if (!errors.isEmpty()) { reportError(errors.join('\n')); return; }
-    if (!smoke_ && QMessageBox::question(this, "フロー実行", "エージェントはプロジェクト内のファイルを読み取り・変更する可能性があります。\n各CLIの権限設定が適用されます。実行しますか？") != QMessageBox::Yes) return;
+    if (!smoke_ && QMessageBox::question(this, "フロー実行", "エージェント・スクリプト・シェルコマンドはファイルを読み取り・変更する可能性があります。\nエージェントには各CLIの権限設定が適用されます。\nスクリプトとシェルにはCLIの権限制限は適用されません。信頼できるファイル・コマンド・入力データだけを使用してください。\n実行しますか？") != QMessageBox::Yes) return;
     workGraph_->replace(editGraph_->flow); projects_[size_t(project_)].results.clear();
     persist(); // Preserve the project's history identity before the first record is written.
     activities_->setEnabled(false); projectList_->setEnabled(false); tabs_->setTabEnabled(0, false); runButton_->setEnabled(false); stopButton_->setEnabled(true);
-    runner_->start(editGraph_->flow, projects_[size_t(project_)].directory, config_);
+    runner_->start(editGraph_->flow, projects_[size_t(project_)].directory, config_, documents_[size_t(current_)].path);
 }
 void Window::settings() {
     if (runner_->running()) return;

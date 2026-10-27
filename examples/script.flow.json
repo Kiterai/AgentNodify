@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "name": "Python → JavaScript",
+  "nextNodeId": 5,
+  "nodes": [
+    {"id": 1, "kind": "start", "title": "始端", "x": 0, "y": 120, "rules": []},
+    {"id": 3, "kind": "script", "title": "Pythonで変換", "x": 220, "y": 60, "scriptLanguage": "python", "scriptPath": "examples/scripts/transform.py", "scriptDirectory": "", "rules": []},
+    {"id": 4, "kind": "script", "title": "JavaScriptで変換", "x": 700, "y": 60, "scriptLanguage": "javascript", "scriptPath": "examples/scripts/transform.js", "scriptDirectory": "", "rules": []},
+    {"id": 2, "kind": "end", "title": "終端", "x": 1180, "y": 120, "rules": []}
+  ],
+  "edges": [
+    {"from": 1, "to": 3, "output": 0, "input": 0},
+    {"from": 3, "to": 4, "output": 0, "input": 0},
+    {"from": 4, "to": 2, "output": 0, "input": 0}
+  ]
+}

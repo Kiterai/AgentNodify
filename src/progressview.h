@@ -28,7 +28,7 @@ class ProgressView : public QScrollArea {
     Q_OBJECT
 public:
     explicit ProgressView(QWidget *parent = nullptr);
-    void setProgress(const QString &log, const QString &executionKey, State state, const Json *finalOutput = nullptr, bool structuredOutput = false, const QString &directory = {});
+    void setProgress(const QString &log, const QString &executionKey, State state, const Json *finalOutput = nullptr, bool structuredOutput = false, const QString &directory = {}, bool plainLog = false);
     QString toPlainText() const { return raw_; }
     bool finalIsJson() const;
 private:

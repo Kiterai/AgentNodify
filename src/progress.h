@@ -20,6 +20,7 @@ struct ProgressItem {
 class ProgressParser {
 public:
     void setDirectory(const QString &directory) { directory_ = directory; }
+    void setPlainLog(bool plain) { plainLog_ = plain; }
     void append(const QString &chunk);
     void finish(State state);
     void finalResponse(const Json &output, bool structured = false);
@@ -33,6 +34,7 @@ private:
     int claudeBlock_ = -1;
     quint64 line_ = 0;
     bool pendingBoundary_ = false;
+    bool plainLog_ = false;
     ProgressItem &item(const QString &key, ProgressKind kind);
     void line(const QString &text);
     void event(const Json &value);

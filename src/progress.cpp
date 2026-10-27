@@ -71,7 +71,7 @@ void ProgressParser::finalResponse(const Json &output, bool structured) {
 }
 void ProgressParser::line(const QString &text) {
     ++line_; if (text.trimmed().isEmpty()) return;
-    const auto value = displayJson(text);
+    const auto value = plainLog_ ? Json(Json::value_t::discarded) : displayJson(text);
     if (value.is_discarded() || !value.is_object()) {
         auto &entry = item(QString("plain:%1").arg(line_), ProgressKind::Simple); entry.text = text; return;
     }

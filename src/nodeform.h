@@ -52,11 +52,17 @@ private:
     bool updating_ = false, resizeScheduled_ = false;
     QLineEdit *title_ = nullptr;
     QComboBox *agent_ = nullptr, *model_ = nullptr, *effort_ = nullptr;
+    QComboBox *scriptLanguage_ = nullptr;
+    QLineEdit *scriptPath_ = nullptr, *scriptDirectory_ = nullptr;
+    QPushButton *scriptFileBrowse_ = nullptr, *scriptDirectoryBrowse_ = nullptr;
+    QLineEdit *shellDirectory_ = nullptr;
+    QPushButton *shellDirectoryBrowse_ = nullptr;
     QPointer<ModelCatalog> catalog_;
     QLabel *modelStatus_ = nullptr;
     QPushButton *refreshModels_ = nullptr;
     QSpinBox *inputs_ = nullptr;
     TextPreview *prompt_ = nullptr, *schema_ = nullptr;
+    TextPreview *shellCommand_ = nullptr;
     QWidget *rules_ = nullptr;
     QVBoxLayout *rulesLayout_ = nullptr;
     void publish();

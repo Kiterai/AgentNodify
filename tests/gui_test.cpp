@@ -7,6 +7,9 @@
 #include <QTemporaryDir>
 #include <QtTest>
 #include <QComboBox>
+#include <QFileDialog>
+#include <QScopeGuard>
+#include <QTimer>
 #include <QDir>
 #include <QGraphicsProxyWidget>
 #include <QLabel>
@@ -128,7 +131,7 @@ void GuiTest::editorAndFlowRail() {
     auto *palette = window.findChild<QWidget *>("nodePalette"); QVERIFY(palette);
     QVERIFY(palette->findChildren<QLineEdit *>().isEmpty());
     for (auto *button : palette->findChildren<QPushButton *>()) QVERIFY(!button->text().contains("接続"));
-    for (auto kind : {Kind::Start, Kind::End, Kind::Agent, Kind::And, Kind::Branch}) {
+    for (auto kind : {Kind::Start, Kind::End, Kind::Agent, Kind::Script, Kind::Shell, Kind::And, Kind::Branch}) {
         auto *button = palette->findChild<QPushButton *>("addNode_" + kindKey(kind)); QVERIFY(button); QCOMPARE(button->toolTip(), nodeDescription(kind));
     }
     for (auto *label : window.findChildren<QLabel *>()) QVERIFY(label->text() != "AN");
@@ -440,6 +443,103 @@ void GuiTest::historyAfterRestart() {
     QCOMPARE(restored.selectedHistory_, entry.id);
     Graph graph; graph.replace(Flow::initial()); const auto deleted = graph.addNode("agent"); QVERIFY(graph.deleteNode(deleted));
     graph.replace(Flow::fromJson(graph.flow.toJson())); QVERIFY(graph.addNode("agent") > deleted);
+}
+void GuiTest::scriptNodeForm() {
+    Window window(true); window.resize(1400, 950); window.show();
+    auto *add = window.findChild<QPushButton *>("addNode_script"); QVERIFY(add); QTest::mouseClick(add, Qt::LeftButton);
+    const auto id = window.selected_; QVERIFY(window.editGraph_->nodeExists(id)); QVERIFY(window.editGraph_->flow.nodes.at(id).kind == Kind::Script);
+    auto *form = window.editGraph_->form(id); QVERIFY(form);
+    auto *language = form->findChild<QComboBox *>("scriptLanguage"); auto *path = form->findChild<QLineEdit *>("scriptPath"); auto *directory = form->findChild<QLineEdit *>("scriptDirectory");
+    QVERIFY(language && path && directory); QVERIFY(!form->findChild<QComboBox *>("nodeModel")); QCOMPARE(language->currentData().toString(), QString("python"));
+    language->setCurrentIndex(language->findData("javascript"));
+    path->setFocus(); QTest::keyClicks(path, "scripts/transform.js"); directory->setFocus(); QTest::keyClicks(directory, "work dir");
+    const auto node = window.editGraph_->flow.nodes.at(id);
+    QCOMPARE(node.scriptLanguage, QString("javascript")); QCOMPARE(node.scriptPath, QString("scripts/transform.js")); QCOMPARE(node.scriptDirectory, QString("work dir"));
+    auto updated = node; updated.scriptLanguage = "python"; updated.scriptPath = "scripts/transform.py"; updated.scriptDirectory.clear(); window.editGraph_->updateNode(updated);
+    QCOMPARE(language->currentData().toString(), QString("python")); QCOMPARE(path->text(), updated.scriptPath); QVERIFY(directory->text().isEmpty());
+    Graph restored; restored.loadNode(window.editGraph_->saveNode(id)); QCOMPARE(restored.flow.nodes.at(id).scriptPath, updated.scriptPath);
+    Graph work; work.readOnly = true; work.replace(window.editGraph_->flow); auto *readOnly = work.form(id); readOnly->show();
+    auto *workPath = readOnly->findChild<QLineEdit *>("scriptPath"); auto *workLanguage = readOnly->findChild<QComboBox *>("scriptLanguage");
+    QVERIFY(workPath->isReadOnly()); const auto before = workLanguage->currentIndex();
+    QTest::keyClicks(workPath, "changed"); QTest::keyClick(workLanguage, Qt::Key_Down); QCOMPARE(workPath->text(), updated.scriptPath); QCOMPARE(workLanguage->currentIndex(), before);
+    window.projects_.push_back({"Script project", QDir::currentPath(), window.documents_[0].path, {}}); window.refreshProjects(); window.selectProject(0); window.selectWorkNode(id);
+    NodeExecution execution; execution.id = QUuid::createUuid().toString(QUuid::WithoutBraces); execution.node = id; execution.agent = "Python";
+    execution.log = "{\"type\":\"system\",\"subtype\":\"init\"}\n"; execution.startedAt = QDateTime::currentDateTimeUtc(); execution.state = State::Succeeded; execution.output = "Script output";
+    window.recordNodeExecution(execution);
+    auto *logHeading = window.log_->findChild<QLabel *>("progressHeading"); QVERIFY(logHeading && logHeading->text().contains("system"));
+    window.tabs_->setCurrentIndex(0);
+    window.editView_->centerScene(); QCoreApplication::processEvents(); QVERIFY(window.grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-script-node.png")));
+}
+void GuiTest::scriptPathDialogs() {
+    const bool hadOption = QApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);
+    auto restore = qScopeGuard([&] { QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, hadOption); });
+    QTemporaryDir directory; QVERIFY(directory.isValid()); QVERIFY(QDir(directory.path()).mkpath("日本語 work dir"));
+    const QString pythonPath = directory.filePath("日本語 script.py"), jsPath = directory.filePath("script.mjs");
+    for (const auto &path : {pythonPath, jsPath}) { QFile file(path); QVERIFY(file.open(QIODevice::WriteOnly)); file.write("# selected only; not executed\n"); }
+    Graph graph; graph.replace(Flow::initial()); const auto id = graph.addNode("script"); auto *form = graph.form(id); QVERIFY(form); form->show();
+    auto *fileButton = form->findChild<QPushButton *>("scriptFileBrowse"), *directoryButton = form->findChild<QPushButton *>("scriptDirectoryBrowse");
+    QVERIFY(fileButton && directoryButton); QSignalSpy edits(&graph, &Graph::edited);
+    auto select = [&](QPushButton *button, const QString &objectName, const QString &path, bool accept) {
+        bool handled = false;
+        QTimer::singleShot(0, form, [&] {
+            auto *dialog = qobject_cast<QFileDialog *>(QApplication::activeModalWidget()); QVERIFY(dialog); QCOMPARE(dialog->objectName(), objectName);
+            handled = true;
+            if (!accept) { dialog->reject(); return; }
+            if (objectName == "scriptFileDialog") {
+                QVERIFY(dialog->nameFilters().first().contains(graph.flow.nodes.at(id).scriptLanguage == "python" ? "*.py" : "*.mjs"));
+                dialog->selectFile(path);
+            } else { QCOMPARE(dialog->fileMode(), QFileDialog::Directory); dialog->setDirectory(path); }
+            QVERIFY(QMetaObject::invokeMethod(dialog, "accept", Qt::DirectConnection));
+        });
+        QTest::mouseClick(button, Qt::LeftButton); QVERIFY(handled);
+    };
+    select(fileButton, "scriptFileDialog", pythonPath, true);
+    QCOMPARE(QDir::cleanPath(graph.flow.nodes.at(id).scriptPath), QDir::cleanPath(pythonPath)); QCOMPARE(edits.count(), 1);
+    select(directoryButton, "scriptDirectoryDialog", directory.filePath("日本語 work dir"), true);
+    QCOMPARE(QDir::cleanPath(graph.flow.nodes.at(id).scriptDirectory), QDir::cleanPath(directory.filePath("日本語 work dir"))); QCOMPARE(edits.count(), 2);
+    select(fileButton, "scriptFileDialog", {}, false); select(directoryButton, "scriptDirectoryDialog", {}, false); QCOMPARE(edits.count(), 2);
+    auto *language = form->findChild<QComboBox *>("scriptLanguage"); language->setCurrentIndex(language->findData("javascript"));
+    select(fileButton, "scriptFileDialog", jsPath, true); QCOMPARE(QDir::cleanPath(graph.flow.nodes.at(id).scriptPath), QDir::cleanPath(jsPath));
+    form->setReadOnly(true); QVERIFY(!fileButton->isEnabled() && !directoryButton->isEnabled());
+    form->setReadOnly(false); QVERIFY(fileButton->isEnabled() && directoryButton->isEnabled());
+}
+void GuiTest::shellNodeForm() {
+    const bool native = QApplication::testAttribute(Qt::AA_DontUseNativeDialogs); QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);
+    auto restore = qScopeGuard([&] { QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, native); });
+    QTemporaryDir directory; for (const auto &name : {"flows", "project", "chosen"}) QVERIFY(QDir(directory.path()).mkpath(name));
+    Window window(true); window.resize(1400, 950); window.show();
+    auto *add = window.findChild<QPushButton *>("addNode_shell"); QVERIFY(add); QTest::mouseClick(add, Qt::LeftButton);
+    const auto id = window.selected_; QVERIFY(window.editGraph_->flow.nodes.at(id).kind == Kind::Shell);
+    auto *form = window.editGraph_->form(id); QVERIFY(form); auto *preview = form->findChild<TextPreview *>("shellCommandPreview"); QVERIFY(preview);
+    QTest::mouseClick(preview->viewport(), Qt::LeftButton); QCOMPARE(window.field_, QString("shellCommand")); QCOMPARE(window.textTitle_->text(), QString("シェルコマンド"));
+    window.text_->setPlainText("echo hello\necho world"); QCOMPARE(window.editGraph_->flow.nodes.at(id).shellCommand, QString("echo hello\necho world"));
+    QCOMPARE(preview->toPlainText(), QString("echo hello\necho world")); QVERIFY(!form->findChild<QComboBox *>("nodeModel"));
+    auto *browse = form->findChild<QPushButton *>("shellDirectoryBrowse"); auto *path = form->findChild<QLineEdit *>("shellDirectory"); QVERIFY(browse && path);
+    QTimer::singleShot(0, &window, [&] {
+        auto *dialog = qobject_cast<QFileDialog *>(QApplication::activeModalWidget()); QVERIFY(dialog); QCOMPARE(dialog->objectName(), QString("shellDirectoryDialog"));
+        dialog->setDirectory(directory.filePath("chosen")); QVERIFY(QMetaObject::invokeMethod(dialog, "accept", Qt::DirectConnection));
+    });
+    QTest::mouseClick(browse, Qt::LeftButton); QCOMPARE(QDir::cleanPath(path->text()), QDir::cleanPath(directory.filePath("chosen")));
+    QTimer::singleShot(0, &window, [] { if (auto *dialog = qobject_cast<QFileDialog *>(QApplication::activeModalWidget())) dialog->reject(); });
+    QTest::mouseClick(browse, Qt::LeftButton); QCOMPARE(QDir::cleanPath(path->text()), QDir::cleanPath(directory.filePath("chosen")));
+    path->setFocus(); path->selectAll(); QTest::keyClick(path, Qt::Key_Backspace); QVERIFY(window.editGraph_->flow.nodes.at(id).shellDirectory.isEmpty());
+    window.selectNode(id); window.showText("shellCommand");
+#ifdef Q_OS_WIN
+    window.text_->setPlainText("[Console]::Write((Get-Location).Path)");
+#else
+    window.text_->setPlainText("pwd");
+#endif
+    window.editGraph_->addConnection({1, 0, id, 0}); window.editGraph_->addConnection({id, 0, 2, 0});
+    const auto flowPath = directory.filePath("flows/flow.json"); window.documents_[0].path = flowPath; window.editGraph_->flow.save(flowPath);
+    window.projects_.push_back({"Shell project", directory.filePath("project"), flowPath, {}}); window.refreshProjects(); window.selectProject(0);
+    window.tabs_->setCurrentIndex(1); window.selectWorkNode(id);
+    auto *workForm = window.workGraph_->form(id); QVERIFY(workForm->findChild<QLineEdit *>("shellDirectory")->isReadOnly()); QVERIFY(!workForm->findChild<QPushButton *>("shellDirectoryBrowse")->isEnabled());
+    QSignalSpy done(window.runner_, &Runner::finished); window.executeFlow(); QTRY_COMPARE_WITH_TIMEOUT(done.count(), 1, 15000); QVERIFY2(done[0][0].toBool(), qPrintable(done[0][1].toString()));
+    const auto stdoutText = QString::fromStdString(window.runner_->results().at(2).output.at("stdout")).trimmed();
+    QCOMPARE(QDir::fromNativeSeparators(stdoutText), QFileInfo(directory.filePath("flows")).canonicalFilePath());
+    window.tabs_->setCurrentIndex(0); window.editView_->centerScene(); QCoreApplication::processEvents();
+    QVERIFY(window.grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-shell-node.png")));
 }
 }
 QTEST_MAIN(an::GuiTest)

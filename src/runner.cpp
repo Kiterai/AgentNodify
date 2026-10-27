@@ -44,12 +44,14 @@ Json decodeAgentOutput(const QString &agent, const QByteArray &data, bool struct
 }
 Runner::Runner(QObject *parent) : QObject(parent) {}
 Runner::~Runner() { active_ = false; stopJobs(); }
-bool Runner::start(const Flow &flow, const QString &directory, const AgentConfig &config) {
+bool Runner::start(const Flow &flow, const QString &directory, const AgentConfig &config, const QString &flowPath) {
     if (active_) return false;
     auto errors = flow.validate();
     if (!QFileInfo(directory).isDir()) errors << "プロジェクトディレクトリが存在しません";
     if (!errors.isEmpty()) { emit finished(false, errors.join('\n')); return false; }
     flow_ = flow; directory_ = QFileInfo(directory).canonicalFilePath(); config_ = config;
+    const auto source = flowPath.isEmpty() ? flow.sourcePath : flowPath;
+    flowDirectory_ = source.isEmpty() ? QString() : QFileInfo(source).absolutePath();
     results_.clear(); tokens_.clear(); jobs_.clear(); activeExecutions_.clear();
     ++generation_; active_ = true; pumpScheduled_ = false; startPending_ = true;
     for (auto &[id, n] : flow_.nodes) {
@@ -74,7 +76,15 @@ void Runner::beginExecution(Id id) {
     execution.node = id; execution.title = flow_.nodes.at(id).title;
     execution.executionNumber = r.executions; execution.directory = directory_;
     if (flow_.nodes.at(id).kind == Kind::Agent) execution.agent = flow_.nodes.at(id).agent;
-    execution.structuredOutput = !flow_.nodes.at(id).schema.trimmed().isEmpty();
+    if (flow_.nodes.at(id).kind == Kind::Script) execution.agent = flow_.nodes.at(id).scriptLanguage == "python" ? "Python" : "Node.js";
+    if (flow_.nodes.at(id).kind == Kind::Shell) {
+#ifdef Q_OS_WIN
+        execution.agent = "PowerShell";
+#else
+        execution.agent = "sh";
+#endif
+    }
+    execution.structuredOutput = flow_.nodes.at(id).kind == Kind::Shell || (flow_.nodes.at(id).kind == Kind::Agent && !flow_.nodes.at(id).schema.trimmed().isEmpty());
     if (execution.title.isEmpty()) execution.title = kindName(flow_.nodes.at(id).kind);
     execution.startedAt = QDateTime::currentDateTimeUtc(); activeExecutions_[id] = execution;
     emit executionChanged(activeExecutions_.at(id));
@@ -91,7 +101,8 @@ void Runner::stopJobs() {
         j->timer->stop(); j->process->disconnect(this);
         if (j->process->state() != QProcess::NotRunning) { j->process->kill(); j->process->waitForFinished(3000); }
         auto &log = results_[id].log;
-        log += QString(j->stdoutDecoder.decode(j->process->readAllStandardOutput()));
+        const auto remaining = j->process->readAllStandardOutput();
+        if (!j->script && !j->shell) log += QString(j->stdoutDecoder.decode(remaining));
         log += QString(j->stderrDecoder.decode(j->process->readAllStandardError()));
         constexpr qsizetype limit = 2 * 1024 * 1024;
         if (log.size() > limit) log = "[古いログを省略]\n" + log.right(limit);
@@ -156,7 +167,7 @@ void Runner::pump() {
             beginExecution(id);
             if (!active_) break;
             try {
-                if (n.kind == Kind::Agent) {
+                if (n.kind == Kind::Agent || n.kind == Kind::Script || n.kind == Kind::Shell) {
                     if (active_) launch(id, input);
                 }
                 else if (n.kind == Kind::Branch) {
@@ -189,74 +200,125 @@ void Runner::pump() {
 }
 void Runner::launch(Id id, const Json &input) {
     const auto &n = flow_.nodes.at(id);
-    QString prompt = interpolate(n.prompt, input);
     auto j = std::make_unique<Job>();
-    j->temp = std::make_unique<QTemporaryDir>();
-    if (!j->temp->isValid()) throw std::runtime_error("一時ディレクトリを作成できません");
-    QString program; QStringList args;
-    if (n.agent == "Codex") {
-        program = config_.codex;
-        j->finalPath = j->temp->filePath("response.txt");
-        args << "exec" << "--json" << "--skip-git-repo-check" << "--output-last-message" << j->finalPath;
-        args << "--cd" << directory_;
-        if (config_.workspaceWrite) args << "--sandbox" << "workspace-write";
-        if (!n.schema.trimmed().isEmpty()) {
-            auto path = j->temp->filePath("schema.json"); QFile file(path);
-            if (!file.open(QIODevice::WriteOnly) || file.write(n.schema.toUtf8()) < 0) throw std::runtime_error("スキーマファイルを書き込めません");
-            args << "--output-schema" << path;
+    QString program, workingDirectory = directory_; QStringList args; QByteArray standardInput;
+    if (n.kind == Kind::Shell) {
+        j->shell = true;
+        if ((n.shellDirectory.trimmed().isEmpty() || QDir::isRelativePath(n.shellDirectory)) && flowDirectory_.isEmpty())
+            throw std::runtime_error("シェル実行の既定／相対ディレクトリを解決できません。フローの保存先を指定してください");
+        const QFileInfo work(n.shellDirectory.trimmed().isEmpty() ? flowDirectory_ : QDir(flowDirectory_).absoluteFilePath(n.shellDirectory));
+        if (!work.isDir()) throw std::runtime_error(("シェルの実行ディレクトリが存在しません: " + work.absoluteFilePath()).toStdString());
+        workingDirectory = work.canonicalFilePath();
+        const auto command = interpolate(n.shellCommand, input);
+#ifdef Q_OS_WIN
+        program = resolveExecutable("powershell"); if (program.isEmpty()) program = resolveExecutable("pwsh");
+        if (program.isEmpty()) throw std::runtime_error("PowerShellが見つかりません");
+        const auto source = "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding; $ProgressPreference = 'SilentlyContinue';\n" + command;
+        args << "-NoLogo" << "-NoProfile" << "-NonInteractive" << "-OutputFormat" << "Text" << "-Command" << source;
+#else
+        program = "/bin/sh"; args << "-c" << command;
+#endif
+        activeExecutions_.at(id).directory = workingDirectory; emit executionChanged(activeExecutions_.at(id));
+        if (!active_) return;
+    } else if (n.kind == Kind::Script) {
+        j->script = true;
+        const QFileInfo script(QDir(directory_).absoluteFilePath(n.scriptPath));
+        if (!script.isFile() || !script.isReadable()) throw std::runtime_error(("スクリプトファイルを読み取れません: " + script.absoluteFilePath()).toStdString());
+        const QFileInfo work(n.scriptDirectory.trimmed().isEmpty() ? script.canonicalPath() : QDir(directory_).absoluteFilePath(n.scriptDirectory));
+        if (!work.isDir()) throw std::runtime_error(("スクリプトの実行ディレクトリが存在しません: " + work.absoluteFilePath()).toStdString());
+        workingDirectory = work.canonicalFilePath();
+        activeExecutions_.at(id).directory = workingDirectory; emit executionChanged(activeExecutions_.at(id));
+        if (!active_) return;
+        if (n.scriptLanguage == "python") {
+#ifdef Q_OS_WIN
+            program = resolveExecutable("python"); if (program.isEmpty()) program = resolveExecutable("python3");
+#else
+            program = resolveExecutable("python3"); if (program.isEmpty()) program = resolveExecutable("python");
+#endif
+            if (program.isEmpty()) throw std::runtime_error("システムのPythonが見つかりません。PythonをインストールしPATHを設定してください");
+            args << "-u" << script.canonicalFilePath();
+        } else {
+            program = resolveExecutable("node");
+            if (program.isEmpty()) throw std::runtime_error("システムのNode.jsが見つかりません。Node.jsをインストールしPATHを設定してください");
+            args << script.canonicalFilePath();
         }
-        if (!n.model.isEmpty()) args << "--model" << n.model;
-        if (!n.effort.isEmpty()) args << "-c" << ("model_reasoning_effort=" + QString::fromStdString(Json(n.effort.toStdString()).dump()));
-        args << "-";
-    } else if (n.agent == "Claude Code") {
-        program = config_.claude; args << "-p" << "--verbose" << "--output-format" << "stream-json" << "--include-partial-messages";
-        if (config_.workspaceWrite) args << "--permission-mode" << "acceptEdits";
-        if (!n.effort.isEmpty()) args << "--effort" << n.effort;
-        if (!n.model.isEmpty()) args << "--model" << n.model;
-        if (!n.schema.trimmed().isEmpty()) args << "--json-schema" << n.schema;
+        standardInput = QByteArray::fromStdString(input.dump()) + '\n';
     } else {
-        // A shared service owns tool execution and can outlive the launcher's cwd.
-        // Keep the server and its tools in this project's process tree instead.
-        program = config_.opencode; args << "run" << "--format" << "json" << "--standalone";
-        if (!n.effort.isEmpty() && n.model.isEmpty()) throw std::runtime_error("OpenCodeの思考量を指定する場合はモデルを選択してください");
-        if (!n.model.isEmpty()) args << "--model" << (n.effort.isEmpty() ? n.model : n.model.section('#', 0, 0) + "#" + n.effort);
-        // OpenCode CLI has no documented native output-schema flag.
-        if (!n.schema.trimmed().isEmpty()) prompt += "\nReturn only JSON (no Markdown) matching this JSON Schema:\n" + n.schema;
-        args << "--" << prompt;
+        QString prompt = interpolate(n.prompt, input);
+        j->temp = std::make_unique<QTemporaryDir>();
+        if (!j->temp->isValid()) throw std::runtime_error("一時ディレクトリを作成できません");
+        if (n.agent == "Codex") {
+            program = config_.codex;
+            j->finalPath = j->temp->filePath("response.txt");
+            args << "exec" << "--json" << "--skip-git-repo-check" << "--output-last-message" << j->finalPath;
+            args << "--cd" << directory_;
+            if (config_.workspaceWrite) args << "--sandbox" << "workspace-write";
+            if (!n.schema.trimmed().isEmpty()) {
+                auto path = j->temp->filePath("schema.json"); QFile file(path);
+                if (!file.open(QIODevice::WriteOnly) || file.write(n.schema.toUtf8()) < 0) throw std::runtime_error("スキーマファイルを書き込めません");
+                args << "--output-schema" << path;
+            }
+            if (!n.model.isEmpty()) args << "--model" << n.model;
+            if (!n.effort.isEmpty()) args << "-c" << ("model_reasoning_effort=" + QString::fromStdString(Json(n.effort.toStdString()).dump()));
+            args << "-";
+        } else if (n.agent == "Claude Code") {
+            program = config_.claude; args << "-p" << "--verbose" << "--output-format" << "stream-json" << "--include-partial-messages";
+            if (config_.workspaceWrite) args << "--permission-mode" << "acceptEdits";
+            if (!n.effort.isEmpty()) args << "--effort" << n.effort;
+            if (!n.model.isEmpty()) args << "--model" << n.model;
+            if (!n.schema.trimmed().isEmpty()) args << "--json-schema" << n.schema;
+        } else {
+            // A shared service owns tool execution and can outlive the launcher's cwd.
+            // Keep the server and its tools in this project's process tree instead.
+            program = config_.opencode; args << "run" << "--format" << "json" << "--standalone";
+            if (!n.effort.isEmpty() && n.model.isEmpty()) throw std::runtime_error("OpenCodeの思考量を指定する場合はモデルを選択してください");
+            if (!n.model.isEmpty()) args << "--model" << (n.effort.isEmpty() ? n.model : n.model.section('#', 0, 0) + "#" + n.effort);
+            // OpenCode CLI has no documented native output-schema flag.
+            if (!n.schema.trimmed().isEmpty()) prompt += "\nReturn only JSON (no Markdown) matching this JSON Schema:\n" + n.schema;
+            args << "--" << prompt;
+        }
+        if (n.agent != "OpenCode") standardInput = prompt.toUtf8();
     }
     QString resolved = resolveExecutable(program);
     if (resolved.isEmpty()) throw std::runtime_error(("実行ファイルが見つかりません。CLI設定を確認してください: " + program).toStdString());
-    // Do not invoke cmd.exe or interpolate prompts into a shell command.
+    // Only explicit shell nodes interpret shell syntax; agent prompts and script paths never do.
     if (resolved.endsWith(".cmd", Qt::CaseInsensitive) || resolved.endsWith(".bat", Qt::CaseInsensitive))
         throw std::runtime_error(".cmd/.batは非対応です。CLIのネイティブ.exeを指定してください");
     if (!active_) return;
     auto *process = new QProcess(this); j->process = process;
     auto *timer = new QTimer(this); j->timer = timer; timer->setSingleShot(true);
-    process->setWorkingDirectory(directory_);
+    process->setWorkingDirectory(workingDirectory);
     auto environment = QProcessEnvironment::systemEnvironment();
-    environment.insert("PWD", directory_);
+    environment.insert("PWD", workingDirectory);
+    if (j->script && n.scriptLanguage == "python") { environment.insert("PYTHONUTF8", "1"); environment.insert("PYTHONIOENCODING", "utf-8"); }
     process->setProcessEnvironment(environment);
     connect(process, &QProcess::readyReadStandardOutput, this, [this, id] {
         if (!jobs_.contains(id)) return;
         auto bytes = jobs_[id]->process->readAllStandardOutput();
         auto &data = jobs_[id]->stdoutData;
-        if (data.size() + bytes.size() > 32 * 1024 * 1024) { fail(id, "CLI出力が32MiBを超えました"); return; }
-        data += bytes; appendLog(id, QString(jobs_[id]->stdoutDecoder.decode(bytes)).toUtf8());
+        if (data.size() + bytes.size() > 32 * 1024 * 1024) { fail(id, "標準出力が32MiBを超えました"); return; }
+        data += bytes;
+        if (!jobs_[id]->script && !jobs_[id]->shell) appendLog(id, QString(jobs_[id]->stdoutDecoder.decode(bytes)).toUtf8());
     });
     connect(process, &QProcess::readyReadStandardError, this, [this, id] {
         if (jobs_.contains(id)) {
-            auto &job = *jobs_[id]; appendLog(id, QString(job.stderrDecoder.decode(job.process->readAllStandardError())).toUtf8());
+            auto &job = *jobs_[id]; const auto bytes = job.process->readAllStandardError();
+            if (job.shell) {
+                if (job.stderrData.size() + bytes.size() > 32 * 1024 * 1024) { fail(id, "標準エラーが32MiBを超えました"); return; }
+                job.stderrData += bytes;
+            }
+            appendLog(id, QString(job.stderrDecoder.decode(bytes)).toUtf8());
         }
     });
     connect(process, &QProcess::errorOccurred, this, [this, id](QProcess::ProcessError e) {
         if (e == QProcess::FailedToStart && jobs_.contains(id)) fail(id, jobs_[id]->process->errorString());
     });
     connect(process, &QProcess::finished, this, [this, id](int code, QProcess::ExitStatus status) { processFinished(id, code, status); });
-    connect(timer, &QTimer::timeout, this, [this, id] { fail(id, "エージェントの実行がタイムアウトしました"); });
+    connect(timer, &QTimer::timeout, this, [this, id] { fail(id, kindName(flow_.nodes.at(id).kind) + "の実行がタイムアウトしました"); });
     jobs_[id] = std::move(j);
     timer->start(qMax(1, config_.timeoutSeconds) * 1000);
     process->start(resolved, args);
-    if (n.agent != "OpenCode") process->write(prompt.toUtf8());
+    process->write(standardInput);
     process->closeWriteChannel();
 }
 void Runner::processFinished(Id id, int code, QProcess::ExitStatus status) {
@@ -264,19 +326,34 @@ void Runner::processFinished(Id id, int code, QProcess::ExitStatus status) {
     auto &j = *jobs_.at(id);
     j.timer->stop();
     const auto remaining = j.process->readAllStandardOutput();
-    if (j.stdoutData.size() + remaining.size() > 32 * 1024 * 1024) { fail(id, "CLI出力が32MiBを超えました"); return; }
-    j.stdoutData += remaining; appendLog(id, QString(j.stdoutDecoder.decode(remaining)).toUtf8());
+    if (j.stdoutData.size() + remaining.size() > 32 * 1024 * 1024) { fail(id, "標準出力が32MiBを超えました"); return; }
+    j.stdoutData += remaining;
+    if (!j.script && !j.shell) appendLog(id, QString(j.stdoutDecoder.decode(remaining)).toUtf8());
     if (!active_ || !jobs_.contains(id)) return;
-    appendLog(id, QString(j.stderrDecoder.decode(j.process->readAllStandardError())).toUtf8());
+    const auto errors = j.process->readAllStandardError();
+    if (j.shell) {
+        if (j.stderrData.size() + errors.size() > 32 * 1024 * 1024) { fail(id, "標準エラーが32MiBを超えました"); return; }
+        j.stderrData += errors;
+    }
+    appendLog(id, QString(j.stderrDecoder.decode(errors)).toUtf8());
     if (!active_ || !jobs_.contains(id)) return;
-    if (code != 0 || status != QProcess::NormalExit) { fail(id, QString("CLIが異常終了しました (exit %1)").arg(code)); return; }
+    if ((!j.shell && code != 0) || status != QProcess::NormalExit) { fail(id, QString("%1が異常終了しました (exit %2)").arg(kindName(flow_.nodes.at(id).kind)).arg(code)); return; }
     try {
         auto &n = flow_.nodes.at(id); Json output;
-        if (n.agent == "Codex" && QFileInfo::exists(j.finalPath)) {
+        if (j.shell) {
+            output = {{"exit_code", code}, {"stdout", QString::fromUtf8(j.stdoutData).toStdString()}, {"stderr", QString::fromUtf8(j.stderrData).toStdString()}};
+        } else if (j.script) {
+            QStringDecoder decoder(QStringDecoder::Utf8, QStringConverter::Flag::Stateless); const QString text = decoder.decode(j.stdoutData);
+            if (decoder.hasError()) throw std::runtime_error("スクリプトの標準出力はUTF-8で出力してください");
+            output = Json::parse(j.stdoutData.toStdString(), nullptr, false);
+            const bool structured = !output.is_discarded();
+            if (!structured) output = text.toUtf8().toStdString();
+            activeExecutions_.at(id).structuredOutput = structured;
+        } else if (n.agent == "Codex" && QFileInfo::exists(j.finalPath)) {
             QFile file(j.finalPath); if (!file.open(QIODevice::ReadOnly)) throw std::runtime_error("最終応答ファイルを開けません");
             auto data = file.readAll(); output = n.schema.trimmed().isEmpty() ? Json(data.toStdString()) : Json::parse(data.toStdString());
         } else output = decodeAgentOutput(n.agent, j.stdoutData, !n.schema.trimmed().isEmpty());
-        if (!n.schema.trimmed().isEmpty()) validateOutput(parseJson(n.schema), output);
+        if (!j.script && !j.shell && !n.schema.trimmed().isEmpty()) validateOutput(parseJson(n.schema), output);
         j.timer->deleteLater(); j.process->deleteLater(); jobs_.erase(id);
         complete(id, output); schedulePump();
     } catch (const std::exception &e) { fail(id, QString::fromUtf8(e.what())); }

@@ -51,7 +51,7 @@ class Runner : public QObject {
 public:
     explicit Runner(QObject *parent = nullptr);
     ~Runner() override;
-    bool start(const Flow &flow, const QString &directory, const AgentConfig &config);
+    bool start(const Flow &flow, const QString &directory, const AgentConfig &config, const QString &flowPath = {});
     void cancel();
     bool running() const { return active_; }
     const std::map<Id, Result> &results() const { return results_; }
@@ -64,14 +64,16 @@ private:
     struct Job {
         QProcess *process = nullptr;
         QTimer *timer = nullptr;
-        QByteArray stdoutData;
+        QByteArray stdoutData, stderrData;
+        bool script = false;
+        bool shell = false;
         QStringDecoder stdoutDecoder{QStringDecoder::Utf8}, stderrDecoder{QStringDecoder::Utf8};
         QString finalPath;
         std::unique_ptr<QTemporaryDir> temp;
     };
     Flow flow_;
     AgentConfig config_;
-    QString directory_;
+    QString directory_, flowDirectory_;
     std::map<Id, Result> results_;
     std::map<Id, NodeExecution> activeExecutions_;
     std::map<Id, std::vector<std::deque<Json>>> tokens_;

@@ -8,7 +8,7 @@
 namespace an {
 using Json = nlohmann::json;
 using Id = unsigned int;
-enum class Kind { Start, End, Agent, And, Branch };
+enum class Kind { Start, End, Agent, And, Branch, Script, Shell };
 QString kindName(Kind kind);
 QString kindKey(Kind kind);
 Kind parseKind(const std::string &key);
@@ -29,6 +29,9 @@ struct Node {
     QString schema;
     unsigned inputs = 2;
     std::vector<Rule> rules;
+    QString scriptLanguage = "python";
+    QString scriptPath, scriptDirectory;
+    QString shellCommand, shellDirectory;
 };
 struct Edge {
     Id from, to;
@@ -40,6 +43,7 @@ struct Flow {
     QString name = QStringLiteral("新しいフロー");
     std::map<Id, Node> nodes;
     std::vector<Edge> edges;
+    QString sourcePath; // Runtime context only; not serialized into portable flows.
     unsigned inputCount(const Node &n) const;
     unsigned outputCount(const Node &n) const;
     Json toJson() const;

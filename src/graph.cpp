@@ -115,7 +115,7 @@ QVariant Graph::nodeData(Id id, NodeRole role) const {
     case NodeRole::Widget: return QVariant::fromValue<QWidget *>(form(id));
     case NodeRole::Style: {
         NodeStyle style;
-        QColor accent = n.kind == Kind::Agent ? QColor("#74b9ff") : n.kind == Kind::Branch ? QColor("#ffc576") : QColor("#79d8bd");
+        QColor accent = n.kind == Kind::Agent ? QColor("#74b9ff") : n.kind == Kind::Script ? QColor("#bda4ff") : n.kind == Kind::Shell ? QColor("#8ecddb") : n.kind == Kind::Branch ? QColor("#ffc576") : QColor("#79d8bd");
         if (states.contains(id)) {
             if (states.at(id) == State::Running) accent = QColor("#e5bb68");
             if (states.at(id) == State::Failed) accent = QColor("#ff7c85");

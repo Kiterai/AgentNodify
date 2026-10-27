@@ -153,7 +153,7 @@ using namespace an;
         QVERIFY(r.results().at(6).log.isEmpty()); QVERIFY(r.results().at(2).output == "hello");
     }
     void CoreTest::examples() {
-        for (QString name : {"codex", "claude", "opencode", "branch", "loop"}) {
+        for (QString name : {"codex", "claude", "opencode", "branch", "loop", "script", "shell"}) {
             auto f = Flow::load(QString(AGENTNODIFY_SOURCE_DIR) + "/examples/" + name + ".flow.json");
             QVERIFY2(f.validate().isEmpty(), qPrintable(f.validate().join('\n')));
         }

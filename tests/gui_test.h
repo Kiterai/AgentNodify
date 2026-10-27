@@ -21,5 +21,8 @@ private slots:
     void comboPopupWheel();
     void nodeExecutionHistory();
     void historyAfterRestart();
+    void scriptNodeForm();
+    void scriptPathDialogs();
+    void shellNodeForm();
 };
 }

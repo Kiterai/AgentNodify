@@ -1,6 +1,7 @@
 #include "flow.h"
 #include <nlohmann/json-schema.hpp>
 #include <QFile>
+#include <QFileInfo>
 #include <QSaveFile>
 #include <QRegularExpression>
 #include <QSet>
@@ -42,6 +43,8 @@ Json outputSchema(const Flow &f, Id id, QSet<Id> &visiting) {
     Json out;
     if (n.kind == Kind::Start) out = {{"type", "object"}, {"properties", Json::object()}, {"additionalProperties", false}};
     else if (n.kind == Kind::Agent) out = n.schema.trimmed().isEmpty() ? Json{{"type", "string"}} : parseJson(n.schema);
+    else if (n.kind == Kind::Script) out = {{"_anUnknown", true}};
+    else if (n.kind == Kind::Shell) out = {{"type", "object"}, {"properties", {{"exit_code", {{"type", "integer"}}}, {"stdout", {{"type", "string"}}}, {"stderr", {{"type", "string"}}}}}, {"required", {"exit_code", "stdout", "stderr"}}, {"additionalProperties", false}};
     else if (n.kind == Kind::And) {
         Json items = Json::array();
         for (unsigned i = 0; i < n.inputs; ++i) {
@@ -65,12 +68,14 @@ QString kindName(Kind k) {
     case Kind::End: return QStringLiteral("終端");
     case Kind::And: return QStringLiteral("AND");
     case Kind::Branch: return QStringLiteral("分岐");
+    case Kind::Script: return QStringLiteral("スクリプト");
+    case Kind::Shell: return QStringLiteral("シェル実行");
     default: return QStringLiteral("エージェント");
     }
 }
 QString kindKey(Kind k) {
     switch(k) { case Kind::Start: return "start"; case Kind::End: return "end";
-    case Kind::And: return "and"; case Kind::Branch: return "branch"; default: return "agent"; }
+    case Kind::And: return "and"; case Kind::Branch: return "branch"; case Kind::Script: return "script"; case Kind::Shell: return "shell"; default: return "agent"; }
 }
 Kind parseKind(const std::string &k) {
     if (k == "start") return Kind::Start;
@@ -78,6 +83,8 @@ Kind parseKind(const std::string &k) {
     if (k == "and") return Kind::And;
     if (k == "branch") return Kind::Branch;
     if (k == "agent") return Kind::Agent;
+    if (k == "script") return Kind::Script;
+    if (k == "shell") return Kind::Shell;
     error("不明なノード種別: " + q(k));
 }
 unsigned Flow::inputCount(const Node &n) const { return n.kind == Kind::Start ? 0 : n.kind == Kind::And ? n.inputs : 1; }
@@ -89,7 +96,9 @@ Json Flow::toJson() const {
         for (auto &r : n.rules) rules.push_back({{"variable", s(r.variable)}, {"value", s(r.value)}, {"equals", r.equals}});
         ns.push_back({{"id", id}, {"kind", s(kindKey(n.kind))}, {"title", s(n.title)},
             {"x", n.position.x()}, {"y", n.position.y()}, {"agent", s(n.agent)}, {"model", s(n.model)}, {"effort", s(n.effort)},
-            {"prompt", s(n.prompt)}, {"schema", s(n.schema)}, {"inputs", n.inputs}, {"rules", rules}});
+            {"prompt", s(n.prompt)}, {"schema", s(n.schema)}, {"inputs", n.inputs}, {"rules", rules},
+            {"scriptLanguage", s(n.scriptLanguage)}, {"scriptPath", s(n.scriptPath)}, {"scriptDirectory", s(n.scriptDirectory)},
+            {"shellCommand", s(n.shellCommand)}, {"shellDirectory", s(n.shellDirectory)}});
     }
     for (auto &e : edges) es.push_back({{"from", e.from}, {"to", e.to}, {"output", e.output}, {"input", e.input}});
     const auto next = qMax(nextNodeId, nodes.empty() ? quint64(1) : quint64(nodes.rbegin()->first) + 1);
@@ -105,6 +114,8 @@ Flow Flow::fromJson(const Json &j) {
         n.effort = q(v.value("effort", ""));
         n.prompt = q(v.value("prompt", "")); n.schema = q(v.value("schema", ""));
         n.inputs = v.value("inputs", 2u);
+        n.scriptLanguage = q(v.value("scriptLanguage", "python")); n.scriptPath = q(v.value("scriptPath", "")); n.scriptDirectory = q(v.value("scriptDirectory", ""));
+        n.shellCommand = q(v.value("shellCommand", "")); n.shellDirectory = q(v.value("shellDirectory", ""));
         if (n.inputs > 256) error("AND入力数は256以下にしてください");
         for (auto &r : v.at("rules")) n.rules.push_back({q(r.at("variable")), q(r.at("value")), r.at("equals").get<bool>()});
         if (!f.nodes.emplace(n.id, n).second) error("ノードIDが重複しています");
@@ -127,7 +138,7 @@ void Flow::save(const QString &path) const {
 }
 Flow Flow::load(const QString &path) {
     QFile file(path); if (!file.open(QIODevice::ReadOnly)) error(file.errorString());
-    return fromJson(Json::parse(file.readAll().toStdString()));
+    auto flow = fromJson(Json::parse(file.readAll().toStdString())); flow.sourcePath = QFileInfo(path).absoluteFilePath(); return flow;
 }
 Json parseJson(const QString &text) { return Json::parse(s(text)); }
 QString display(const Json &v) { return v.is_string() ? q(v.get<std::string>()) : q(v.dump(2)); }
@@ -177,6 +188,8 @@ void validateOutput(const Json &schema, const Json &output) {
 Json schemaAt(const Json &schema, const QString &path) {
     const auto segments = parts(path);
     std::function<Json(Json, const Json &, size_t)> walk = [&](Json current, const Json &root, size_t index) -> Json {
+        // Script output is dynamic: validate variable syntax here, its value at execution.
+        if (current.is_object() && current.contains("_anUnknown") && current["_anUnknown"] == true) return current;
         if (current.is_object() && current.contains("_anSources")) {
             std::vector<Json> alternatives;
             for (auto &source : current.at("_anSources")) alternatives.push_back(walk(source, source, index));
@@ -232,6 +245,11 @@ QStringList Flow::validate() const {
         if (!terminal.contains(id)) errors << label + "終端に到達できません";
         for (unsigned p = 0; p < inputCount(n); ++p) if (!incoming.contains({id, p})) errors << label + QString("入力%1が未接続です").arg(p);
         if (n.kind == Kind::And && n.inputs == 0) errors << label + "AND入力は1つ以上必要です";
+        if (n.kind == Kind::Shell && n.shellCommand.trimmed().isEmpty()) errors << label + "シェルコマンドが空です";
+        if (n.kind == Kind::Script) {
+            if (n.scriptLanguage != "python" && n.scriptLanguage != "javascript") errors << label + "スクリプト言語はPythonまたはJavaScriptを指定してください";
+            if (n.scriptPath.trimmed().isEmpty()) errors << label + "スクリプトファイルのパスが空です";
+        }
         if (n.kind == Kind::Agent) {
             if (n.prompt.trimmed().isEmpty()) errors << label + "プロンプトが空です";
             if (n.agent != "Codex" && n.agent != "Claude Code" && n.agent != "OpenCode") errors << label + "不明なエージェントです";
@@ -242,8 +260,8 @@ QStringList Flow::validate() const {
             std::vector<Json> inputs;
             for (auto &e : edges) if (e.to == id) { QSet<Id> seen; inputs.push_back(outputSchema(*this, e.from, seen)); }
             auto input = sources(inputs);
-            if (n.kind == Kind::Agent) {
-                QRegularExpression re(R"(\$\{([^}]+)\})"); auto it = re.globalMatch(n.prompt);
+            if (n.kind == Kind::Agent || n.kind == Kind::Shell) {
+                QRegularExpression re(R"(\$\{([^}]+)\})"); auto it = re.globalMatch(n.kind == Kind::Shell ? n.shellCommand : n.prompt);
                 while (it.hasNext()) schemaAt(input, it.next().captured(1));
             }
             if (n.kind == Kind::Branch) {
