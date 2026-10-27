@@ -39,6 +39,7 @@ public:
     Node node() const { return node_; }
     void setReadOnly(bool readOnly);
     void setNode(const Node &node);
+    void setFlowChoices(const std::vector<std::pair<QString, QString>> &choices);
 signals:
     void edited();
     void activated();
@@ -56,6 +57,9 @@ private:
     QLineEdit *scriptPath_ = nullptr, *scriptDirectory_ = nullptr;
     QPushButton *scriptFileBrowse_ = nullptr, *scriptDirectoryBrowse_ = nullptr;
     QLineEdit *shellDirectory_ = nullptr;
+    QComboBox *targetFlow_ = nullptr;
+    QLineEdit *projectPath_ = nullptr;
+    std::vector<std::pair<QString, QString>> flowChoices_;
     QPushButton *shellDirectoryBrowse_ = nullptr;
     QPointer<ModelCatalog> catalog_;
     QLabel *modelStatus_ = nullptr;

@@ -13,6 +13,8 @@ class Graph : public QtNodes::AbstractGraphModel {
 public:
     ~Graph() override;
     Flow flow;
+    std::vector<std::pair<QString, QString>> flowChoices;
+    void setFlowChoices(const std::vector<std::pair<QString, QString>> &choices);
     bool readOnly = false;
     QPointer<ModelCatalog> modelCatalog;
     std::map<Id, State> states;

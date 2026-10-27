@@ -27,5 +27,12 @@ private slots:
     void simplifiedCliSettings();
     void spaceZoomToFit();
     void spaceFitFocusAndEmpty();
+    void orchestrationForms();
+    void orchestrationHistoryAndPersistence();
+    void trayVisibilityAndIdleExit();
+    void trayFlowContinues();
+    void trayQuitWithRunningFlows_data();
+    void trayQuitWithRunningFlows();
+    void trayExitSavesChanges();
 };
 }

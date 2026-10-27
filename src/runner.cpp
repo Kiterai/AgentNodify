@@ -1,4 +1,5 @@
 #include "runner.h"
+#include <QPointer>
 #include "cli.h"
 #include <QDir>
 #include <QFile>
@@ -84,7 +85,7 @@ void Runner::beginExecution(Id id) {
         execution.agent = "sh";
 #endif
     }
-    execution.structuredOutput = flow_.nodes.at(id).kind == Kind::Shell || (flow_.nodes.at(id).kind == Kind::Agent && !flow_.nodes.at(id).schema.trimmed().isEmpty());
+    execution.structuredOutput = isHostOperation(flow_.nodes.at(id).kind) || flow_.nodes.at(id).kind == Kind::Shell || (flow_.nodes.at(id).kind == Kind::Agent && !flow_.nodes.at(id).schema.trimmed().isEmpty());
     if (execution.title.isEmpty()) execution.title = kindName(flow_.nodes.at(id).kind);
     execution.startedAt = QDateTime::currentDateTimeUtc(); activeExecutions_[id] = execution;
     emit executionChanged(activeExecutions_.at(id));
@@ -97,6 +98,8 @@ void Runner::finishExecution(Id id) {
     execution.finishedAt = QDateTime::currentDateTimeUtc(); emit executionChanged(execution);
 }
 void Runner::stopJobs() {
+    pendingHost_.clear();
+    if (cancelHostOperations) cancelHostOperations(this);
     for (auto &[id, j] : jobs_) {
         j->process->disconnect(this);
         if (j->process->state() != QProcess::NotRunning) { j->process->kill(); j->process->waitForFinished(3000); }
@@ -150,7 +153,7 @@ void Runner::pump() {
         progress = false;
         for (auto &[id, n] : flow_.nodes) {
             if (!active_ || budget == 0) break;
-            if (jobs_.contains(id)) continue; // Serial per node, FIFO while busy.
+            if (jobs_.contains(id) || pendingHost_.contains(id)) continue; // Serial per node, FIFO while busy.
             auto &inputs = tokens_.at(id);
             bool ready = n.kind == Kind::Start ? startPending_ : true;
             for (auto &queue : inputs) if (queue.empty()) ready = false;
@@ -170,6 +173,20 @@ void Runner::pump() {
                 if (n.kind == Kind::Agent || n.kind == Kind::Script || n.kind == Kind::Shell) {
                     if (active_) launch(id, input);
                 }
+                else if (isHostOperation(n.kind)) {
+                    if (!hostHandler) throw std::runtime_error("host_unavailable");
+                    const auto path = interpolate(n.projectPath, input);
+                    pendingHost_.insert(id);
+                    const auto generation = generation_; QPointer<Runner> guard(this);
+                    hostHandler(this, id, n, path.trimmed().isEmpty() ? QString() : QDir(directory_).absoluteFilePath(path), [guard, generation, id](const Json &output, const QString &error) {
+                        if (!guard) return;
+                        QTimer::singleShot(0, guard, [guard, generation, id, output, error] {
+                            if (!guard || !guard->active_ || guard->generation_ != generation || !guard->pendingHost_.erase(id)) return;
+                            if (!error.isEmpty()) guard->fail(id, error);
+                            else { guard->complete(id, output); guard->schedulePump(); }
+                        });
+                    });
+                }
                 else if (n.kind == Kind::Branch) {
                     int selected = int(n.rules.size());
                     for (int i = 0; i < int(n.rules.size()); ++i) {
@@ -185,7 +202,7 @@ void Runner::pump() {
     if (!active_) return;
     // Even a synchronous infinite loop must yield to cancellation / GUI events.
     if (budget == 0) { schedulePump(); return; }
-    if (!jobs_.empty()) return;
+    if (!jobs_.empty() || !pendingHost_.empty()) return;
     for (auto &[id, inputs] : tokens_) for (auto &queue : inputs) if (!queue.empty()) {
         fail(id, "実行が停止しました（ANDの全入力が揃わず、発火可能なノードがありません）"); return;
     }

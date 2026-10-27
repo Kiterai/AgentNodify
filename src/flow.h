@@ -8,7 +8,8 @@
 namespace an {
 using Json = nlohmann::json;
 using Id = unsigned int;
-enum class Kind { Start, End, Agent, And, Branch, Script, Shell };
+enum class Kind { Start, End, Agent, And, Branch, Script, Shell, ProjectCreate, FlowRun, FlowWait };
+bool isHostOperation(Kind kind);
 QString kindName(Kind kind);
 QString kindKey(Kind kind);
 Kind parseKind(const std::string &key);
@@ -32,6 +33,7 @@ struct Node {
     QString scriptLanguage = "python";
     QString scriptPath, scriptDirectory;
     QString shellCommand, shellDirectory;
+    QString targetFlow, projectPath;
 };
 struct Edge {
     Id from, to;

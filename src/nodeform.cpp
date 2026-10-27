@@ -40,6 +40,9 @@ QString nodeDescription(Kind kind) {
     switch (kind) {
     case Kind::Start: return "フローの処理を開始します。開始時に空のオブジェクト {} を1回出力します。";
     case Kind::End: return "フローの処理の終わりを表します。前段から受け取ったデータを最終出力にします。";
+    case Kind::ProjectCreate: return "指定フローにプロジェクトを登録し、必要なディレクトリを作成します。出力はresult: success / failedとpathまたはreasonです。同じフロー・パスの重複は失敗します。相対パスは実行元プロジェクト基準で、${name}等を使用できます。";
+    case Kind::FlowRun: return "指定フロー・プロジェクトを非同期に開始します。出力はresult: started / already / failedです。相対パスは実行元プロジェクト基準で、${name}等を使用できます。";
+    case Kind::FlowWait: return "指定フロー・プロジェクトの実行終了を待ち、終端の入力を出力します。完了済みなら直ちに返します。未開始・失敗・中止・循環待機はエラーになります。相対パスは実行元プロジェクト基準で、${name}等を使用できます。";
     case Kind::Agent: return "選択したエージェントへ1タスクを渡します。前段の値は ${name}、${obj.key}、${items[0]} で参照できます。入力を受けるたびに実行します。出力スキーマは省略可能です。";
     case Kind::Script: return "PythonまたはJavaScriptファイルをシステムのPython／Node.jsで実行します。前段データをUTF-8のJSONで標準入力へ渡し、標準出力を次段へ渡します（JSON、または文字列）。相対パスはプロジェクト基準です。実行ディレクトリの省略時はスクリプトのある場所を使います。";
     case Kind::Shell: return "シェルコマンドを実行します（Windows: PowerShell、その他: /bin/sh）。前段の値を ${name} 等でそのまま置換します。出力は exit_code・stdout・stderr を持つJSONです。実行ディレクトリの省略時・相対パスの基準はフローの保存先です。信頼できる入力だけを使用してください。";
@@ -212,6 +215,14 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
             if (dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty()) return;
             node_.shellDirectory = dialog.selectedFiles().first(); shellDirectory_->setText(node_.shellDirectory); publish();
         });
+    } else if (isHostOperation(node.kind)) {
+        targetFlow_ = new QComboBox; targetFlow_->setObjectName("targetFlow"); targetFlow_->setPlaceholderText("フローを選択"); styleComboBoxPopup(targetFlow_);
+        targetFlow_->setMinimumContentsLength(10); targetFlow_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+        projectPath_ = new QLineEdit(node.projectPath); projectPath_->setObjectName("projectPath"); projectPath_->setMinimumWidth(0);
+        projectPath_->setPlaceholderText("例: ../projects/${name}"); projectPath_->setToolTip("絶対パス、または実行元プロジェクトからの相対パス。${name}等で前段の値を参照できます。");
+        form->addRow("フロー", targetFlow_); form->addRow("プロジェクトパス", projectPath_); setFlowChoices({});
+        connect(targetFlow_, &QComboBox::currentIndexChanged, this, [this] { if (!updating_) { node_.targetFlow = targetFlow_->currentData().toString(); publish(); } });
+        connect(projectPath_, &QLineEdit::textEdited, this, [this](const QString &text) { node_.projectPath = text; publish(); });
     } else if (node.kind == Kind::And) {
         inputs_ = new QSpinBox; inputs_->setObjectName("nodeInputs"); inputs_->setRange(1, 256); inputs_->setValue(int(node.inputs));
         inputs_->setToolTip("入力ポート数を変更すると、このノードの接続は解除されます。");
@@ -245,6 +256,15 @@ void NodeForm::setReadOnly(bool readOnly) {
         widget->installEventFilter(this);
         if (auto *edit = qobject_cast<QLineEdit *>(widget)) edit->setReadOnly(readOnly);
     }
+}
+void NodeForm::setFlowChoices(const std::vector<std::pair<QString, QString>> &choices) {
+    flowChoices_ = choices;
+    if (!targetFlow_) return;
+    QSignalBlocker block(targetFlow_); targetFlow_->clear();
+    for (const auto &[path, name] : choices) { targetFlow_->addItem(name, path); targetFlow_->setItemData(targetFlow_->count() - 1, path, Qt::ToolTipRole); }
+    auto index = targetFlow_->findData(node_.targetFlow);
+    if (index < 0 && !node_.targetFlow.isEmpty()) { targetFlow_->addItem(node_.targetFlow + "（未登録）", node_.targetFlow); index = targetFlow_->count() - 1; }
+    targetFlow_->setCurrentIndex(index);
 }
 void NodeForm::populateModels() {
     if (!model_) return;
@@ -304,6 +324,8 @@ void NodeForm::setNode(const Node &node) {
     if (scriptPath_ && scriptPath_->text() != node.scriptPath) scriptPath_->setText(node.scriptPath);
     if (scriptDirectory_ && scriptDirectory_->text() != node.scriptDirectory) scriptDirectory_->setText(node.scriptDirectory);
     if (shellDirectory_ && shellDirectory_->text() != node.shellDirectory) shellDirectory_->setText(node.shellDirectory);
+    if (targetFlow_) setFlowChoices(flowChoices_);
+    if (projectPath_ && projectPath_->text() != node.projectPath) projectPath_->setText(node.projectPath);
     if (shellCommand_ && shellCommand_->toPlainText() != node.shellCommand) shellCommand_->setPlainText(node.shellCommand);
     if (effort_) {
         if (effort_->findData(node.effort) < 0) effort_->addItem(node.effort, node.effort);

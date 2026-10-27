@@ -2,6 +2,7 @@
 #include "window.h"
 #include "nodeform.h"
 #include "graphview.h"
+#include <QSystemTrayIcon>
 #include "theme.h"
 #include "projectopener.h"
 #include "history.h"
@@ -569,6 +570,125 @@ void GuiTest::simplifiedCliSettings() {
     QVERIFY(file.open(QIODevice::ReadOnly)); const auto current = Json::parse(file.readAll().toStdString());
     QVERIFY(!current.contains("timeout")); QVERIFY(!current.contains("workspaceWrite"));
     QCOMPARE(QString::fromStdString(current.at("claude")), QString("custom-claude"));
+}
+void GuiTest::trayVisibilityAndIdleExit() {
+    Window window(true); window.show(); QCoreApplication::processEvents();
+    auto *tray = window.findChild<QSystemTrayIcon *>("systemTrayIcon"); QVERIFY(tray); QVERIFY(!tray->icon().isNull()); QCOMPARE(tray->toolTip(), QString("AgentNodify"));
+    auto *show = tray->contextMenu()->findChild<QAction *>("trayShow"); auto *quit = tray->contextMenu()->findChild<QAction *>("trayQuit"); QVERIFY(show); QVERIFY(quit);
+    QSignalSpy exiting(&window, &Window::quitRequested);
+    QVERIFY(!window.close()); QVERIFY(!window.isVisible()); QCOMPARE(exiting.count(), 0); QVERIFY(!window.quitting_);
+    tray->activated(QSystemTrayIcon::Context); QVERIFY(!window.isVisible());
+    show->trigger(); QVERIFY(window.isVisible());
+    window.showMaximized(); QVERIFY(!window.close()); show->trigger(); QVERIFY(window.isMaximized());
+    window.showMinimized(); tray->activated(QSystemTrayIcon::DoubleClick); QVERIFY(window.isVisible()); QVERIFY(!window.isMinimized());
+    QVERIFY(!window.close()); tray->activated(QSystemTrayIcon::Trigger); QVERIFY(window.isVisible());
+    QVERIFY(!window.close()); quit->trigger(); QCOMPARE(exiting.count(), 1); QVERIFY(!window.isVisible()); QVERIFY(window.quitting_);
+}
+void GuiTest::trayFlowContinues() {
+    QTemporaryDir directory; Window window(true); window.show();
+    auto flow = Flow::initial(); Node node; node.id = 3; node.kind = Kind::Agent; node.model = "fixture"; node.prompt = "SLEEP";
+    flow.nodes[3] = node; flow.edges = {{1,3},{3,2}}; window.editGraph_->replace(flow); window.changed();
+    window.projects_.push_back({"Background", directory.path(), window.documents_[0].path, {}}); window.refreshProjects();
+    window.config_.codex = QCoreApplication::applicationDirPath() + "/fake_agent";
+#ifdef Q_OS_WIN
+    window.config_.codex += ".exe";
+#endif
+    QSignalSpy done(window.runner_, &Runner::finished), exiting(&window, &Window::quitRequested);
+    window.executeFlow(); QTRY_VERIFY(window.runner_->results().at(3).state == State::Running);
+    QVERIFY(!window.close()); QVERIFY(!window.isVisible()); QTest::qWait(100); QVERIFY(window.busy()); QCOMPARE(done.count(), 0);
+    QTRY_COMPARE_WITH_TIMEOUT(done.count(), 1, 10000); QVERIFY(done[0][0].toBool());
+    QVERIFY(!window.isVisible()); QCOMPARE(exiting.count(), 0); QVERIFY(window.runner_->results().at(2).output == Json("hello"));
+    QCOMPARE(window.projects_[0].history.size(), size_t(3));
+}
+void GuiTest::trayQuitWithRunningFlows_data() {
+    QTest::addColumn<bool>("detached"); QTest::newRow("primary") << false; QTest::newRow("detached child") << true;
+}
+void GuiTest::trayQuitWithRunningFlows() {
+    QFETCH(bool, detached); QTemporaryDir directory; Window window(true); window.show();
+    auto target = Flow::initial(); Node agent; agent.id = 3; agent.kind = Kind::Agent; agent.model = "fixture"; agent.prompt = "SLEEP";
+    target.nodes[3] = agent; target.edges = {{1,3},{3,2}};
+    auto parent = target;
+    if (detached) { parent.nodes[3].kind = Kind::FlowRun; parent.nodes[3].targetFlow = "child"; parent.nodes[3].projectPath = "."; }
+    window.editGraph_->replace(parent); window.changed();
+    window.documents_.push_back({target, "child", false});
+    window.projects_.push_back({"Parent", directory.path(), window.documents_[0].path, {}});
+    window.projects_.push_back({"Child", directory.path(), "child", {}}); window.refreshProjects();
+    window.config_.codex = QCoreApplication::applicationDirPath() + "/fake_agent";
+#ifdef Q_OS_WIN
+    window.config_.codex += ".exe";
+#endif
+    window.executeFlow();
+    if (detached) QTRY_VERIFY(!window.runner_->running() && window.coordinator_->running());
+    else QTRY_VERIFY(window.runner_->results().at(3).state == State::Running);
+    QSignalSpy exiting(&window, &Window::quitRequested); QVERIFY(!window.close()); QVERIFY(!window.isVisible());
+    auto confirm = [&](QMessageBox::StandardButton answer) {
+        QTimer::singleShot(0, &window, [&, answer] {
+            auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); QCOMPARE(box->icon(), QMessageBox::Warning);
+            QCOMPARE(box->defaultButton(), box->button(QMessageBox::No)); QVERIFY(box->text().contains("実行中"));
+            window.requestQuit(); // Reentrant requests do not create another dialog.
+            box->button(answer)->click();
+        });
+        window.trayIcon_->contextMenu()->findChild<QAction *>("trayQuit")->trigger();
+    };
+    confirm(QMessageBox::No); QCOMPARE(exiting.count(), 0); QVERIFY(window.busy()); QVERIFY(!window.quitting_); QVERIFY(window.isVisible());
+    QVERIFY(!window.close()); confirm(QMessageBox::Yes); QCOMPARE(exiting.count(), 1); QVERIFY(!window.busy()); QVERIFY(!window.isVisible());
+    const auto &results = window.projects_[detached ? 1 : 0].results; QVERIFY(results.at(3).state == State::Cancelled);
+}
+void GuiTest::trayExitSavesChanges() {
+    QTemporaryDir directory; Window window(true); window.dataDir_ = directory.path();
+    window.documents_[0].path = directory.filePath("saved.flow.json"); window.editGraph_->flow.name = "Saved on tray exit"; window.changed();
+    window.smoke_ = false; QSignalSpy exiting(&window, &Window::quitRequested); window.requestQuit(); window.smoke_ = true;
+    QCOMPARE(exiting.count(), 1); QVERIFY(!window.documents_[0].dirty);
+    QCOMPARE(Flow::load(window.documents_[0].path).name, QString("Saved on tray exit")); QVERIFY(QFileInfo::exists(directory.filePath("workspace.json")));
+}
+void GuiTest::orchestrationForms() {
+    Window window(true); window.show();
+    const auto path = window.documents_[0].path;
+    for (auto kind : {Kind::ProjectCreate, Kind::FlowRun, Kind::FlowWait}) {
+        auto *button = window.findChild<QPushButton *>("addNode_" + kindKey(kind)); QVERIFY(button);
+        QTest::mouseClick(button, Qt::LeftButton);
+        const auto id = window.selected_; auto *form = window.editGraph_->form(id); QVERIFY(form);
+        auto *combo = form->findChild<QComboBox *>("targetFlow"); auto *edit = form->findChild<QLineEdit *>("projectPath"); QVERIFY(combo); QVERIFY(edit);
+        QVERIFY(form->findChildren<QPushButton *>().isEmpty()); QCOMPARE(combo->findData(path), 0);
+        combo->setCurrentIndex(0); QTest::keyClicks(edit, "../${name}");
+        QCOMPARE(window.editGraph_->flow.nodes.at(id).targetFlow, path); QCOMPARE(window.editGraph_->flow.nodes.at(id).projectPath, QString("../${name}"));
+        window.documents_[0].flow.name = "Renamed"; window.refreshFlowChoices(); QCOMPARE(combo->currentText(), QString("Renamed"));
+        window.documents_.push_back({Flow::initial(), "another.flow.json", false}); window.refreshFlowChoices(); QCOMPARE(combo->count(), 2);
+        window.documents_.erase(window.documents_.begin() + 1); window.refreshFlowChoices(); QCOMPARE(combo->count(), 1);
+        window.workGraph_->replace(window.editGraph_->flow); auto *workForm = window.workGraph_->form(id);
+        auto *readOnly = workForm->findChild<QLineEdit *>("projectPath"); QVERIFY(readOnly->isReadOnly());
+        auto missing = window.editGraph_->flow.nodes.at(id); missing.targetFlow = "missing.flow.json"; window.editGraph_->updateNode(missing);
+        QCOMPARE(combo->currentData().toString(), missing.targetFlow); QVERIFY(combo->currentText().contains("未登録"));
+    }
+}
+void GuiTest::orchestrationHistoryAndPersistence() {
+    QTemporaryDir directory; Window window(true); window.dataDir_ = directory.path(); window.show();
+    const auto parentPath = directory.filePath("parent.flow.json"), childPath = directory.filePath("child.flow.json");
+    auto parent = Flow::initial(); Id previous = 1, id = 3;
+    for (auto kind : {Kind::ProjectCreate, Kind::FlowRun, Kind::FlowWait}) {
+        Node node; node.id = id; node.kind = kind; node.targetFlow = childPath; node.projectPath = "target";
+        parent.nodes[id] = node; parent.edges.push_back({previous, id}); previous = id++;
+    }
+    parent.edges.push_back({previous, 2});
+    auto target = Flow::initial(); Node node; node.id = 3; node.kind = Kind::Agent; node.model = "fixture"; node.prompt = "SHORT_DELAY";
+    target.nodes[3] = node; target.edges = {{1,3},{3,2}}; parent.save(parentPath); target.save(childPath);
+    window.documents_ = {{parent, parentPath, false}, {target, childPath, false}};
+    window.projects_.push_back({"Parent", directory.path(), parentPath, {}}); window.selectFlow(0); window.tabs_->setCurrentIndex(1);
+    window.config_.codex = QCoreApplication::applicationDirPath() + "/fake_agent";
+#ifdef Q_OS_WIN
+    window.config_.codex += ".exe";
+#endif
+    window.selectWorkNode(5); QSignalSpy done(window.runner_, &Runner::finished); window.executeFlow(); QTRY_COMPARE(done.count(), 1); QVERIFY(done[0][0].toBool());
+    QCOMPARE(window.projects_.size(), size_t(2)); QCOMPARE(window.projects_[0].history.size(), size_t(5)); QCOMPARE(window.projects_[1].history.size(), size_t(3));
+    QVERIFY(window.projects_[0].historyId != window.projects_[1].historyId);
+    QCOMPARE(window.projects_[1].flowPath, childPath); QVERIFY(window.output_->toPlainText().contains("hello"));
+    window.smoke_ = false;
+    for (const auto &project : window.projects_) { const auto entries = project.history; for (const auto &entry : entries) window.recordNodeExecution(project.historyId, entry); }
+    window.persist(); window.smoke_ = true;
+    Window restored(true); restored.dataDir_ = directory.path(); restored.documents_.clear(); restored.projects_.clear(); restored.restore();
+    QCOMPARE(restored.projects_.size(), size_t(2)); QCOMPARE(restored.projects_[0].history.size(), size_t(5)); QCOMPARE(restored.projects_[1].history.size(), size_t(3));
+    restored.selectFlow(1); QCOMPARE(restored.projectList_->count(), 1); restored.selectWorkNode(3); QCOMPARE(restored.historyList_->count(), 1);
+    QVERIFY(restored.output_->toPlainText().contains("hello")); restored.selectWorkNode(0); QCOMPARE(restored.historyList_->count(), 0);
 }
 void GuiTest::spaceZoomToFit() {
     Window window(true); window.resize(1400, 950); window.show();

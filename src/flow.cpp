@@ -43,7 +43,9 @@ Json outputSchema(const Flow &f, Id id, QSet<Id> &visiting) {
     Json out;
     if (n.kind == Kind::Start) out = {{"type", "object"}, {"properties", Json::object()}, {"additionalProperties", false}};
     else if (n.kind == Kind::Agent) out = n.schema.trimmed().isEmpty() ? Json{{"type", "string"}} : parseJson(n.schema);
-    else if (n.kind == Kind::Script) out = {{"_anUnknown", true}};
+    else if (n.kind == Kind::Script || n.kind == Kind::FlowWait) out = {{"_anUnknown", true}};
+    else if (n.kind == Kind::ProjectCreate) out = {{"type", "object"}, {"properties", {{"result", {{"type", "string"}}}, {"path", {{"type", "string"}}}, {"reason", {{"type", "string"}}}}}};
+    else if (n.kind == Kind::FlowRun) out = {{"type", "object"}, {"properties", {{"result", {{"type", "string"}}}}}};
     else if (n.kind == Kind::Shell) out = {{"type", "object"}, {"properties", {{"exit_code", {{"type", "integer"}}}, {"stdout", {{"type", "string"}}}, {"stderr", {{"type", "string"}}}}}, {"required", {"exit_code", "stdout", "stderr"}}, {"additionalProperties", false}};
     else if (n.kind == Kind::And) {
         Json items = Json::array();
@@ -62,6 +64,7 @@ Json outputSchema(const Flow &f, Id id, QSet<Id> &visiting) {
     return out;
 }
 }
+bool isHostOperation(Kind k) { return k == Kind::ProjectCreate || k == Kind::FlowRun || k == Kind::FlowWait; }
 QString kindName(Kind k) {
     switch (k) {
     case Kind::Start: return QStringLiteral("始端");
@@ -70,12 +73,16 @@ QString kindName(Kind k) {
     case Kind::Branch: return QStringLiteral("分岐");
     case Kind::Script: return QStringLiteral("スクリプト");
     case Kind::Shell: return QStringLiteral("シェル実行");
+    case Kind::ProjectCreate: return QStringLiteral("AgentNodify プロジェクト作成");
+    case Kind::FlowRun: return QStringLiteral("AgentNodify フロー実行");
+    case Kind::FlowWait: return QStringLiteral("AgentNodify フロー終了");
     default: return QStringLiteral("エージェント");
     }
 }
 QString kindKey(Kind k) {
     switch(k) { case Kind::Start: return "start"; case Kind::End: return "end";
-    case Kind::And: return "and"; case Kind::Branch: return "branch"; case Kind::Script: return "script"; case Kind::Shell: return "shell"; default: return "agent"; }
+    case Kind::And: return "and"; case Kind::Branch: return "branch"; case Kind::Script: return "script"; case Kind::Shell: return "shell";
+    case Kind::ProjectCreate: return "project_create"; case Kind::FlowRun: return "flow_run"; case Kind::FlowWait: return "flow_wait"; default: return "agent"; }
 }
 Kind parseKind(const std::string &k) {
     if (k == "start") return Kind::Start;
@@ -85,6 +92,9 @@ Kind parseKind(const std::string &k) {
     if (k == "agent") return Kind::Agent;
     if (k == "script") return Kind::Script;
     if (k == "shell") return Kind::Shell;
+    if (k == "project_create") return Kind::ProjectCreate;
+    if (k == "flow_run") return Kind::FlowRun;
+    if (k == "flow_wait") return Kind::FlowWait;
     error("不明なノード種別: " + q(k));
 }
 unsigned Flow::inputCount(const Node &n) const { return n.kind == Kind::Start ? 0 : n.kind == Kind::And ? n.inputs : 1; }
@@ -98,7 +108,7 @@ Json Flow::toJson() const {
             {"x", n.position.x()}, {"y", n.position.y()}, {"agent", s(n.agent)}, {"model", s(n.model)}, {"effort", s(n.effort)},
             {"prompt", s(n.prompt)}, {"schema", s(n.schema)}, {"inputs", n.inputs}, {"rules", rules},
             {"scriptLanguage", s(n.scriptLanguage)}, {"scriptPath", s(n.scriptPath)}, {"scriptDirectory", s(n.scriptDirectory)},
-            {"shellCommand", s(n.shellCommand)}, {"shellDirectory", s(n.shellDirectory)}});
+            {"shellCommand", s(n.shellCommand)}, {"shellDirectory", s(n.shellDirectory)}, {"targetFlow", s(n.targetFlow)}, {"projectPath", s(n.projectPath)}});
     }
     for (auto &e : edges) es.push_back({{"from", e.from}, {"to", e.to}, {"output", e.output}, {"input", e.input}});
     const auto next = qMax(nextNodeId, nodes.empty() ? quint64(1) : quint64(nodes.rbegin()->first) + 1);
@@ -116,6 +126,7 @@ Flow Flow::fromJson(const Json &j) {
         n.inputs = v.value("inputs", 2u);
         n.scriptLanguage = q(v.value("scriptLanguage", "python")); n.scriptPath = q(v.value("scriptPath", "")); n.scriptDirectory = q(v.value("scriptDirectory", ""));
         n.shellCommand = q(v.value("shellCommand", "")); n.shellDirectory = q(v.value("shellDirectory", ""));
+        n.targetFlow = q(v.value("targetFlow", "")); n.projectPath = q(v.value("projectPath", ""));
         if (n.inputs > 256) error("AND入力数は256以下にしてください");
         for (auto &r : v.at("rules")) n.rules.push_back({q(r.at("variable")), q(r.at("value")), r.at("equals").get<bool>()});
         if (!f.nodes.emplace(n.id, n).second) error("ノードIDが重複しています");
@@ -245,6 +256,10 @@ QStringList Flow::validate() const {
         if (!terminal.contains(id)) errors << label + "終端に到達できません";
         for (unsigned p = 0; p < inputCount(n); ++p) if (!incoming.contains({id, p})) errors << label + QString("入力%1が未接続です").arg(p);
         if (n.kind == Kind::And && n.inputs == 0) errors << label + "AND入力は1つ以上必要です";
+        if (isHostOperation(n.kind)) {
+            if (n.targetFlow.isEmpty()) errors << label + "フローを選択してください";
+            if (n.projectPath.trimmed().isEmpty()) errors << label + "プロジェクトパスが空です";
+        }
         if (n.kind == Kind::Shell && n.shellCommand.trimmed().isEmpty()) errors << label + "シェルコマンドが空です";
         if (n.kind == Kind::Script) {
             if (n.scriptLanguage != "python" && n.scriptLanguage != "javascript") errors << label + "スクリプト言語はPythonまたはJavaScriptを指定してください";
@@ -260,8 +275,8 @@ QStringList Flow::validate() const {
             std::vector<Json> inputs;
             for (auto &e : edges) if (e.to == id) { QSet<Id> seen; inputs.push_back(outputSchema(*this, e.from, seen)); }
             auto input = sources(inputs);
-            if (n.kind == Kind::Agent || n.kind == Kind::Shell) {
-                QRegularExpression re(R"(\$\{([^}]+)\})"); auto it = re.globalMatch(n.kind == Kind::Shell ? n.shellCommand : n.prompt);
+            if (n.kind == Kind::Agent || n.kind == Kind::Shell || isHostOperation(n.kind)) {
+                QRegularExpression re(R"(\$\{([^}]+)\})"); auto it = re.globalMatch(isHostOperation(n.kind) ? n.projectPath : n.kind == Kind::Shell ? n.shellCommand : n.prompt);
                 while (it.hasNext()) schemaAt(input, it.next().captured(1));
             }
             if (n.kind == Kind::Branch) {

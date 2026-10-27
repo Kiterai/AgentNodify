@@ -40,6 +40,10 @@ void Graph::updateNode(const Node &node) {
     if (forms_.contains(node.id) && forms_.at(node.id)) forms_.at(node.id)->setNode(updated);
     emit nodeUpdated(node.id); emit edited();
 }
+void Graph::setFlowChoices(const std::vector<std::pair<QString, QString>> &choices) {
+    flowChoices = choices;
+    for (auto &[id, form] : forms_) if (form) form->setFlowChoices(choices);
+}
 NodeForm *Graph::form(Id id) const {
     if (!nodeExists(id)) return nullptr;
     const auto &node = flow.nodes.at(id);
@@ -48,6 +52,7 @@ NodeForm *Graph::form(Id id) const {
     auto *self = const_cast<Graph *>(this);
     auto *widget = new NodeForm(node, nullptr, modelCatalog); forms_[id] = widget;
     widget->setReadOnly(readOnly);
+    widget->setFlowChoices(flowChoices);
     connect(widget, &NodeForm::edited, self, [self, widget] { self->updateNode(widget->node()); });
     connect(widget, &NodeForm::activated, self, [self, id] { emit self->nodeActivated(id); });
     connect(widget, &NodeForm::textEditRequested, self, [self, id](const QString &field) { emit self->textEditRequested(id, field); });

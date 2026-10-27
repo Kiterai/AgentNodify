@@ -1,5 +1,6 @@
 #pragma once
 #include "graph.h"
+#include "coordinator.h"
 #include "progressview.h"
 #include <QMainWindow>
 #include <QListWidget>
@@ -13,12 +14,17 @@
 #include <QtNodes/BasicGraphicsScene>
 #include <QtNodes/GraphicsView>
 
+class QSystemTrayIcon;
+
 namespace an {
 class Window : public QMainWindow {
     Q_OBJECT
 public:
     explicit Window(bool smoke = false);
+    ~Window() override;
     bool smokeTest();
+signals:
+    void quitRequested();
 protected:
     void closeEvent(QCloseEvent *event) override;
 private:
@@ -38,9 +44,17 @@ private:
     QString field_;
     QString dataDir_;
     bool loading_ = false, smoke_ = false;
+    bool quitting_ = false;
+    QSystemTrayIcon *trayIcon_ = nullptr;
+    void setupTray();
+    void showWindow();
+    void requestQuit();
     AgentConfig config_;
     Graph *editGraph_, *workGraph_;
     Runner *runner_;
+    Coordinator *coordinator_;
+    bool busy() const;
+    void refreshFlowChoices();
     ModelCatalog *modelCatalog_;
     QtNodes::BasicGraphicsScene *editScene_, *workScene_;
     QtNodes::GraphicsView *editView_, *workView_;
@@ -72,6 +86,7 @@ private:
     void refreshWorkHistory();
     void showWorkResult();
     void recordNodeExecution(const NodeExecution &execution);
+    void recordNodeExecution(const QString &projectId, const NodeExecution &execution);
     void flushHistory();
     void newFlow();
     void openFlow();

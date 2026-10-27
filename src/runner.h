@@ -9,6 +9,8 @@
 #include <QMetaType>
 #include <deque>
 #include <memory>
+#include <functional>
+#include <set>
 
 namespace an {
 enum class State { Pending, Running, Succeeded, Skipped, Failed, Cancelled };
@@ -53,6 +55,10 @@ public:
     void cancel();
     bool running() const { return active_; }
     const std::map<Id, Result> &results() const { return results_; }
+    using HostCompletion = std::function<void(const Json &, const QString &)>;
+    using HostHandler = std::function<void(Runner *, Id, const Node &, const QString &, HostCompletion)>;
+    HostHandler hostHandler;
+    std::function<void(Runner *)> cancelHostOperations;
 signals:
     void executionChanged(const an::NodeExecution &execution);
     void changed(unsigned int id);
@@ -75,6 +81,7 @@ private:
     std::map<Id, NodeExecution> activeExecutions_;
     std::map<Id, std::vector<std::deque<Json>>> tokens_;
     std::map<Id, std::unique_ptr<Job>> jobs_;
+    std::set<Id> pendingHost_;
     bool active_ = false;
     bool pumping_ = false;
     bool pumpScheduled_ = false;
