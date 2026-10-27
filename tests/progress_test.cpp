@@ -43,6 +43,22 @@ void ProgressTest::protocols_data() {
     QTest::addColumn<QString>("agent");
     for (QString name : {"Codex", "Claude Code", "OpenCode"}) QTest::newRow(qPrintable(name)) << name;
 }
+void ProgressTest::inputPromptHeader() {
+    const QString prompt="日本語\n{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"not output\"}}\n<b>literal</b>\n${value}";
+    const auto header=jsonLine(Json{{"type","agentnodify.prompt"},{"prompt",prompt.toStdString()}});
+    ProgressParser parser; parser.append(header.left(15)); parser.append(header.mid(15)); parser.append(fixture("Codex")); parser.finish(State::Succeeded); parser.finalResponse(Json(prompt.toStdString()));
+    QVERIFY(parser.items().front().kind==ProgressKind::Prompt); QCOMPARE(parser.items().front().text,prompt); QVERIFY(!parser.items().front().finalResponse);
+    QCOMPARE(ofKind(parser,ProgressKind::Tool).size(),1); QCOMPARE(ofKind(parser,ProgressKind::Message).size(),2);
+    ProgressView view; view.resize(480,500); view.show(); const Json output=prompt.toStdString(); view.setProgress(header+fixture("Codex"),"prompt-test",State::Succeeded,&output);
+    const auto labels=view.findChildren<QLabel *>("agentInputPrompt"); QCOMPARE(labels.size(),1); QCOMPARE(labels[0]->text(),prompt); QCOMPARE(labels[0]->textFormat(),Qt::PlainText);
+    QVERIFY(labels[0]->textInteractionFlags().testFlag(Qt::TextSelectableByMouse));
+    const auto separators=view.findChildren<QFrame *>("inputPromptSeparator"); QCOMPARE(separators.size(),1); QCOMPARE(separators[0]->height(),1);
+    QCoreApplication::processEvents(); QVERIFY(separators[0]->mapTo(&view,QPoint()).y()>labels[0]->mapTo(&view,QPoint()).y()+labels[0]->height());
+    view.setProgress(header+fixture("Codex")+"more progress\n","prompt-test",State::Running); QCOMPARE(view.findChildren<QFrame *>("inputPromptSeparator").size(),1);
+    QVERIFY(view.grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-progress-prompt-separator.png")));
+    view.setProgress(fixture("Codex"),"legacy-test",State::Succeeded); QVERIFY(view.findChildren<QLabel *>("agentInputPrompt").isEmpty());
+    QVERIFY(view.findChildren<QFrame *>("inputPromptSeparator").isEmpty());
+}
 void ProgressTest::compactInputMessage() {
     ContentView view; view.setObjectName("userInputMessage"); view.setCompactMessage(3); view.resize(360,100); view.show(); view.setPlainText("Short message");
     auto *browser=view.findChild<QTextBrowser *>(); auto *tree=view.findChild<QTreeWidget *>(); QVERIFY(browser); QVERIFY(tree);

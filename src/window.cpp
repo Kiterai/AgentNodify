@@ -31,10 +31,101 @@
 #include <QScopedValueRollback>
 #include <QSystemTrayIcon>
 #include <QPainter>
+#include <QStyledItemDelegate>
+#include <QAbstractTextDocumentLayout>
+#include <QKeyEvent>
+#include <QtNodes/internal/ConnectionGraphicsObject.hpp>
+#include <QUndoCommand>
+#include <QGraphicsProxyWidget>
 #include <QtNodes/internal/NodeGraphicsObject.hpp>
 
 namespace an {
 namespace {
+Json historyShape(const Flow &flow, bool positions = true) {
+    auto value = flow.toJson(); value.erase("nextNodeId");
+    if (!positions) for (auto &node : value["nodes"]) { node.erase("x"); node.erase("y"); }
+    return value;
+}
+QString textChangeKey(const Flow &before, const Flow &after) {
+    auto a = historyShape(before), b = historyShape(after);
+    if (a["edges"] != b["edges"] || a["name"] != b["name"] || a["nodes"].size() != b["nodes"].size()) return {};
+    QString result;
+    for (size_t i = 0; i < a["nodes"].size(); ++i) {
+        const auto &old = a["nodes"][i], &node = b["nodes"][i];
+        if (old["id"] != node["id"]) return {};
+        for (auto it = old.begin(); it != old.end(); ++it) if (it.value() != node[it.key()]) {
+            const auto field = QString::fromStdString(it.key());
+            if (!result.isEmpty()) return {};
+            QString suffix;
+            if (field == "rules" || field == "userChoices") {
+                std::function<bool(const Json &, const Json &, const QString &)> visit = [&](const Json &from, const Json &to, const QString &path) {
+                    if (from == to) return true;
+                    if (from.is_string() && to.is_string()) { if (!suffix.isEmpty()) return false; suffix = path; return true; }
+                    if (from.type() != to.type() || from.size() != to.size()) return false;
+                    if (from.is_array()) { for (size_t i = 0; i < from.size(); ++i) if (!visit(from[i], to[i], path + ":" + QString::number(i))) return false; return true; }
+                    if (from.is_object()) { for (auto item = from.begin(); item != from.end(); ++item) if (!to.contains(item.key()) || !visit(item.value(), to[item.key()], path + ":" + QString::fromStdString(item.key()))) return false; return true; }
+                    return false;
+                };
+                if (!visit(it.value(), node[it.key()], {}) || suffix.isEmpty()) return {};
+            } else if (!QStringList{"title","prompt","schema","scriptPath","scriptDirectory","shellDirectory","shellCommand","projectPath"}.contains(field)) return {};
+            result = QString::number(old["id"].get<Id>()) + ":" + field + suffix;
+        }
+    }
+    return result;
+}
+class FlowEditCommand : public QUndoCommand {
+public:
+    Flow before, after;
+    bool positionOnly;
+    FlowEditCommand(Flow old, Flow current, quint64 group, std::function<void(const Flow &)> apply)
+        : before(std::move(old)), after(std::move(current)), positionOnly(historyShape(before, false) == historyShape(after, false)), group_(group), apply_(std::move(apply)) {
+        mergeKey_ = positionOnly ? "positions" : textChangeKey(before, after);
+        setText(positionOnly ? "ノードを移動" : before.nodes.size() < after.nodes.size() ? "ノードを追加" : before.nodes.size() > after.nodes.size() ? "ノードを削除" : before.edges != after.edges ? "接続・ポートを編集" : "ノードを編集");
+    }
+    int removedNodes(bool redo) const {
+        const auto &from = redo ? before : after, &to = redo ? after : before;
+        int count = 0; for (const auto &[id, node] : from.nodes) if (!to.nodes.contains(id)) ++count; return count;
+    }
+    void undo() override { apply_(before); }
+    void redo() override { if (first_) first_ = false; else apply_(after); }
+    int id() const override { return mergeKey_.isEmpty() ? -1 : 0x414e01; }
+    bool mergeWith(const QUndoCommand *command) override {
+        auto *next = dynamic_cast<const FlowEditCommand *>(command);
+        if (!next || next->group_ != group_ || next->mergeKey_ != mergeKey_ || (!positionOnly && next->time_ - time_ > 750)) return false;
+        after = next->after; time_ = next->time_; return true;
+    }
+private:
+    bool first_ = true;
+    QString mergeKey_;
+    quint64 group_;
+    qint64 time_ = QDateTime::currentMSecsSinceEpoch();
+    std::function<void(const Flow &)> apply_;
+};
+class HistoryDelegate : public QStyledItemDelegate {
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+    void paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const override {
+        QStyleOptionViewItem styled(option); initStyleOption(&styled, index);
+        const auto html = index.data(Qt::UserRole + 1).toString();
+        if (html.isEmpty()) { QStyledItemDelegate::paint(painter, option, index); return; }
+        const auto *style = styled.widget ? styled.widget->style() : QApplication::style();
+        const auto rect = style->subElementRect(QStyle::SE_ItemViewItemText, &styled, styled.widget).adjusted(2, 2, -2, -2);
+        styled.text.clear(); style->drawControl(QStyle::CE_ItemViewItem, &styled, painter, styled.widget);
+        QTextDocument document; document.setDocumentMargin(0); document.setDefaultFont(styled.font); document.setHtml(html); document.setTextWidth(rect.width());
+        QAbstractTextDocumentLayout::PaintContext context;
+        context.palette = styled.palette;
+        context.palette.setColor(QPalette::Text, styled.palette.color(styled.state & QStyle::State_Selected ? QPalette::HighlightedText : QPalette::Text));
+        painter->save(); painter->setClipRect(rect); painter->translate(rect.topLeft()); document.documentLayout()->draw(painter, context); painter->restore();
+    }
+    QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const override {
+        const auto html = index.data(Qt::UserRole + 1).toString();
+        if (html.isEmpty()) return QStyledItemDelegate::sizeHint(option, index);
+        const auto *list = qobject_cast<const QListWidget *>(parent());
+        const int width = qMax(40, list ? list->viewport()->width() - 4 : option.rect.width() - 4);
+        QTextDocument document; document.setDocumentMargin(0); document.setDefaultFont(option.font); document.setHtml(html); document.setTextWidth(width);
+        return QSize(width + 4, qCeil(document.size().height()) + 4);
+    }
+};
 class ProjectStatusLabel : public QLabel {
 public:
     using QLabel::QLabel;
@@ -45,6 +136,15 @@ protected:
         const auto image = pixmap(); if (image.isNull()) return;
         const auto size = image.deviceIndependentSize(); QPainter painter(this);
         painter.drawPixmap(QPointF((width() - size.width()) / 2, (height() - size.height()) / 2), image);
+    }
+};
+class ProjectNameLabel : public QLabel {
+public:
+    using QLabel::QLabel;
+protected:
+    void paintEvent(QPaintEvent *) override {
+        QPainter painter(this);
+        style()->drawItemText(&painter, contentsRect(), alignment(), palette(), isEnabled(), fontMetrics().elidedText(text(), Qt::ElideRight, contentsRect().width()), QPalette::WindowText);
     }
 };
 class Highlighter : public QSyntaxHighlighter {
@@ -63,8 +163,8 @@ public:
         }
     }
 };
-QPushButton *button(const QString &text, QLayout *layout, std::function<void()> action) {
-    auto *b = new QPushButton(text); layout->addWidget(b); QObject::connect(b, &QPushButton::clicked, b, std::move(action)); return b;
+QPushButton *button(const QString &text, QLayout *layout, std::function<void()> action, bool elide = false) {
+    auto *b = elide ? new ElidedButton(text) : new QPushButton(text); layout->addWidget(b); QObject::connect(b, &QPushButton::clicked, b, std::move(action)); return b;
 }
 QString uniquePath(const QString &dir) { return QDir(dir).filePath(QUuid::createUuid().toString(QUuid::WithoutBraces) + ".flow.json"); }
 QIcon projectStatusIcon(bool inputWaiting) {
@@ -74,12 +174,12 @@ QIcon projectStatusIcon(bool inputWaiting) {
         QPainter painter(&image); painter.setRenderHint(QPainter::Antialiasing); painter.scale(size / 20.0, size / 20.0);
         if (inputWaiting) {
             // Speech bubble + exclamation mark: distinct by shape, not just color.
-            const QColor amber("#ffd479"); painter.setPen(QPen(amber, 1.5)); painter.setBrush(QColor("#493b25"));
+            const QColor amber("#ffd479"); painter.setPen(QPen(amber, 1.5)); painter.setBrush(Qt::NoBrush);
             painter.drawRoundedRect(QRectF(2, 2, 16, 13), 3, 3);
             painter.drawLine(QPointF(5, 15), QPointF(5, 18)); painter.drawLine(QPointF(5, 18), QPointF(9, 15));
             painter.setPen(QPen(amber, 2, Qt::SolidLine, Qt::RoundCap)); painter.drawLine(QPointF(10, 5), QPointF(10, 9)); painter.drawPoint(QPointF(10, 12));
         } else {
-            const QColor blue("#9bcaff"); painter.setPen(QPen(blue, 1.5)); painter.setBrush(QColor("#263b55")); painter.drawEllipse(QRectF(2, 2, 16, 16));
+            const QColor blue("#9bcaff"); painter.setPen(QPen(blue, 1.5)); painter.setBrush(Qt::NoBrush); painter.drawEllipse(QRectF(2, 2, 16, 16));
             painter.setPen(Qt::NoPen); painter.setBrush(blue); painter.drawPolygon(QPolygonF{QPointF(8, 6), QPointF(14, 10), QPointF(8, 14)});
         }
         painter.end(); icon.addPixmap(image);
@@ -119,6 +219,24 @@ Window::Window(bool smoke) : smoke_(smoke) {
     modelCatalog_ = new ModelCatalog(this);
     if (!smoke_) editGraph_->modelCatalog = workGraph_->modelCatalog = modelCatalog_;
     buildUi();
+    qApp->installEventFilter(this);
+    editGraph_->newNodePosition = [this] { return nextNodePosition(); };
+    static_cast<GraphView *>(editView_)->interactionFinished = [this](std::optional<Id> node, QPointF point) {
+        if (current_ < 0 || current_ >= int(documents_.size())) return;
+        auto &document = documents_[size_t(current_)];
+        if (node && editGraph_->nodeExists(*node)) { document.creationAnchor = editGraph_->flow.nodes.at(*node).position; document.offsetCreation = true; }
+        else if (!node) { document.creationAnchor = point; document.offsetCreation = false; }
+    };
+    static_cast<GraphView *>(editView_)->interactionStarted = [this] { ++historyGroup_; };
+    editGraph_->editsLocked = [this] { return currentFlowRunning(); };
+    connect(editGraph_, &Graph::editRejected, this, [this] {
+        QMessageBox::warning(this, "実行中のフロー", "このフローはプロジェクトで実行中のため編集できません。停止してから編集してください。ノードの移動は可能です。", QMessageBox::Ok);
+    });
+    static_cast<GraphView *>(editView_)->beforePortEdit = [this] { return editGraph_->canEdit(); };
+    static_cast<GraphView *>(workView_)->beforePortEdit = [] { return false; };
+    connect(workGraph_, &QtNodes::AbstractGraphModel::nodePositionUpdated, this, [this](Id id) {
+        if (project_ >= 0 && project_ < int(projects_.size()) && workGraph_->nodeExists(id)) projects_[size_t(project_)].workPositions[id] = workGraph_->flow.nodes.at(id).position;
+    });
     historySaveTimer_ = new QTimer(this); historySaveTimer_->setSingleShot(true); historySaveTimer_->setInterval(1000);
     connect(historySaveTimer_, &QTimer::timeout, this, &Window::flushHistory);
     connect(coordinator_, &Coordinator::executionChanged, this, [this](const QString &id, const NodeExecution &entry) { recordNodeExecution(id, entry); });
@@ -161,7 +279,7 @@ Window::Window(bool smoke) : smoke_(smoke) {
         flushHistory();
         if (project_ >= 0 && projects_[size_t(project_)].historyId == id) {
             status_->setText(message);
-            if (!ok && !smoke_ && !quitting_ && !suppressRunWarnings_) QMessageBox::warning(this, "実行結果", message);
+            if (!ok && message != "実行を中止しました" && !smoke_ && !quitting_ && !suppressRunWarnings_) QMessageBox::warning(this, "実行結果", message);
         }
         statusBar()->showMessage(message, 15000);
     });
@@ -177,16 +295,68 @@ Window::Window(bool smoke) : smoke_(smoke) {
     setupTray();
 }
 Window::~Window() {
+    qApp->removeEventFilter(this);
     coordinator_->disconnect(this); runner_->disconnect(this); coordinator_->cancelAll();
     delete coordinator_; // Clear Runner host callbacks before QObject child teardown.
 }
 bool Window::busy() const { return runner_->running() || coordinator_->running(); }
+QPointF Window::nextNodePosition() const {
+    const auto offset = 2 * QFontMetrics(editView_->font()).lineSpacing();
+    if (current_ >= 0 && current_ < int(documents_.size())) {
+        const auto &document = documents_[size_t(current_)];
+        if (document.creationAnchor) return *document.creationAnchor + (document.offsetCreation ? QPointF(offset, offset) : QPointF());
+    }
+    QRectF rightmost;
+    bool found = false;
+    for (auto *item : editScene_->items()) {
+        if (!dynamic_cast<QtNodes::NodeGraphicsObject *>(item) && !dynamic_cast<QtNodes::ConnectionGraphicsObject *>(item)) continue;
+        const auto bounds = item->sceneBoundingRect();
+        if (!found || bounds.right() > rightmost.right()) { rightmost = bounds; found = true; }
+    }
+    return found ? QPointF(rightmost.right() + offset, rightmost.top()) : QPointF();
+}
+void Window::updateInputShortcutHint() {
+    if (inputShortcutHint_) inputShortcutHint_->setVisible(controlPressed_ && !activeInput_.isEmpty() && inputText_->isEnabled());
+}
+bool Window::eventFilter(QObject *object, QEvent *event) {
+    if (object == this && event->type() == QEvent::WindowDeactivate) { controlPressed_ = false; updateInputShortcutHint(); }
+    auto *widget = qobject_cast<QWidget *>(object);
+    if (widget && editorTarget(widget)) {
+        if (event->type() == QEvent::FocusIn) ++historyGroup_;
+        if (event->type() == QEvent::ShortcutOverride || event->type() == QEvent::KeyPress) {
+            auto *key = static_cast<QKeyEvent *>(event);
+            if (key->matches(QKeySequence::Undo) || key->matches(QKeySequence::Redo)) {
+                if (event->type() == QEvent::KeyPress && !key->isAutoRepeat()) stepHistory(key->matches(QKeySequence::Redo));
+                event->accept(); return true;
+            }
+        }
+    }
+    if (widget && (widget == this || isAncestorOf(widget)) && (event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease)) {
+        const auto *key = static_cast<QKeyEvent *>(event);
+        controlPressed_ = key->key() == Qt::Key_Control ? event->type() == QEvent::KeyPress : key->modifiers().testFlag(Qt::ControlModifier);
+        updateInputShortcutHint();
+        if (object == inputText_ && inputText_->hasFocus() && inputText_->isVisible() && inputText_->isEnabled() &&
+            (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) && key->modifiers() == Qt::ControlModifier) {
+            if (event->type() == QEvent::KeyPress && !key->isAutoRepeat())
+                if (auto *first = qobject_cast<QPushButton *>(inputButtons_->itemAt(0) ? inputButtons_->itemAt(0)->widget() : nullptr)) first->click();
+            return true;
+        }
+    }
+    return QMainWindow::eventFilter(object, event);
+}
+bool Window::currentFlowRunning() const {
+    if (current_ < 0 || current_ >= int(documents_.size())) return false;
+    const auto path = documents_[size_t(current_)].path;
+    for (const auto &project : projects_) if (project.flowPath == path && coordinator_->running(project.historyId)) return true;
+    return false;
+}
 void Window::updateExecutionUi() {
     activities_->setEnabled(true); projectList_->setEnabled(true); tabs_->setTabEnabled(0, true);
     const bool selected = project_ >= 0 && project_ < int(projects_.size());
     const bool running = selected && coordinator_->running(projects_[size_t(project_)].historyId);
     runButton_->setEnabled(selected && !running);
     stopButton_->setEnabled(running); stopButton_->setToolTip("選択中のプロジェクトの実行を停止します");
+    if (currentFlowRunning()) { textPane_->hide(); field_.clear(); }
 }
 void Window::syncCoordinatorRegistry() {
     coordinator_->flows.clear(); coordinator_->projects.clear(); coordinator_->config = config_;
@@ -238,6 +408,9 @@ void Window::buildUi() {
     file->addAction("保存", QKeySequence::Save, this, [this] { saveFlow(); });
     file->addAction("名前を付けて保存…", QKeySequence::SaveAs, this, [this] { saveFlow(true); });
     file->addSeparator(); file->addAction("終了", QKeySequence::Quit, this, &Window::requestQuit);
+    auto *edit = menuBar()->addMenu("編集");
+    undoAction_ = edit->addAction("元に戻す", this, [this] { stepHistory(false); }); undoAction_->setShortcuts(QKeySequence::Undo); undoAction_->setObjectName("undoFlowEdit");
+    redoAction_ = edit->addAction("やり直す", this, [this] { stepHistory(true); }); redoAction_->setShortcuts(QKeySequence::Redo); redoAction_->setObjectName("redoFlowEdit");
     auto *tools = menuBar()->addMenu("ツール");
     tools->addAction("フローを検証", QKeySequence("F7"), this, [this] { validateFlow(); });
     tools->addAction("CLI設定…", this, [this] { settings(); });
@@ -262,15 +435,30 @@ void Window::buildUi() {
             auto id = editGraph_->addNode(kindKey(k));
             if (id == QtNodes::InvalidNodeId) statusBar()->showMessage("ノードを追加できません", 5000);
             else selectNode(id);
-        });
-        add->setToolTip(nodeDescription(k)); add->setObjectName("addNode_" + kindKey(k));
+        }, true);
+        add->setToolTip("＋ " + kindName(k) + "\n" + nodeDescription(k)); add->setObjectName("addNode_" + kindKey(k));
     }
-    button("フローを検証", leftLayout, [this] { validateFlow(); });
+    auto *validate = button("フローを検証", leftLayout, [this] { validateFlow(); }, true); validate->setToolTip("フローを検証");
     leftLayout->addStretch(); left->setObjectName("nodePalette");
     left->setMinimumWidth(180); editorSplit_->addWidget(left);
     editScene_ = new QtNodes::BasicGraphicsScene(*editGraph_, this); editView_ = new GraphView(editScene_);
     editView_->setScaleRange(0.15, 3); editorSplit_->addWidget(editView_);
     editView_->setObjectName("flowEditorView");
+    // QtNodes' commands drive mouse gestures; our per-document snapshots own
+    // user-facing undo so parameter edits and structural edits share one order.
+    for (auto *action : editView_->actions()) {
+        if (action->shortcuts().contains(QKeySequence(QKeySequence::Undo)) || action->shortcuts().contains(QKeySequence(QKeySequence::Redo))) { editView_->removeAction(action); action->deleteLater(); }
+        else if (action == editView_->deleteSelectionAction()) {
+            QObject::disconnect(action, nullptr, editView_, nullptr); connect(action, &QAction::triggered, this, [this] { deleteEditorObjects(); });
+        } else if (action->shortcut() == QKeySequence(QKeySequence::Paste) || action->shortcut() == QKeySequence(Qt::CTRL | Qt::Key_D)) {
+            const bool paste = action->shortcut() == QKeySequence(QKeySequence::Paste);
+            QObject::disconnect(action, nullptr, editView_, nullptr);
+            connect(action, &QAction::triggered, this, [this, paste] { if (!editGraph_->canEdit()) return; editorOperation([this, paste] { if (paste) editView_->onPasteObjects(); else editView_->onDuplicateSelectedObjects(); }); });
+        }
+    }
+    connect(&editScene_->undoStack(), &QUndoStack::indexChanged, this, [this] {
+        QTimer::singleShot(0, this, [this] { if (editScene_->undoStack().count()) editScene_->undoStack().clear(); });
+    });
     editView_->setToolTip("背景にフォーカスがあるとき、Spaceでフロー全体を画面に収めます。");
     connect(editScene_, &QtNodes::BasicGraphicsScene::nodeClicked, this, [this](Id id) { selectNode(id); });
     connect(editScene_, &QtNodes::BasicGraphicsScene::nodeContextMenu, this, [this](Id id, const QPointF &point) {
@@ -279,10 +467,21 @@ void Window::buildUi() {
         auto *remove = menu.addAction("削除");
         const auto kind = editGraph_->flow.nodes.at(id).kind;
         remove->setEnabled(kind != Kind::Start && kind != Kind::End);
-        connect(remove, &QAction::triggered, this, [this, id] { editGraph_->deleteNode(id); });
+        connect(remove, &QAction::triggered, this, [this, id] { deleteEditorObjects(id); });
         menu.exec(editView_->viewport()->mapToGlobal(editView_->mapFromScene(point)));
     });
     connect(editGraph_, &QtNodes::AbstractGraphModel::nodeDeleted, this, [this](Id id) { if (selected_ == id) { selected_ = 0; textPane_->hide(); selectNode(0); } });
+    connect(editGraph_, &QtNodes::AbstractGraphModel::nodeCreated, this, [this](Id id) {
+        if (current_ >= 0 && current_ < int(documents_.size())) {
+            auto &document = documents_[size_t(current_)]; document.creationAnchor = editGraph_->flow.nodes.at(id).position; document.offsetCreation = true;
+        }
+        const int document = current_;
+        QTimer::singleShot(0, this, [this, id, document] {
+            if (current_ != document || !editGraph_->nodeExists(id) || !editView_->isVisible()) return;
+            if (auto *item = editScene_->nodeGraphicsObject(id))
+                if (!editView_->mapToScene(editView_->viewport()->rect()).boundingRect().contains(item->sceneBoundingRect())) static_cast<GraphView *>(editView_)->zoomToFit();
+        });
+    });
     connect(editGraph_, &Graph::textEditRequested, this, [this](Id id, const QString &field) { selectNode(id); showText(field); });
     connect(editGraph_, &Graph::nodeActivated, this, [this](Id id) { selectNode(id); });
     textPane_ = new QWidget; textPane_->setObjectName("textEditorPane"); auto *textLayout = new QVBoxLayout(textPane_);
@@ -292,6 +491,7 @@ void Window::buildUi() {
     textError_ = new QLabel; textError_->setWordWrap(true); textError_->setStyleSheet("color:#ff9d9d"); textLayout->addWidget(textError_);
     connect(text_, &QPlainTextEdit::textChanged, this, [this] {
         if (loading_ || !editGraph_->nodeExists(selected_) || field_.isEmpty()) return;
+        if (!editGraph_->canEdit()) return;
         auto n = editGraph_->flow.nodes.at(selected_);
         if (field_ == "schema") n.schema = text_->toPlainText(); else if (field_ == "shellCommand") n.shellCommand = text_->toPlainText(); else n.prompt = text_->toPlainText();
         editGraph_->updateNode(n); textError_->clear();
@@ -299,7 +499,7 @@ void Window::buildUi() {
             try { checkSchema(parseJson(n.schema)); } catch (const std::exception &e) { textError_->setText(QString::fromUtf8(e.what())); }
         }
     });
-    editorSplit_->addWidget(textPane_); textPane_->hide(); editorSplit_->setSizes({190, 830, 360}); editorSplit_->setStretchFactor(1, 1);
+    editorSplit_->addWidget(textPane_); textPane_->hide(); editorSplit_->setSizes({247, 773, 360}); editorSplit_->setStretchFactor(1, 1);
     tabs_->addTab(editorSplit_, "フロー編集");
     auto *workSplit = new QSplitter;
     auto *projectPane = new QWidget; auto *pl = new QVBoxLayout(projectPane); pl->addWidget(new QLabel("プロジェクト"));
@@ -313,7 +513,10 @@ void Window::buildUi() {
     auto *toolbar = new QHBoxLayout; status_ = new QLabel("プロジェクトを選択してください"); status_->setWordWrap(true); toolbar->addWidget(status_, 1);
     runButton_ = button("▶ 実行", toolbar, [this] { executeFlow(); });
     stopButton_ = button("■ 停止", toolbar, [this] {
-        if (project_ >= 0 && project_ < int(projects_.size())) coordinator_->cancelProject(projects_[size_t(project_)].historyId);
+        if (project_ < 0 || project_ >= int(projects_.size())) return;
+        const auto id = projects_[size_t(project_)].historyId;
+        if (!coordinator_->running(id)) return;
+        if (QMessageBox::warning(this, "フローを停止", "選択中のプロジェクトのフロー実行を停止しますか？", QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Cancel) == QMessageBox::Ok) coordinator_->cancelProject(id);
     }); stopButton_->setEnabled(false); cl->addLayout(toolbar);
     workInputSplit_ = new QSplitter(Qt::Vertical); workInputSplit_->setObjectName("workInputSplitter"); workInputSplit_->setChildrenCollapsible(false); workInputSplit_->setHandleWidth(6); cl->addWidget(workInputSplit_, 1);
     workScene_ = new QtNodes::BasicGraphicsScene(*workGraph_, this); workView_ = new GraphView(workScene_); workView_->setMinimumHeight(120); workView_->setScaleRange(0.15, 3); workInputSplit_->addWidget(workView_);
@@ -322,6 +525,7 @@ void Window::buildUi() {
     inputSelector_ = new QComboBox; inputSelector_->setObjectName("userInputSelector"); styleComboBoxPopup(inputSelector_); inputLayout->addWidget(inputSelector_);
     inputMessage_ = new ContentView; inputMessage_->setObjectName("userInputMessage"); inputMessage_->setCompactMessage(3); inputLayout->addWidget(inputMessage_);
     inputText_ = new QPlainTextEdit; inputText_->setObjectName("userInputText"); inputText_->setPlaceholderText("メッセージを入力し、下の選択肢を押してください"); inputText_->setMinimumHeight(60); inputLayout->addWidget(inputText_, 1);
+    inputText_->setToolTip("Ctrl+Enterで最初の選択肢を送信します。Enterのみでは改行します。");
     auto *choices = new QWidget; inputButtons_ = new QHBoxLayout(choices); inputButtons_->setContentsMargins(0, 0, 0, 0);
     auto *choiceScroll = new QScrollArea; choiceScroll->setWidgetResizable(true); choiceScroll->setWidget(choices); choiceScroll->setFrameShape(QFrame::NoFrame); choiceScroll->setMinimumHeight(42); choiceScroll->setMaximumHeight(55); inputLayout->addWidget(choiceScroll);
     workInputSplit_->addWidget(inputPanel_); workInputSplit_->setStretchFactor(0, 1); workInputSplit_->setStretchFactor(1, 0); inputPanel_->hide();
@@ -361,7 +565,8 @@ void Window::buildUi() {
     followHistoryButton_->setToolTip("最新のノード実行に自動で切り替えます。履歴を選択すると追従を停止します。");
     historyHeading->addWidget(followHistoryButton_); hl->addLayout(historyHeading);
     connect(followHistoryButton_, &QToolButton::toggled, this, [this](bool follow) { followLatestHistory_ = follow; if (follow) refreshWorkHistory(); });
-    historyList_ = new QListWidget; historyList_->setObjectName("nodeExecutionHistory");
+    historyList_ = new QListWidget; historyList_->setObjectName("nodeExecutionHistory"); historyList_->setWordWrap(true);
+    historyList_->setItemDelegate(new HistoryDelegate(historyList_));
     historyList_->setToolTip("選択したノードの実行を日時順（新しい順）に表示します。ノード未選択時は表示しません。"); hl->addWidget(historyList_, 1); detailSplit->addWidget(historyPane);
     connect(historyList_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *item) {
         selectedHistory_ = item ? item->data(Qt::UserRole).toString() : QString();
@@ -378,6 +583,7 @@ void Window::buildUi() {
     workSplit->addWidget(details); workSplit->setSizes({230, 780, 330}); workSplit->setStretchFactor(1, 1);
     tabs_->addTab(workSplit, "プロジェクト作業"); setCentralWidget(root);
     connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
+        updateUndoActions();
         if (index != 1) return;
         if (project_ >= 0) selectProject(project_);
         else { workGraph_->replace(editGraph_->flow); selectWorkNode(workGraph_->nodeExists(workSelected_) ? workSelected_ : 0); }
@@ -407,10 +613,85 @@ void Window::buildUi() {
 }
 void Window::changed() {
     if (loading_ || current_ < 0) return;
-    auto &doc = documents_[size_t(current_)]; doc.flow = editGraph_->flow; doc.dirty = true;
+    auto &doc = documents_[size_t(current_)]; const auto before = doc.flow; doc.flow = editGraph_->flow; doc.dirty = true;
+    if (!applyingHistory_ && !editBatch_) recordEdit(before, doc.flow);
     for (auto &p : projects_) if (p.flowPath == doc.path && !coordinator_->running(p.historyId)) { p.results.clear(); p.runFlow.reset(); }
     syncCoordinatorRegistry();
     setWindowTitle("AgentNodify — " + doc.flow.name + " *");
+}
+bool Window::editorTarget(QWidget *widget) const {
+    if (!editorSplit_ || !tabs_ || tabs_->currentIndex() != 0) return false;
+    if (widget == editorSplit_ || editorSplit_->isAncestorOf(widget)) return true;
+    for (auto *parent = widget; parent; parent = parent->parentWidget())
+        if (auto *proxy = parent->graphicsProxyWidget()) return proxy->scene() == editScene_;
+    return false;
+}
+void Window::recordEdit(const Flow &before, const Flow &after) {
+    if (current_ < 0 || historyShape(before) == historyShape(after)) return;
+    documents_[size_t(current_)].undo->push(new FlowEditCommand(before, after, historyGroup_, [this](const Flow &flow) { applyHistory(flow); }));
+    updateUndoActions();
+}
+void Window::updateUndoActions() {
+    if (!undoAction_ || !redoAction_) return;
+    const auto stack = current_ >= 0 && current_ < int(documents_.size()) ? documents_[size_t(current_)].undo : nullptr;
+    const bool editor = tabs_ && tabs_->currentIndex() == 0;
+    undoAction_->setEnabled(editor && stack && stack->canUndo()); redoAction_->setEnabled(editor && stack && stack->canRedo());
+    undoAction_->setText(stack && stack->canUndo() ? "元に戻す: " + stack->undoText() : "元に戻す");
+    redoAction_->setText(stack && stack->canRedo() ? "やり直す: " + stack->redoText() : "やり直す");
+}
+bool Window::confirmNodeDeletion(int count) {
+    return count == 0 || QMessageBox::warning(this, "ノードを削除", QString("%1個のノードと接続を削除しますか？").arg(count), QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Cancel) == QMessageBox::Ok;
+}
+void Window::stepHistory(bool redo) {
+    if (current_ < 0 || tabs_->currentIndex() != 0) return;
+    const auto stack = documents_[size_t(current_)].undo;
+    const int index = stack->index();
+    if (redo ? !stack->canRedo() : !stack->canUndo()) return;
+    const auto *command = dynamic_cast<const FlowEditCommand *>(stack->command(redo ? index : index - 1));
+    if (!command || (!command->positionOnly && !editGraph_->canEdit())) return;
+    if (!confirmNodeDeletion(command->removedNodes(redo))) return;
+    if (current_ < 0 || documents_[size_t(current_)].undo != stack || stack->index() != index) return;
+    if (!command->positionOnly && !editGraph_->canEdit()) return;
+    ++historyGroup_;
+    if (redo) stack->redo(); else stack->undo();
+    auto &document = documents_[size_t(current_)]; document.dirty = !stack->isClean() || (document.savedNextNodeId && editGraph_->flow.nextNodeId > document.savedNextNodeId);
+    setWindowTitle("AgentNodify — " + document.flow.name + (document.dirty ? " *" : "")); updateUndoActions();
+}
+void Window::applyHistory(const Flow &flow) {
+    const QScopedValueRollback<bool> applying(applyingHistory_, true);
+    editGraph_->restore(flow);
+    if (!field_.isEmpty() && editGraph_->nodeExists(selected_)) {
+        const auto &node = editGraph_->flow.nodes.at(selected_);
+        const auto value = field_ == "schema" ? node.schema : field_ == "shellCommand" ? node.shellCommand : node.prompt;
+        if (text_->toPlainText() != value) {
+            const int position = text_->textCursor().position(); const QSignalBlocker block(text_); text_->setPlainText(value);
+            auto cursor = text_->textCursor(); cursor.setPosition(qMin(position, int(value.size()))); text_->setTextCursor(cursor);
+        }
+        textError_->clear();
+        if (field_ == "schema" && !node.schema.trimmed().isEmpty()) {
+            try { checkSchema(parseJson(node.schema)); } catch (const std::exception &error) { textError_->setText(QString::fromUtf8(error.what())); }
+        }
+    }
+}
+void Window::editorOperation(const std::function<void()> &operation) {
+    const auto before = editGraph_->flow; ++historyGroup_;
+    { const QScopedValueRollback<int> batch(editBatch_, editBatch_ + 1); operation(); }
+    recordEdit(before, editGraph_->flow);
+}
+void Window::deleteEditorObjects(std::optional<Id> node) {
+    if (!editGraph_->canEdit()) return;
+    std::vector<Id> nodes; std::vector<QtNodes::ConnectionId> connections;
+    auto addNode = [this, &nodes](Id id) {
+        if (editGraph_->nodeExists(id) && editGraph_->flow.nodes.at(id).kind != Kind::Start && editGraph_->flow.nodes.at(id).kind != Kind::End) nodes.push_back(id);
+    };
+    if (node) addNode(*node);
+    else for (auto *item : editScene_->selectedItems()) {
+        if (auto *object = dynamic_cast<QtNodes::NodeGraphicsObject *>(item)) addNode(object->nodeId());
+        else if (auto *wire = dynamic_cast<QtNodes::ConnectionGraphicsObject *>(item)) connections.push_back(wire->connectionId());
+    }
+    if ((nodes.empty() && connections.empty()) || !confirmNodeDeletion(int(nodes.size()))) return;
+    if (!editGraph_->canEdit()) return;
+    editorOperation([&] { for (auto connection : connections) editGraph_->deleteConnection(connection); for (auto id : nodes) editGraph_->deleteNode(id); });
 }
 void Window::refreshActivities() {
     syncCoordinatorRegistry();
@@ -434,9 +715,9 @@ void Window::refreshActivities() {
         connect(button, &QWidget::customContextMenuRequested, this, [this, button, i](const QPoint &point) {
             QMenu menu(this);
             menu.addAction("名前を変更", this, [this, i] {
-                selectFlow(i); bool ok = false;
+                selectFlow(i); if (!editGraph_->canEdit()) return; bool ok = false;
                 auto name = QInputDialog::getText(this, "フロー名", "名前", QLineEdit::Normal, editGraph_->flow.name, &ok);
-                if (ok && !name.trimmed().isEmpty()) { editGraph_->flow.name = name.trimmed(); changed(); refreshActivities(); }
+                if (ok && !name.trimmed().isEmpty() && editGraph_->canEdit()) { editGraph_->flow.name = name.trimmed(); changed(); refreshActivities(); }
             });
             menu.addAction("一覧から削除", this, [this, i] { removeFlow(i); });
             menu.exec(button->mapToGlobal(point));
@@ -452,16 +733,21 @@ void Window::refreshActivities() {
 void Window::selectFlow(int index) {
     if (index < 0 || index >= int(documents_.size())) return;
     current_ = index; loading_ = true;
+    ++historyGroup_; editScene_->undoStack().clear();
+    if (!documents_[size_t(index)].undo->count() && documents_[size_t(index)].dirty) documents_[size_t(index)].undo->resetClean();
     editGraph_->replace(documents_[size_t(index)].flow); selected_ = 0; field_.clear(); textPane_->hide();
+    if (!documents_[size_t(index)].dirty && !documents_[size_t(index)].savedNextNodeId) documents_[size_t(index)].savedNextNodeId = editGraph_->flow.nextNodeId;
     loading_ = false; selectNode(0); editView_->centerScene();
     setWindowTitle("AgentNodify — " + editGraph_->flow.name + (documents_[size_t(index)].dirty ? " *" : ""));
     refreshActivities(); refreshProjects();
+    updateUndoActions();
 }
 void Window::selectNode(Id id) {
     selected_ = id; field_.clear(); textPane_->hide();
 }
 void Window::showText(const QString &field) {
     if (!editGraph_->nodeExists(selected_)) return;
+    if (!editGraph_->canEdit()) return;
     const auto &n = editGraph_->flow.nodes.at(selected_);
     if (!((n.kind == Kind::Agent && (field == "prompt" || field == "schema")) || (n.kind == Kind::Shell && field == "shellCommand"))) return;
     field_ = field; loading_ = true; textError_->clear();
@@ -523,7 +809,7 @@ bool Window::saveFlow(bool saveAs) {
             for (auto &other : documents_) for (auto &[id, node] : other.flow.nodes) if (isHostOperation(node.kind) && node.targetFlow == old) { node.targetFlow = path; other.dirty = true; }
             editGraph_->flow.save(path);
         }
-        doc.path = path; doc.flow = editGraph_->flow; doc.dirty = false;
+        doc.path = path; doc.flow = editGraph_->flow; doc.dirty = false; doc.undo->setClean(); doc.savedNextNodeId = editGraph_->flow.nextNodeId;
         refreshActivities(); setWindowTitle("AgentNodify — " + doc.flow.name); persist(); statusBar()->showMessage("保存しました: " + path, 6000); return true;
     } catch (const std::exception &e) { reportError(QString::fromUtf8(e.what())); return false; }
 }
@@ -540,10 +826,10 @@ void Window::refreshProjects() {
     auto path = documents_[size_t(current_)].path;
     for (int i = 0; i < int(projects_.size()); ++i) if (projects_[size_t(i)].flowPath == path) {
         auto *item = new QListWidgetItem(projects_[size_t(i)].name, projectList_); item->setData(Qt::UserRole, i); item->setToolTip(projects_[size_t(i)].directory);
-        auto *row = new QWidget; auto *layout = new QHBoxLayout(row); layout->setContentsMargins(6, 2, 2, 2);
-        layout->addWidget(new QLabel(projects_[size_t(i)].name), 1);
+        auto *row = new QWidget; row->setObjectName("projectRow"); row->setStyleSheet("QWidget#projectRow, QLabel { background:transparent; }"); auto *layout = new QHBoxLayout(row); layout->setContentsMargins(6, 2, 2, 2); layout->setSpacing(4);
+        auto *nameLabel = new ProjectNameLabel(projects_[size_t(i)].name); nameLabel->setObjectName("projectName"); nameLabel->setTextFormat(Qt::PlainText); nameLabel->setMinimumWidth(0); nameLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred); nameLabel->setToolTip(projects_[size_t(i)].name); layout->addWidget(nameLabel, 1);
         for (const auto &name : {"projectRunningIcon", "projectInputWaitingIcon"}) {
-            auto *indicator = new ProjectStatusLabel; indicator->setObjectName(name); indicator->setFixedSize(20, 20); indicator->setAlignment(Qt::AlignCenter); layout->addWidget(indicator);
+            auto *indicator = new ProjectStatusLabel; indicator->setObjectName(name); indicator->setFixedSize(20, 20); indicator->setAlignment(Qt::AlignCenter); indicator->setStyleSheet("background:transparent; border:0;"); indicator->setAutoFillBackground(false); layout->addWidget(indicator);
         }
         auto *more = new QToolButton; more->setText("…"); more->setObjectName("projectOpenMenu");
         more->setToolTip("ディレクトリを開く"); more->setAccessibleName("プロジェクトディレクトリを開く"); layout->addWidget(more);
@@ -593,6 +879,7 @@ void Window::refreshProjectStatusIcons() {
             auto *label = row->findChild<QLabel *>(name); if (!label) return;
             label->setProperty("active", active); label->setToolTip(active ? text : QString()); label->setAccessibleName(active ? text : QString());
             if (active) label->setPixmap(icon.pixmap(QSize(18, 18), label->devicePixelRatioF())); else label->clear();
+            label->setVisible(active);
         };
         const QString waitingText = QString("ユーザー入力待ち（%1件）").arg(pending);
         update("projectRunningIcon", running, runningIcon, "フローを実行中");
@@ -608,7 +895,8 @@ void Window::selectProject(int index) {
     if (index < 0 || index >= int(projects_.size())) return;
     const bool sameProject = project_ == index;
     project_ = index; auto &p = projects_[size_t(index)];
-    const auto &displayFlow = p.runFlow ? *p.runFlow : editGraph_->flow;
+    auto displayFlow = p.runFlow ? *p.runFlow : editGraph_->flow;
+    for (const auto &[id, position] : p.workPositions) if (displayFlow.nodes.contains(id)) displayFlow.nodes[id].position = position;
     const bool replace = !sameProject || workGraph_->flow.toJson() != displayFlow.toJson();
     if (replace) { workGraph_->replace(displayFlow); workView_->centerScene(); }
     for (auto &[id, r] : p.results) if (workGraph_->nodeExists(id)) workGraph_->states[id] = r.state;
@@ -639,9 +927,18 @@ void Window::refreshWorkHistory() {
         const auto &entry = *entries[size_t(row)];
         auto *item = rebuild ? new QListWidgetItem(historyList_) : historyList_->item(row);
         item->setData(Qt::UserRole, entry.id);
-        item->setText(QString("%1 · %2\n実行 %3 · %4").arg(entry.startedAt.toLocalTime().toString("yyyy/MM/dd HH:mm:ss.zzz"), stateName(entry.state)).arg(entry.executionNumber).arg(entry.agent.isEmpty() ? QString("内部処理") : entry.agent));
+        const QString title = QString("実行 %1").arg(entry.executionNumber);
+        const bool continued = entry.retainContext && entry.contextResumed;
+        QString details = entry.agent.isEmpty() ? QString("内部処理") : entry.agent;
+        if (entry.agent == "Codex" || entry.agent == "Claude Code" || entry.agent == "OpenCode") {
+            QString effort = entry.effort.isEmpty() ? QString("Default") : entry.effort;
+            if (!effort.isEmpty()) effort[0] = effort[0].toUpper();
+            details += " " + (entry.model.isEmpty() ? "不明（記録なし）" : entry.model) + " " + effort;
+        }
+        item->setText(title + (continued ? " 継続コンテキスト" : "") + "\n" + details);
+        item->setData(Qt::UserRole + 1, title.toHtmlEscaped() + (continued ? " <span style=\"color:#929caa\">継続コンテキスト</span>" : "") + "<br>" + details.toHtmlEscaped());
         item->setToolTip("開始: " + entry.startedAt.toLocalTime().toString(Qt::ISODateWithMs) + "\n終了: " +
-            (entry.finishedAt.isValid() ? entry.finishedAt.toLocalTime().toString(Qt::ISODateWithMs) : entry.state == State::Running ? "実行中" : "不明（中断）"));
+            (entry.finishedAt.isValid() ? entry.finishedAt.toLocalTime().toString(Qt::ISODateWithMs) : entry.state == State::Running ? "実行中" : "不明（中断）") + "\n状態: " + stateName(entry.state));
         if (entry.id == selectedHistory_) selectedRow = row;
     }
     if ((followLatestHistory_ || selectedRow < 0) && !entries.empty()) selectedRow = 0;
@@ -698,6 +995,7 @@ void Window::refreshUserInputPanel() {
     if (selected < 0 && !visible.empty()) selected = 0;
     inputSelector_->setCurrentIndex(selected); activeInput_ = inputSelector_->currentData().toString();
     while (auto *item = inputButtons_->takeAt(0)) { if (auto *widget = item->widget()) { widget->hide(); widget->deleteLater(); } delete item; }
+    inputShortcutHint_ = nullptr;
     if (selected < 0) { inputPanel_->hide(); const QSignalBlocker textBlock(inputText_); inputText_->clear(); inputMessage_->setPlainText({}); return; }
     selectedInputs_[projectId] = activeInput_;
     const auto &prompt = *visible.at(size_t(selected));
@@ -712,9 +1010,12 @@ void Window::refreshUserInputPanel() {
             if (coordinator_->submitUserInput(id, inputText_->toPlainText(), unsigned(index))) {
                 inputText_->setEnabled(false);
                 for (int i = 0; i < inputButtons_->count(); ++i) if (auto *widget = inputButtons_->itemAt(i)->widget()) widget->setEnabled(false);
+                updateInputShortcutHint();
             }
         });
     }
+    inputShortcutHint_ = new QLabel("+Enterで " + prompt.request.choices.value(0)); inputShortcutHint_->setObjectName("userInputShortcutHint"); inputShortcutHint_->setTextFormat(Qt::PlainText);
+    inputShortcutHint_->setStyleSheet("color:#929caa;"); inputButtons_->addWidget(inputShortcutHint_); updateInputShortcutHint();
     inputButtons_->addStretch(); const bool hidden = inputPanel_->isHidden(); inputPanel_->show();
     if (hidden) workInputSplit_->setSizes({qMax(120, workInputSplit_->height() - inputPaneHeight_ - workInputSplit_->handleWidth()), inputPaneHeight_});
     if (previous != activeInput_) focusUserInputNode();
@@ -774,7 +1075,6 @@ void Window::executeFlow() {
     if (coordinator_->running(projects_[size_t(project_)].historyId)) { status_->setText("このプロジェクトは既に実行中です"); return; }
     auto errors = editGraph_->flow.validate(); if (!errors.isEmpty()) { reportError(errors.join('\n')); return; }
     errors = modelSelectionErrors(editGraph_->flow); if (!errors.isEmpty()) { reportError(errors.join('\n')); return; }
-    if (!smoke_ && QMessageBox::question(this, "フロー実行", "このフローと呼び出し先のフローは、プロジェクトの作成やファイルの読み取り・変更を行う可能性があります。\nエージェントには各CLIの権限設定が適用されます。\nスクリプトとシェルにはCLIの権限制限は適用されません。呼び出し先を含め、信頼できるフロー・ファイル・コマンド・入力データだけを使用してください。\n実行しますか？") != QMessageBox::Yes) return;
     persist(); // Preserve the project's history identity before the first record is written.
     syncCoordinatorRegistry();
     coordinator_->flows[documents_[size_t(current_)].path] = editGraph_->flow;
@@ -879,7 +1179,7 @@ bool Window::smokeTest() {
     workGraph_->replace(editGraph_->flow); tabs_->setCurrentIndex(1); selectWorkNode(id);
     const auto count = workGraph_->flow.nodes.size();
     if (workGraph_->addNode("agent") != QtNodes::InvalidNodeId || workGraph_->flow.nodes.size() != count) return false;
-    if (workGraph_->deleteNode(id) || workGraph_->setNodeData(id, QtNodes::NodeRole::Position, QPointF(1, 1))) return false;
+    if (workGraph_->deleteNode(id) || !workGraph_->setNodeData(id, QtNodes::NodeRole::Position, QPointF(1, 1))) return false;
     return true;
 }
 }

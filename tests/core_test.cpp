@@ -30,9 +30,9 @@ using namespace an;
         auto flow = Flow::initial(); Node node; node.id = 3; node.kind = Kind::All; node.title = "AND"; flow.nodes[3] = node;
         flow.edges = {{1,3,0,0},{1,3,0,1},{3,2}};
         auto legacy = flow.toJson(); legacy["nodes"][2]["kind"] = "and";
-        auto restored = Flow::fromJson(legacy); QCOMPARE(restored.nodes.at(3).title, QString("All")); QVERIFY(restored.validate().isEmpty());
+        auto restored = Flow::fromJson(legacy); QVERIFY(restored.nodes.at(3).title.isEmpty()); QVERIFY(restored.validate().isEmpty());
         QVERIFY(restored.toJson()["nodes"][2]["kind"] == "all");
-        legacy["nodes"][2]["title"] = "Custom join"; QCOMPARE(Flow::fromJson(legacy).nodes.at(3).title, QString("Custom join"));
+        legacy["nodes"][2]["title"] = "Custom join"; QVERIFY(Flow::fromJson(legacy).nodes.at(3).title.isEmpty());
         flow.nodes[3].kind = Kind::Any; flow.nodes[3].title = "Any";
         QVERIFY(Flow::fromJson(flow.toJson()).toJson() == flow.toJson());
         flow.nodes[3].inputs = 0; QVERIFY(!flow.validate().isEmpty()); flow.nodes[3].inputs = 257; QVERIFY(!flow.validate().isEmpty());
@@ -155,6 +155,8 @@ using namespace an;
         connect(&runner,&Runner::userInputRequested,&runner,[&](const UserInputRequest &request){QVERIFY(runner.submitUserInput(request.id,display(payload),0));});
         QSignalSpy done(&runner,&Runner::finished); QVERIFY(runner.start(flow,directory.path(),config())); QTRY_COMPARE_WITH_TIMEOUT(done.count(),1,10000); QVERIFY2(done[0][0].toBool(),qPrintable(done[0][1].toString()));
         QVERIFY(runner.results().at(2).output=="hello");
+        const auto header=Json::parse(runner.results().at(4).log.section('\n',0,0).toStdString());
+        QVERIFY(header.at("type")=="agentnodify.prompt"); QCOMPARE(QString::fromStdString(header.at("prompt").get<std::string>()),"CHECK_WHOLE_INPUT\n"+display(payload));
     }
     void CoreTest::schemas() {
         try {

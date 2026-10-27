@@ -3,7 +3,7 @@
 #include <QMap>
 
 namespace an {
-enum class ProgressKind { Message, Tool, FileAccess, Simple, Thinking };
+enum class ProgressKind { Message, Tool, FileAccess, Simple, Thinking, Prompt };
 struct ProgressItem {
     QString key;
     ProgressKind kind = ProgressKind::Simple;

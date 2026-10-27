@@ -98,7 +98,13 @@ void Runner::beginExecution(Id id) {
     NodeExecution execution; execution.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     execution.node = id; execution.title = flow_.nodes.at(id).title;
     execution.executionNumber = r.executions; execution.directory = directory_;
-    if (flow_.nodes.at(id).kind == Kind::Agent) execution.agent = flow_.nodes.at(id).agent;
+    if (flow_.nodes.at(id).kind == Kind::Agent) {
+        execution.agent = flow_.nodes.at(id).agent;
+        execution.model = flow_.nodes.at(id).model;
+        execution.effort = flow_.nodes.at(id).effort;
+        execution.retainContext = flow_.nodes.at(id).retainContext;
+        execution.contextResumed = execution.retainContext && agentSessions_.contains(id);
+    }
     if (flow_.nodes.at(id).kind == Kind::Script) execution.agent = flow_.nodes.at(id).scriptLanguage == "python" ? "Python" : "Node.js";
     if (flow_.nodes.at(id).kind == Kind::Shell) {
 #ifdef Q_OS_WIN
@@ -354,6 +360,8 @@ void Runner::launch(Id id, const Json &input) {
             args << "--" << prompt;
         }
         if (n.agent != "OpenCode") standardInput = prompt.toUtf8();
+        // Encode as one record so prompt text cannot be parsed as CLI events.
+        appendLog(id, QByteArray::fromStdString(Json{{"type", "agentnodify.prompt"}, {"prompt", prompt.toUtf8().toStdString()}}.dump()) + '\n');
     }
     QString resolved = resolveExecutable(program);
     if (resolved.isEmpty()) throw std::runtime_error(("実行ファイルが見つかりません。CLI設定を確認してください: " + program).toStdString());

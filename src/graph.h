@@ -6,6 +6,7 @@
 #include <QSize>
 #include <QPointer>
 #include <optional>
+#include <functional>
 #include "nodeform.h"
 
 namespace an {
@@ -17,10 +18,14 @@ public:
     std::vector<std::pair<QString, QString>> flowChoices;
     void setFlowChoices(const std::vector<std::pair<QString, QString>> &choices);
     bool readOnly = false;
+    std::function<bool()> editsLocked;
+    std::function<QPointF()> newNodePosition;
+    bool canEdit() const;
     QPointer<ModelCatalog> modelCatalog;
     std::map<Id, State> states;
     int frame = 0;
     void replace(const Flow &value);
+    void restore(const Flow &value);
     void setHighlightedNode(Id id);
     void updateNode(const Node &node, std::optional<unsigned> removedOutput = {});
     NodeForm *form(Id id) const;
@@ -31,7 +36,7 @@ public:
     bool connectionExists(QtNodes::ConnectionId id) const override;
     Id addNode(QString type = {}) override;
     bool connectionPossible(QtNodes::ConnectionId id) const override;
-    bool detachPossible(QtNodes::ConnectionId) const override { return !readOnly; }
+    bool detachPossible(QtNodes::ConnectionId) const override { return canEdit(); }
     void addConnection(QtNodes::ConnectionId id) override;
     bool nodeExists(Id id) const override { return flow.nodes.contains(id); }
     QVariant nodeData(Id id, QtNodes::NodeRole role) const override;
@@ -47,6 +52,7 @@ signals:
     void edited();
     void textEditRequested(unsigned int id, QString field);
     void nodeActivated(unsigned int id);
+    void editRejected();
 private:
     Id highlightedNode_ = 0;
     std::map<Id, QSize> sizes_;

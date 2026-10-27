@@ -3,6 +3,7 @@
 #include "modelcatalog.h"
 #include <QPlainTextEdit>
 #include <QWidget>
+#include <functional>
 
 class QLineEdit;
 class QComboBox;
@@ -11,6 +12,7 @@ class QVBoxLayout;
 class QLabel;
 class QPushButton;
 class QCheckBox;
+class QFormLayout;
 
 namespace an {
 QString nodeDescription(Kind kind);
@@ -38,6 +40,7 @@ class NodeForm : public QWidget {
 public:
     explicit NodeForm(const Node &node, QWidget *parent = nullptr, ModelCatalog *catalog = nullptr);
     Node node() const { return node_; }
+    std::function<bool()> beforeEdit;
     void setReadOnly(bool readOnly);
     void setNode(const Node &node);
     void setFlowChoices(const std::vector<std::pair<QString, QString>> &choices);
@@ -67,6 +70,7 @@ private:
     QPushButton *shellDirectoryBrowse_ = nullptr;
     QPointer<ModelCatalog> catalog_;
     QLabel *modelStatus_ = nullptr;
+    QFormLayout *parameterForm_ = nullptr;
     QPushButton *refreshModels_ = nullptr;
     QSpinBox *inputs_ = nullptr;
     TextPreview *prompt_ = nullptr, *schema_ = nullptr;

@@ -70,6 +70,7 @@ Json outputSchema(const Flow &f, Id id, QSet<Id> &visiting) {
 }
 }
 bool isHostOperation(Kind k) { return k == Kind::ProjectCreate || k == Kind::FlowRun || k == Kind::FlowWait; }
+bool hasNodeName(Kind k) { return k != Kind::All && k != Kind::Any && k != Kind::Branch; }
 QString kindName(Kind k) {
     switch (k) {
     case Kind::Start: return QStringLiteral("始端");
@@ -114,7 +115,7 @@ Json Flow::toJson() const {
         Json rules = Json::array();
         Json choices = Json::array(); for (const auto &choice : n.userChoices) choices.push_back(s(choice));
         for (auto &r : n.rules) rules.push_back({{"variable", s(r.variable)}, {"value", s(r.value)}, {"equals", r.equals}});
-        ns.push_back({{"id", id}, {"kind", s(kindKey(n.kind))}, {"title", s(n.title)},
+        ns.push_back({{"id", id}, {"kind", s(kindKey(n.kind))}, {"title", s(hasNodeName(n.kind) ? n.title : QString())},
             {"x", n.position.x()}, {"y", n.position.y()}, {"agent", s(n.agent)}, {"model", s(n.model)}, {"effort", s(n.effort)},
             {"prompt", s(n.prompt)}, {"schema", s(n.schema)}, {"retainContext", n.retainContext}, {"inputs", n.inputs}, {"rules", rules},
             {"scriptLanguage", s(n.scriptLanguage)}, {"scriptPath", s(n.scriptPath)}, {"scriptDirectory", s(n.scriptDirectory)},
@@ -130,7 +131,7 @@ Flow Flow::fromJson(const Json &j) {
     for (auto &v : j.at("nodes")) {
         Node n; n.id = v.at("id").get<Id>(); n.kind = parseKind(v.at("kind"));
         n.title = q(v.at("title")); n.position = {v.at("x").get<double>(), v.at("y").get<double>()};
-        if (n.kind == Kind::All && n.title == "AND") n.title = "All";
+        if (!hasNodeName(n.kind)) n.title.clear();
         n.agent = q(v.value("agent", "Codex")); n.model = q(v.value("model", ""));
         n.effort = q(v.value("effort", ""));
         n.prompt = q(v.value("prompt", "")); n.schema = q(v.value("schema", ""));

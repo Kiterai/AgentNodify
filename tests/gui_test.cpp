@@ -38,6 +38,8 @@
 #include <QtNodes/NodeStyle>
 #include <QtNodes/internal/NodeGraphicsObject.hpp>
 #include <QtNodes/internal/ConnectionGraphicsObject.hpp>
+#include <QtNodes/internal/AbstractNodeGeometry.hpp>
+#include <QtNodes/internal/UndoCommands.hpp>
 
 namespace an {
 using namespace QtNodes;
@@ -71,7 +73,7 @@ void GuiTest::embeddedParameters() {
     title->setFocus(); title->selectAll(); QTest::keyClicks(title, "Review");
     QCOMPARE(graph.flow.nodes.at(id).title, QString("Review"));
     QCOMPARE(graph.flow.nodes.at(id).position, QPointF(200, 100));
-    QCOMPARE(graph.form(id), form); QCOMPARE(graph.nodeData(id, NodeRole::Caption).toString(), QString("Review"));
+    QCOMPARE(graph.form(id), form); QCOMPARE(graph.nodeData(id, NodeRole::Caption).toString(), kindName(Kind::Agent));
     auto *agent = form->findChild<QComboBox *>("nodeAgent"), *model = form->findChild<QComboBox *>("nodeModel");
     QVERIFY(agent && model); agent->setCurrentText("OpenCode");
     QVERIFY(!model->isEditable()); QCOMPARE(model->currentIndex(), -1);
@@ -228,7 +230,7 @@ void GuiTest::editorAndFlowRail() {
     QVERIFY(!palette->findChild<QPushButton *>("addNode_start")); QVERIFY(!palette->findChild<QPushButton *>("addNode_end"));
     QCOMPARE(window.editGraph_->flow.nodes.size(), size_t(2)); QVERIFY(window.editGraph_->flow.nodes.at(1).kind == Kind::Start); QVERIFY(window.editGraph_->flow.nodes.at(2).kind == Kind::End);
     for (auto kind : {Kind::Agent, Kind::Script, Kind::Shell, Kind::All, Kind::Any, Kind::Branch}) {
-        auto *button = palette->findChild<QPushButton *>("addNode_" + kindKey(kind)); QVERIFY(button); QCOMPARE(button->toolTip(), nodeDescription(kind));
+        auto *button = palette->findChild<QPushButton *>("addNode_" + kindKey(kind)); QVERIFY(button); QVERIFY(button->toolTip().contains(nodeDescription(kind))); QVERIFY(button->toolTip().contains(button->text()));
     }
     for (auto *label : window.findChildren<QLabel *>()) QVERIFY(label->text() != "AN");
     QTest::mouseClick(palette->findChild<QPushButton *>("addNode_agent"), Qt::LeftButton);
@@ -316,7 +318,7 @@ void GuiTest::workSelection() {
     QCOMPARE(form->node().prompt, node.prompt); QCOMPARE(form->node().effort, node.effort);
     auto *item = window.workScene_->nodeGraphicsObject(id); QVERIFY(item);
     QVERIFY(item->flags().testFlag(QGraphicsItem::ItemIsSelectable));
-    QVERIFY(!item->flags().testFlag(QGraphicsItem::ItemIsMovable));
+    QVERIFY(item->flags().testFlag(QGraphicsItem::ItemIsMovable));
     window.workView_->centerScene(); QCoreApplication::processEvents();
     const auto point = window.workView_->mapFromScene(item->mapToScene(QPointF(item->boundingRect().width() / 2, 12)));
     QTest::mouseClick(window.workView_->viewport(), Qt::LeftButton, Qt::NoModifier, point);
@@ -356,6 +358,75 @@ void GuiTest::workSelection() {
     window.tabs_->setCurrentIndex(0); window.tabs_->setCurrentIndex(1);
     QCOMPARE(window.workSelected_, 2u); QCOMPARE(nodeStyle(2).NormalBoundaryColor, QColor("#ffffff"));
 }
+void GuiTest::paletteWidthAndElision() {
+    Window window(true); window.show(); QCoreApplication::processEvents(); auto *palette=window.findChild<QWidget *>("nodePalette"); QVERIFY(palette); QVERIFY(palette->width()>=235);
+    auto *button=dynamic_cast<ElidedButton *>(palette->findChild<QPushButton *>("addNode_project_create")); QVERIFY(button); const auto full=button->text();
+    window.editorSplit_->setSizes({180,900,0}); QCoreApplication::processEvents(); QCOMPARE(button->text(),full); QVERIFY(button->toolTip().contains(full));
+    ElidedButton narrow("＋ AgentNodify プロジェクト作成 とても長い名前"); narrow.resize(120,40); narrow.show(); QCoreApplication::processEvents();
+    QVERIFY(narrow.displayedText().endsWith("...")); QVERIFY(!narrow.displayedText().contains(QChar(0x2026))); QVERIFY(narrow.fontMetrics().horizontalAdvance(narrow.displayedText())<=narrow.width());
+    narrow.resize(700,40); QCOMPARE(narrow.displayedText(),narrow.text());
+    const auto before=window.editGraph_->flow.nodes.size(); QTest::mouseClick(button,Qt::LeftButton); QCOMPARE(window.editGraph_->flow.nodes.size(),before+1);
+    QVERIFY(palette->grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-palette-elided.png")));
+}
+void GuiTest::editorUndoRedoParameters() {
+    Window window(true); window.show(); QCoreApplication::processEvents();
+    QTest::mouseClick(window.findChild<QPushButton *>("addNode_agent"),Qt::LeftButton); const auto id=window.selected_; const auto position=window.editGraph_->flow.nodes.at(id).position;
+    auto stack=window.documents_[0].undo; QCOMPARE(stack->count(),1); QVERIFY(window.undoAction_->isEnabled());
+    auto answer=[&](QMessageBox::StandardButton button) { QTimer::singleShot(0,&window,[button]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); QCOMPARE(box->windowTitle(),QString("ノードを削除")); box->button(button)->click();}); };
+    answer(QMessageBox::Cancel); window.stepHistory(false); QCOMPARE(stack->index(),1); QVERIFY(window.editGraph_->nodeExists(id));
+    answer(QMessageBox::Ok); window.stepHistory(false); QCOMPARE(stack->index(),0); QVERIFY(!window.editGraph_->nodeExists(id));
+    window.stepHistory(true); QVERIFY(window.editGraph_->nodeExists(id)); QCOMPARE(window.editGraph_->flow.nodes.at(id).position,position);
+    auto *form=window.editGraph_->form(id); auto *title=form->findChild<QLineEdit *>("nodeTitle"); QVERIFY(title); title->setFocus(); title->selectAll(); QTest::keyClicks(title,"Review");
+    QCOMPARE(window.editGraph_->flow.nodes.at(id).title,QString("Review")); QCOMPARE(stack->count(),2);
+    QTest::keyClick(title,Qt::Key_Z,Qt::ControlModifier); QCOMPARE(window.editGraph_->flow.nodes.at(id).title,kindName(Kind::Agent)); QCOMPARE(title->text(),kindName(Kind::Agent)); QCOMPARE(stack->index(),1);
+    QTest::keyClick(title,Qt::Key_Y,Qt::ControlModifier); QCOMPARE(title->text(),QString("Review")); QCOMPARE(stack->index(),2);
+    window.selectNode(id); window.showText("prompt"); const int before=stack->index(); QTest::keyClicks(window.text_,"hello world"); QCOMPARE(stack->index(),before+1);
+    QTest::keyClick(window.text_,Qt::Key_Z,Qt::ControlModifier); QVERIFY(window.editGraph_->flow.nodes.at(id).prompt.isEmpty()); QVERIFY(window.text_->toPlainText().isEmpty());
+    QTest::keyClick(window.text_,Qt::Key_Y,Qt::ControlModifier); QCOMPARE(window.text_->toPlainText(),QString("hello world")); QCOMPARE(window.editGraph_->flow.nodes.at(id).prompt,QString("hello world"));
+    auto *check=form->findChild<QCheckBox *>("retainContext"); QVERIFY(check); QTest::mouseClick(check,Qt::LeftButton); QVERIFY(window.editGraph_->flow.nodes.at(id).retainContext);
+    window.stepHistory(false); QVERIFY(!check->isChecked()); window.stepHistory(true); QVERIFY(check->isChecked());
+    auto *effort=form->findChild<QComboBox *>("nodeEffort"); effort->setCurrentIndex(effort->findData("high")); window.stepHistory(false); QVERIFY(window.editGraph_->flow.nodes.at(id).effort.isEmpty()); window.stepHistory(true); QCOMPARE(effort->currentData().toString(),QString("high"));
+    window.stepHistory(false); auto changed=window.editGraph_->flow.nodes.at(id); changed.model="fixture"; window.editGraph_->updateNode(changed); QVERIFY(!stack->canRedo());
+    QTemporaryDir directory; window.documents_[0].path=directory.filePath("undo.json"); QVERIFY(window.saveFlow()); QVERIFY(!window.documents_[0].dirty);
+    changed=window.editGraph_->flow.nodes.at(id); changed.effort="low"; window.editGraph_->updateNode(changed); QVERIFY(window.documents_[0].dirty); window.stepHistory(false); QVERIFY(!window.documents_[0].dirty);
+    QTest::mouseClick(window.findChild<QPushButton *>("addNode_agent"),Qt::LeftButton); const auto allocated=window.selected_; answer(QMessageBox::Ok); window.stepHistory(false);
+    QVERIFY(!window.editGraph_->nodeExists(allocated)); QVERIFY(window.documents_[0].dirty); QVERIFY(window.saveFlow()); QVERIFY(Flow::load(window.documents_[0].path).nextNodeId>allocated);
+    QVERIFY(window.editGraph_->nodeExists(1)); QVERIFY(window.editGraph_->nodeExists(2));
+}
+void GuiTest::editorUndoRedoDeletion() {
+    Window window(true); window.show(); auto flow=Flow::initial();
+    for(Id id:{3u,4u}) { Node node; node.id=id; node.kind=Kind::UserInput; node.title=QString("Question %1").arg(id); node.position={double(id*300),40}; flow.nodes[id]=node; }
+    flow.edges={{1,3},{3,4},{4,2},{3,3}}; window.editGraph_->replace(flow); window.changed(); auto stack=window.documents_[0].undo; stack->clear();
+    int warnings=0; auto answer=[&](QMessageBox::StandardButton button) { QTimer::singleShot(0,&window,[&,button]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); QCOMPARE(box->windowTitle(),QString("ノードを削除")); ++warnings; box->button(button)->click();}); };
+    window.editScene_->clearSelection(); window.editScene_->nodeGraphicsObject(3)->setSelected(true); window.editScene_->nodeGraphicsObject(4)->setSelected(true);
+    window.editView_->setFocus(); window.editScene_->clearFocus(); QCoreApplication::processEvents(); answer(QMessageBox::Cancel); QTest::keyClick(window.editView_,Qt::Key_Delete); QCOMPARE(stack->count(),0); QCOMPARE(window.editGraph_->flow.edges,flow.edges); QVERIFY(window.editGraph_->nodeExists(3));
+    answer(QMessageBox::Ok); window.editView_->deleteSelectionAction()->trigger(); QCOMPARE(stack->count(),1); QVERIFY(!window.editGraph_->nodeExists(3)); QVERIFY(!window.editGraph_->nodeExists(4)); QVERIFY(window.editGraph_->flow.edges.empty()); QCOMPARE(warnings,2);
+    window.stepHistory(false); QCOMPARE(window.editGraph_->flow.edges,flow.edges); QCOMPARE(window.editGraph_->flow.nodes.at(3).title,QString("Question 3")); QCOMPARE(window.editGraph_->flow.nodes.at(3).position,flow.nodes.at(3).position); QCOMPARE(warnings,2);
+    answer(QMessageBox::Cancel); window.stepHistory(true); QCOMPARE(stack->index(),0); QVERIFY(window.editGraph_->nodeExists(3));
+    answer(QMessageBox::Ok); window.stepHistory(true); QCOMPARE(stack->index(),1); QVERIFY(!window.editGraph_->nodeExists(3)); window.stepHistory(false);
+    // Edges alone, including ones attached to terminals, need no warning.
+    window.editScene_->clearSelection(); auto *connection=window.editScene_->connectionGraphicsObject({1,0,3,0}); QVERIFY(connection); connection->setSelected(true);
+    window.editView_->deleteSelectionAction()->trigger(); QVERIFY(!window.editGraph_->connectionExists({1,0,3,0})); QVERIFY(window.editGraph_->nodeExists(3)); QCOMPARE(warnings,4);
+    window.stepHistory(false); QVERIFY(window.editGraph_->connectionExists({1,0,3,0})); QCOMPARE(warnings,4);
+    window.editScene_->clearSelection(); window.editScene_->nodeGraphicsObject(1)->setSelected(true); const int count=stack->count(); window.editView_->deleteSelectionAction()->trigger(); QCOMPARE(stack->count(),count); QVERIFY(window.editGraph_->nodeExists(1));
+}
+void GuiTest::editorUndoIsolationAndPorts() {
+    Window window(true); window.show(); auto flow=Flow::initial(); Node input; input.id=3; input.kind=Kind::UserInput; input.userChoices={"A","B","C"}; flow.nodes[3]=input;
+    Node join; join.id=4; join.kind=Kind::All; join.inputs=3; flow.nodes[4]=join;
+    flow.edges={{1,3},{3,4,0,0},{3,4,1,1},{3,4,2,2},{4,2}}; window.editGraph_->replace(flow); window.changed(); auto stack=window.documents_[0].undo; stack->clear();
+    auto edited=input; edited.userChoices.removeAt(1); window.editGraph_->updateNode(edited,1); const auto reduced=window.editGraph_->flow.edges; QCOMPARE(stack->count(),1);
+    window.stepHistory(false); QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete); QCOMPARE(window.editGraph_->flow.edges,flow.edges); QCOMPARE(window.editGraph_->form(3)->findChildren<QLineEdit *>("choiceName").size(),3);
+    window.stepHistory(true); QCOMPARE(window.editGraph_->flow.edges,reduced); QCOMPARE(window.editGraph_->flow.nodes.at(3).userChoices,edited.userChoices);
+    QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete); auto *choice=window.editGraph_->form(3)->findChildren<QLineEdit *>("choiceName").first(); choice->setFocus(); choice->selectAll(); const auto choiceIndex=stack->index(); QTest::keyClicks(choice,"Renamed"); QCOMPARE(stack->index(),choiceIndex+1);
+    window.stepHistory(false); QCOMPARE(window.editGraph_->flow.nodes.at(3).userChoices,edited.userChoices); window.stepHistory(true); QCOMPARE(window.editGraph_->flow.nodes.at(3).userChoices[0],QString("Renamed"));
+    const auto before=window.editGraph_->flow.nodes.at(3).position; window.editGraph_->setNodeData(3,NodeRole::Position,QPointF(500,300)); window.stepHistory(false); QCOMPARE(window.editGraph_->flow.nodes.at(3).position,before); window.stepHistory(true); QCOMPARE(window.editGraph_->flow.nodes.at(3).position,QPointF(500,300));
+    const auto beforeNative=stack->index(); window.editScene_->undoStack().push(new QtNodes::ConnectCommand(window.editScene_,{1,0,4,0})); QCOMPARE(stack->index(),beforeNative+1); QVERIFY(window.editGraph_->connectionExists({1,0,4,0}));
+    window.stepHistory(false); QVERIFY(!window.editGraph_->connectionExists({1,0,4,0})); QCoreApplication::processEvents(); QCOMPARE(window.editScene_->undoStack().count(),0);
+    window.newFlow(); auto other=window.documents_[1].undo; QTest::mouseClick(window.findChild<QPushButton *>("addNode_agent"),Qt::LeftButton); QCOMPARE(other->count(),1); window.selectFlow(0); QCOMPARE(window.documents_[0].undo,stack);
+    window.stepHistory(false); QCOMPARE(window.editGraph_->flow.nodes.at(3).position,before); window.selectFlow(1); QCOMPARE(other->index(),1);
+    QTimer::singleShot(0,&window,[]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); box->button(QMessageBox::Ok)->click();}); window.stepHistory(false); QCOMPARE(window.editGraph_->flow.nodes.size(),size_t(2));
+    const auto next=window.editGraph_->addNode("agent"); QVERIFY(next>3); QVERIFY(!other->canRedo());
+}
 void GuiTest::flowRemoval() {
     Window window(true);
     const auto root = QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("removal-" + QUuid::createUuid().toString(QUuid::WithoutBraces));
@@ -382,7 +453,11 @@ void GuiTest::nodeContextAndMenuSpacing() {
             if (!menu) return;
             shown = menu->objectName() == "nodeContextMenu";
             const auto text = menu->actions()[0]->text(); const bool active = menu->actions()[0]->isEnabled();
-            if (enabled) menu->actions()[0]->trigger(); menu->close();
+            if (enabled) {
+                QTimer::singleShot(0, &window, [] { auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); QCOMPARE(box->windowTitle(),QString("ノードを削除")); box->button(QMessageBox::Ok)->click(); });
+                menu->actions()[0]->trigger();
+            }
+            menu->close();
             QCOMPARE(text, QString("削除")); QCOMPARE(active, enabled);
         });
         QContextMenuEvent event(QContextMenuEvent::Mouse, point, window.editView_->viewport()->mapToGlobal(point));
@@ -478,7 +553,7 @@ void GuiTest::comboPopupWheel() {
 void GuiTest::nodeExecutionHistory() {
     QTemporaryDir directory; QVERIFY(directory.isValid()); Window window(true); window.show();
     const auto agent = window.editGraph_->addNode("agent"), branch = window.editGraph_->addNode("branch");
-    auto node = window.editGraph_->flow.nodes.at(agent); node.model = "fixture"; node.prompt = "COUNT_TO_3";
+    auto node = window.editGraph_->flow.nodes.at(agent); node.model = "fixture"; node.effort = "high"; node.prompt = "COUNT_TO_3";
     node.title = "ループの実行履歴"; node.retainContext = true; node.schema = R"({"type":"object","properties":{"count":{"type":"integer"}},"required":["count"]})";
     window.editGraph_->updateNode(node);
     auto condition = window.editGraph_->flow.nodes.at(branch); condition.rules = {{"count", "3", false}}; window.editGraph_->updateNode(condition);
@@ -497,12 +572,18 @@ void GuiTest::nodeExecutionHistory() {
     QCOMPARE(split->widget(2)->layout()->contentsMargins().top(), 8);
     QSignalSpy done(window.runner_, &Runner::finished); window.executeFlow(); QTRY_COMPARE(done.count(), 1); QVERIFY(done[0][0].toBool());
     QCOMPARE(window.projects_[0].history.size(), size_t(8)); QCOMPARE(window.historyList_->count(), 3);
+    QCOMPARE(window.historyList_->item(0)->text(),QString("実行 3 継続コンテキスト\nCodex fixture High"));
+    QCOMPARE(window.historyList_->item(2)->text(),QString("実行 1\nCodex fixture High"));
+    QVERIFY(window.historyList_->item(0)->data(Qt::UserRole+1).toString().contains("color:#929caa"));
+    const auto promptLabels=window.log_->findChildren<QLabel *>("agentInputPrompt"); QCOMPARE(promptLabels.size(),1); QCOMPARE(promptLabels[0]->text(),node.prompt);
     QVERIFY(window.output_->toPlainText().contains('3'));
     window.historyList_->setCurrentRow(2); const auto firstId = window.selectedHistory_;
     QVERIFY(!window.log_->toPlainText().contains("--- 実行"));
-    QVERIFY(window.historyList_->item(2)->text().contains("実行 1 · Codex"));
+    QCOMPARE(window.historyList_->item(2)->text(),QString("実行 1\nCodex fixture High"));
+    auto editedNode=node; editedNode.model="other-model"; editedNode.effort="low"; window.editGraph_->updateNode(editedNode); window.refreshWorkHistory();
+    QCOMPARE(window.historyList_->item(2)->text(),QString("実行 1\nCodex fixture High")); window.editGraph_->updateNode(node);
     QVERIFY(!window.historyList_->item(2)->text().contains(node.title));
-    QVERIFY(window.output_->toPlainText().contains('1')); QVERIFY(window.historyList_->item(2)->text().contains(QDate::currentDate().toString("yyyy/MM/dd")));
+    QVERIFY(window.output_->toPlainText().contains('1')); QVERIFY(window.historyList_->item(2)->toolTip().contains(QDate::currentDate().toString("yyyy-MM-dd")));
     const auto firstLog = window.log_->toPlainText();
     QVERIFY(QFile::remove(directory.filePath("counter.txt"))); done.clear(); window.executeFlow(); QTRY_COMPARE(done.count(), 1); QVERIFY(done[0][0].toBool());
     QCOMPARE(window.projects_[0].history.size(), size_t(16)); QCOMPARE(window.historyList_->count(), 6);
@@ -539,6 +620,20 @@ void GuiTest::historyAfterRestart() {
     QCOMPARE(restored.selectedHistory_, entry.id);
     Graph graph; graph.replace(Flow::initial()); const auto deleted = graph.addNode("agent"); QVERIFY(graph.deleteNode(deleted));
     graph.replace(Flow::fromJson(graph.flow.toJson())); QVERIFY(graph.addNode("agent") > deleted);
+}
+void GuiTest::historyLabelFormat() {
+    Window window(true); window.show(); window.projects_.push_back({"test",".",window.documents_[0].path,{}}); window.refreshProjects(); window.tabs_->setCurrentIndex(1);
+    NodeExecution entry; entry.id=QUuid::createUuid().toString(QUuid::WithoutBraces); entry.node=1; entry.agent="Codex"; entry.model="gpt-6-luna"; entry.executionNumber=1; entry.retainContext=true;
+    entry.startedAt=QDateTime::currentDateTimeUtc(); entry.state=State::Succeeded;
+    window.projects_[0].history={entry}; window.selectWorkNode(1);
+    QCOMPARE(window.historyList_->item(0)->text(),QString("実行 1\nCodex gpt-6-luna Default"));
+    auto refresh=[&] { window.projects_[0].history[0]=entry; window.refreshWorkHistory(); };
+    entry.executionNumber=2; entry.contextResumed=true; refresh();
+    QCOMPARE(window.historyList_->item(0)->text(),QString("実行 2 継続コンテキスト\nCodex gpt-6-luna Default"));
+    entry.retainContext=false; entry.contextResumed=false; entry.model="gpt-6-sol"; entry.effort="high"; refresh();
+    QCOMPARE(window.historyList_->item(0)->text(),QString("実行 2\nCodex gpt-6-sol High"));
+    entry.model="<b>literal & model</b>"; refresh();
+    const auto html=window.historyList_->item(0)->data(Qt::UserRole+1).toString(); QVERIFY(html.contains("&lt;b&gt;literal &amp; model&lt;/b&gt;")); QVERIFY(!html.contains("継続コンテキスト"));
 }
 void GuiTest::scriptNodeForm() {
     Window window(true); window.resize(1400, 950); window.show();
@@ -673,11 +768,12 @@ void GuiTest::interactionWhileWaiting() {
     QSignalSpy primary(window.runner_,&Runner::finished); window.executeFlow(); QTRY_COMPARE(window.inputPrompts_.size(),size_t(1)); const auto first=window.inputPrompts_[0].request.id;
     window.inputText_->setPlainText("draft stays"); QVERIFY(window.activities_->isEnabled()); QVERIFY(window.projectList_->isEnabled()); QVERIFY(window.tabs_->isTabEnabled(0)); QVERIFY(!window.runButton_->isEnabled());
     window.projectList_->setCurrentRow(1); QCOMPARE(window.project_,1); QVERIFY(window.runButton_->isEnabled()); QVERIFY(window.inputPanel_->isHidden()); QVERIFY(window.inputText_->toPlainText().isEmpty()); QVERIFY(!window.stopButton_->isEnabled());
-    window.tabs_->setCurrentIndex(0); auto edited=window.editGraph_->flow.nodes.at(4); edited.prompt="Say hello"; window.editGraph_->updateNode(edited);
-    QVERIFY(window.saveFlow()); QCOMPARE(Flow::load(path).nodes.at(4).prompt,QString("Say hello")); QVERIFY(window.coordinator_->running(window.projects_[0].historyId)); QVERIFY(window.projects_[0].results.at(3).state==State::Running);
-    const auto nextFlow=window.editGraph_->flow; QVERIFY(window.editGraph_->deleteNode(3)); QCOMPARE(window.inputPrompts_[0].request.id,first);
+    auto dismiss=[&] { QTimer::singleShot(0,&window,[]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); QCOMPARE(box->windowTitle(),QString("実行中のフロー")); box->button(QMessageBox::Ok)->click();}); };
+    window.tabs_->setCurrentIndex(0); auto edited=window.editGraph_->flow.nodes.at(4); edited.prompt="Say hello"; dismiss(); window.editGraph_->updateNode(edited);
+    QVERIFY(window.saveFlow()); QCOMPARE(Flow::load(path).nodes.at(4).prompt,QString("RESPONSE_TWO")); QVERIFY(window.coordinator_->running(window.projects_[0].historyId)); QVERIFY(window.projects_[0].results.at(3).state==State::Running);
+    dismiss(); QVERIFY(!window.editGraph_->deleteNode(3)); QCOMPARE(window.inputPrompts_[0].request.id,first);
     window.selectProject(0); QVERIFY(window.workGraph_->nodeExists(3)); QVERIFY(window.workGraph_->flow.nodes.at(4).prompt=="RESPONSE_TWO");
-    window.editGraph_->replace(nextFlow); window.changed();
+    QVERIFY(window.editGraph_->setNodeData(3,NodeRole::Position,QPointF(50,200))); QCOMPARE(window.editGraph_->flow.nodes.at(3).position,QPointF(50,200));
     bool settingsOpened=false; QTimer::singleShot(0,&window,[&]{auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget()); QVERIFY(dialog); settingsOpened=true; dialog->reject();}); window.settings(); QVERIFY(settingsOpened);
     window.newFlow(); QCOMPARE(window.documents_.size(),size_t(2)); QCOMPARE(window.current_,1); QCOMPARE(window.inputPrompts_[0].request.id,first);
     window.documents_[1].path=directory.filePath("unused.flow.json"); window.documents_[1].dirty=false;
@@ -687,11 +783,123 @@ void GuiTest::interactionWhileWaiting() {
     QString second; for(const auto &prompt:window.inputPrompts_) if(prompt.projectId==window.projects_[1].historyId) second=prompt.request.id;
     QVERIFY(!second.isEmpty()); QVERIFY(window.inputText_->toPlainText().isEmpty()); QVERIFY(window.coordinator_->running(window.projects_[0].historyId)); QVERIFY(window.coordinator_->running(window.projects_[1].historyId));
     QVERIFY(window.coordinator_->submitUserInput(second,"second",0)); QTRY_VERIFY(!window.coordinator_->running(window.projects_[1].historyId)); QCOMPARE(primary.count(),0); QVERIFY(window.busy()); QVERIFY(window.runButton_->isEnabled());
-    QVERIFY(window.projects_[1].results.at(2).output=="hello"); QCOMPARE(window.project_,1); QVERIFY(window.inputPanel_->isHidden());
+    QVERIFY(window.projects_[1].results.at(2).output=="two"); QCOMPARE(window.project_,1); QVERIFY(window.inputPanel_->isHidden());
     window.selectProject(0); QCOMPARE(window.inputText_->toPlainText(),QString("draft stays")); window.selectProject(1);
     QVERIFY(window.coordinator_->submitUserInput(first,"first",0)); QTRY_COMPARE(primary.count(),1); QVERIFY(primary[0][0].toBool()); QVERIFY(!window.busy()); QCOMPARE(window.project_,1);
-    QVERIFY(window.projects_[0].results.at(2).output=="two"); QVERIFY(window.projects_[1].results.at(2).output=="hello"); QCOMPARE(window.projects_[0].history.size(),size_t(4)); QCOMPARE(window.projects_[1].history.size(),size_t(4));
-    window.selectWorkNode(4); QVERIFY(window.output_->toPlainText().contains("hello"));
+    QVERIFY(window.projects_[0].results.at(2).output=="two"); QVERIFY(window.projects_[1].results.at(2).output=="two"); QCOMPARE(window.projects_[0].history.size(),size_t(4)); QCOMPARE(window.projects_[1].history.size(),size_t(4));
+    window.selectWorkNode(4); QVERIFY(window.output_->toPlainText().contains("two"));
+}
+void GuiTest::compactNamelessNodes() {
+    Graph graph; graph.replace(Flow::initial());
+    const auto agent=graph.addNode("agent"); auto named=graph.flow.nodes.at(agent); named.title="Custom agent"; graph.updateNode(named);
+    QCOMPARE(graph.nodeData(agent,NodeRole::Caption).toString(),kindName(Kind::Agent)); QCOMPARE(graph.form(agent)->findChild<QLineEdit *>("nodeTitle")->text(),named.title);
+    for(Kind kind:{Kind::All,Kind::Any,Kind::Branch,Kind::UserInput}) {
+        const auto id=graph.addNode(kindKey(kind)); auto *form=graph.form(id); QVERIFY(form); form->show(); QCoreApplication::processEvents(); QCOMPARE(form->width(),210);
+        QCOMPARE(graph.nodeData(id,NodeRole::Caption).toString(),kindName(kind));
+        if(kind!=Kind::UserInput) { QVERIFY(!form->findChild<QLineEdit *>("nodeTitle")); QVERIFY(graph.flow.nodes.at(id).title.isEmpty()); auto node=graph.flow.nodes.at(id); node.title="Old name"; graph.updateNode(node); QVERIFY(graph.flow.nodes.at(id).title.isEmpty()); }
+        for(auto *edit:form->findChildren<QLineEdit *>()) QVERIFY2(edit->geometry().right()<=edit->parentWidget()->width(),qPrintable(edit->objectName()));
+    }
+    auto saved=graph.flow.toJson(); for(auto &node:saved["nodes"]) if(!hasNodeName(parseKind(node["kind"]))) node["title"]="legacy name";
+    const auto restored=Flow::fromJson(saved); for(const auto &[id,node]:restored.nodes) if(!hasNodeName(node.kind)) QVERIFY(node.title.isEmpty());
+}
+void GuiTest::runningFlowEditRestrictions() {
+    QTemporaryDir directory; Window window(true); window.show(); auto flow=Flow::initial();
+    Node input; input.id=3; input.kind=Kind::UserInput; input.title="Question"; input.position={200,40}; flow.nodes[3]=input; flow.edges={{1,3},{3,2}};
+    window.editGraph_->replace(flow); window.changed(); const auto path=window.documents_[0].path;
+    window.projects_.push_back({"Running",directory.path(),path,{}}); window.projects_.push_back({"Idle",directory.path(),path,{}}); window.refreshProjects(); window.tabs_->setCurrentIndex(1);
+    window.executeFlow(); QTRY_COMPARE(window.inputPrompts_.size(),size_t(1)); window.selectProject(1); window.tabs_->setCurrentIndex(0); QVERIFY(window.currentFlowRunning());
+    int warnings=0; auto reject=[&] { QTimer::singleShot(0,&window,[&]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); QCOMPARE(box->windowTitle(),QString("実行中のフロー")); ++warnings; box->button(QMessageBox::Ok)->click();}); };
+    const auto before=window.editGraph_->flow.toJson();
+    reject(); QTest::mouseClick(window.findChild<QPushButton *>("addNode_agent"),Qt::LeftButton); QCOMPARE(window.editGraph_->flow.toJson(),before);
+    auto *edit=window.editGraph_->form(3)->findChild<QLineEdit *>("nodeTitle"); QVERIFY(edit); reject(); QTest::mouseClick(edit,Qt::LeftButton); QCOMPARE(edit->text(),QString("Question"));
+    reject(); window.editGraph_->addConnection({1,0,2,0}); QCOMPARE(window.editGraph_->flow.toJson(),before);
+    reject(); QVERIFY(!window.editGraph_->deleteConnection({1,0,3,0})); QCOMPARE(window.editGraph_->flow.toJson(),before);
+    reject(); QVERIFY(!window.editGraph_->deleteNode(3)); QCOMPARE(warnings,5);
+    static_cast<GraphView *>(window.editView_)->zoomToFit();
+    const auto port=window.editView_->mapFromScene(window.editScene_->nodeGeometry().portScenePosition(3,PortType::Out,0,window.editScene_->nodeGraphicsObject(3)->sceneTransform()));
+    reject(); QTest::mouseClick(window.editView_->viewport(),Qt::LeftButton,Qt::NoModifier,port); QCOMPARE(warnings,6); QCOMPARE(window.editGraph_->flow.toJson(),before);
+    QVERIFY(window.editGraph_->setNodeData(3,NodeRole::Position,QPointF(350,100))); QCOMPARE(warnings,6);
+    window.stepHistory(false); QCOMPARE(window.editGraph_->flow.nodes.at(3).position,input.position); const auto historyIndex=window.documents_[0].undo->index();
+    reject(); window.stepHistory(false); QCOMPARE(window.documents_[0].undo->index(),historyIndex); QCOMPARE(warnings,7); window.stepHistory(true); QCOMPARE(window.editGraph_->flow.nodes.at(3).position,QPointF(350,100));
+    window.tabs_->setCurrentIndex(1); window.selectProject(0);
+    const auto original=window.projects_[0].runFlow->nodes.at(3).position;
+    auto *node=window.workScene_->nodeGraphicsObject(3); QVERIFY(node); QVERIFY(node->flags().testFlag(QGraphicsItem::ItemIsMovable));
+    static_cast<GraphView *>(window.workView_)->zoomToNode(3); QCoreApplication::processEvents();
+    const auto start=window.workView_->mapFromScene(node->mapToScene(QPointF(node->boundingRect().width()/2,12)));
+    QTest::mousePress(window.workView_->viewport(),Qt::LeftButton,Qt::NoModifier,start); QTest::mouseMove(window.workView_->viewport(),start+QPoint(60,45),20); QTest::mouseRelease(window.workView_->viewport(),Qt::LeftButton,Qt::NoModifier,start+QPoint(60,45));
+    const auto moved=window.workGraph_->flow.nodes.at(3).position; QVERIFY(moved!=original);
+    QCOMPARE(window.projects_[0].runFlow->nodes.at(3).position,original); QCOMPARE(window.editGraph_->flow.nodes.at(3).position,QPointF(350,100));
+    window.selectProject(1); window.selectProject(0); QCOMPARE(window.workGraph_->flow.nodes.at(3).position,moved);
+    window.newFlow(); QVERIFY(!window.currentFlowRunning()); QVERIFY(window.editGraph_->addNode("agent")!=InvalidNodeId);
+    window.selectFlow(0); QVERIFY(window.currentFlowRunning()); window.coordinator_->cancelAll(); QVERIFY(!window.currentFlowRunning()); QVERIFY(window.editGraph_->deleteNode(3));
+}
+void GuiTest::startAndStopDialogs() {
+    QTemporaryDir directory; Window window(true); window.dataDir_=directory.path(); auto flow=Flow::initial();
+    Node node; node.id=3; node.kind=Kind::Agent; node.model="fixture"; node.prompt="SLEEP"; flow.nodes[3]=node; flow.edges={{1,3},{3,2}};
+    window.documents_[0]={flow,directory.filePath("main.json"),false}; window.selectFlow(0); window.projects_.push_back({"test",directory.path(),window.documents_[0].path,{}}); window.refreshProjects(); window.tabs_->setCurrentIndex(1); window.show();
+    window.config_.codex=QCoreApplication::applicationDirPath()+"/fake_agent";
+#ifdef Q_OS_WIN
+    window.config_.codex+=".exe";
+#endif
+    window.smoke_=false; QStringList dialogs; QMessageBox::StandardButton answer=QMessageBox::Cancel;
+    QTimer responder; responder.setInterval(5); connect(&responder,&QTimer::timeout,&window,[&] { if(auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) { dialogs<<box->windowTitle(); box->done(answer); } }); responder.start();
+    window.executeFlow(); QTRY_VERIFY(window.runner_->running()); QTest::qWait(40); QVERIFY(dialogs.isEmpty());
+    window.tabs_->setCurrentIndex(0); auto changed=window.editGraph_->flow.nodes.at(3); changed.prompt="changed"; answer=QMessageBox::Ok; window.editGraph_->updateNode(changed); QCOMPARE(window.editGraph_->flow.nodes.at(3).prompt,QString("SLEEP")); QCOMPARE(dialogs,QStringList{"実行中のフロー"}); dialogs.clear();
+    window.tabs_->setCurrentIndex(1); answer=QMessageBox::Cancel; QTest::mouseClick(window.stopButton_,Qt::LeftButton); QVERIFY(window.busy()); QCOMPARE(dialogs,QStringList{"フローを停止"}); dialogs.clear();
+    answer=QMessageBox::Ok; QTest::mouseClick(window.stopButton_,Qt::LeftButton); QTRY_VERIFY(!window.busy()); QTest::qWait(40); QCOMPARE(dialogs,QStringList{"フローを停止"}); responder.stop(); window.smoke_=true;
+}
+void GuiTest::addedNodeAutoFit() {
+    Window window(true); window.show(); QCoreApplication::processEvents(); auto *view=static_cast<GraphView *>(window.editView_);
+    view->setSceneRect(-100000,-100000,200000,200000); view->centerOn(QPointF(9000,9000));
+    QTest::mouseClick(window.findChild<QPushButton *>("addNode_user_input"),Qt::LeftButton); const auto id=window.selected_; QVERIFY(window.editGraph_->nodeExists(id));
+    QTRY_VERIFY(view->mapToScene(view->viewport()->rect()).boundingRect().contains(window.editScene_->nodeGraphicsObject(id)->sceneBoundingRect()));
+    for(const auto &[nodeId,node]:window.editGraph_->flow.nodes) QVERIFY(view->mapToScene(view->viewport()->rect()).boundingRect().contains(window.editScene_->nodeGraphicsObject(nodeId)->sceneBoundingRect()));
+    view->setTransform(QTransform::fromScale(0.2,0.2)); view->setSceneRect(-10000,-10000,20000,20000); view->centerOn(QPointF(0,0)); const auto transform=view->transform();
+    QTest::mouseClick(window.findChild<QPushButton *>("addNode_all"),Qt::LeftButton); QTest::qWait(30); QCOMPARE(view->transform(),transform);
+}
+void GuiTest::nodePlacementFromLastInteraction() {
+    Window window(true); window.show(); QCoreApplication::processEvents(); auto *view=static_cast<GraphView *>(window.editView_);
+    qreal right=-1e9; for(auto *item:window.editScene_->items()) if(dynamic_cast<NodeGraphicsObject *>(item)||dynamic_cast<ConnectionGraphicsObject *>(item)) right=qMax(right,item->sceneBoundingRect().right());
+    auto add=[&] { QTest::mouseClick(window.findChild<QPushButton *>("addNode_user_input"),Qt::LeftButton); QCoreApplication::processEvents(); return window.selected_; };
+    const auto first=add(); QVERIFY(window.editGraph_->flow.nodes.at(first).position.x()>right);
+    const auto step=2*QFontMetrics(view->font()).lineSpacing(); const auto firstPosition=window.editGraph_->flow.nodes.at(first).position;
+    const auto second=add(); QCOMPARE(window.editGraph_->flow.nodes.at(second).position,firstPosition+QPointF(step,step));
+    // A background click is an exact scene anchor, independent of view scale/pan.
+    view->setSceneRect(-10000,-10000,20000,20000); view->setTransform(QTransform::fromScale(0.7,0.7)); view->centerOn(QPointF(-1500,-800));
+    const QPoint background(120,150); QVERIFY(!view->itemAt(background)); const auto anchor=view->mapToScene(background);
+    QTest::mouseClick(view->viewport(),Qt::LeftButton,Qt::NoModifier,background); const auto third=add(); QCOMPARE(window.editGraph_->flow.nodes.at(third).position,anchor);
+    // Drag on the background records its final scene location.
+    view->setSceneRect(-10000,-10000,20000,20000); view->centerOn(QPointF(-3000,-2000));
+    QTest::mousePress(view->viewport(),Qt::LeftButton,Qt::NoModifier,QPoint(100,100)); QTest::mouseMove(view->viewport(),QPoint(160,140),20); QTest::mouseRelease(view->viewport(),Qt::LeftButton,Qt::NoModifier,QPoint(160,140));
+    const auto backgroundEnd=view->mapToScene(QPoint(160,140)); const auto fourth=add(); QCOMPARE(window.editGraph_->flow.nodes.at(fourth).position,backgroundEnd);
+    // Node clicks use the node's origin, not the click position within the card.
+    view->zoomToNode(first); QCoreApplication::processEvents(); auto *item=window.editScene_->nodeGraphicsObject(first); item->setZValue(100);
+    auto point=view->mapFromScene(item->mapToScene(QPointF(item->boundingRect().width()/2,12))); QTest::mouseClick(view->viewport(),Qt::LeftButton,Qt::NoModifier,point);
+    const auto fifth=add(); QCOMPARE(window.editGraph_->flow.nodes.at(fifth).position,firstPosition+QPointF(step,step));
+    view->zoomToNode(first); QCoreApplication::processEvents(); point=view->mapFromScene(item->mapToScene(QPointF(item->boundingRect().width()/2,12)));
+    QTest::mousePress(view->viewport(),Qt::LeftButton,Qt::NoModifier,point); QTest::mouseMove(view->viewport(),point+QPoint(70,55),20); QTest::mouseRelease(view->viewport(),Qt::LeftButton,Qt::NoModifier,point+QPoint(70,55));
+    const auto moved=window.editGraph_->flow.nodes.at(first).position; QVERIFY(moved!=firstPosition); const auto sixth=add(); QCOMPARE(window.editGraph_->flow.nodes.at(sixth).position,moved+QPointF(step,step));
+    const auto remembered=window.documents_[0].creationAnchor; window.newFlow(); const auto other=add(); QVERIFY(window.editGraph_->flow.nodes.at(other).position.x()>600); window.selectFlow(0);
+    const auto seventh=add(); QCOMPARE(window.editGraph_->flow.nodes.at(seventh).position,*remembered+QPointF(step,step));
+}
+void GuiTest::userInputControlEnter() {
+    QTemporaryDir directory; Window window(true); window.show(); auto flow=Flow::initial(); Node input; input.id=3; input.kind=Kind::UserInput; input.userChoices={"OK","Cancel"}; flow.nodes[3]=input;
+    Node first; first.id=4; first.kind=Kind::Branch; first.rules.clear(); flow.nodes[4]=first; first.id=5; flow.nodes[5]=first;
+    flow.edges={{1,3},{3,4,0,0},{3,5,1,0},{4,2},{5,2}}; window.editGraph_->replace(flow); window.changed();
+    window.projects_.push_back({"input",directory.path(),window.documents_[0].path,{}}); window.refreshProjects(); window.tabs_->setCurrentIndex(1); window.executeFlow(); QTRY_COMPARE(window.inputPrompts_.size(),size_t(1));
+    window.inputText_->setFocus(); window.inputText_->setPlainText("answer"); QTest::keyClick(window.inputText_,Qt::Key_Return); QCOMPARE(window.inputText_->toPlainText(),QString("\nanswer")); QVERIFY(window.busy());
+    QVERIFY(window.inputShortcutHint_); QVERIFY(window.inputShortcutHint_->isHidden());
+    QTest::keyPress(window.inputText_,Qt::Key_Control); QVERIFY(window.inputShortcutHint_->isVisible()); QCOMPARE(window.inputShortcutHint_->text(),QString("+Enterで OK"));
+    QCoreApplication::processEvents(); QVERIFY(window.grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-user-input-shortcut.png")));
+    QTest::keyRelease(window.inputText_,Qt::Key_Control); QVERIFY(window.inputShortcutHint_->isHidden());
+    window.inputSelector_->setFocus(); QTest::keyClick(window.inputSelector_,Qt::Key_Return,Qt::ControlModifier); QVERIFY(window.busy());
+    window.inputText_->setFocus(); window.inputText_->setPlainText("日本語\nanswer"); QSignalSpy done(window.runner_,&Runner::finished);
+    QTest::keyClick(window.inputText_,Qt::Key_Return,Qt::ControlModifier); QTRY_COMPARE(done.count(),1); QVERIFY(done[0][0].toBool()); QVERIFY(window.runner_->results().at(2).output=="日本語\nanswer");
+    QVERIFY(window.runner_->results().at(4).state==State::Succeeded); QVERIFY(window.runner_->results().at(5).state==State::Skipped); QVERIFY(window.inputPanel_->isHidden());
+    // Hint uses the current request's first choice, and hides on deactivation.
+    flow.nodes[3].userChoices[0]="<Send>"; window.editGraph_->replace(flow); window.changed(); window.executeFlow(); QTRY_COMPARE(window.inputPrompts_.size(),size_t(1)); window.inputText_->setFocus();
+    QTest::keyPress(window.inputText_,Qt::Key_Control); QCOMPARE(window.inputShortcutHint_->text(),QString("+Enterで <Send>")); QCOMPARE(window.inputShortcutHint_->textFormat(),Qt::PlainText);
+    QEvent deactivate(QEvent::WindowDeactivate); QApplication::sendEvent(&window,&deactivate); QVERIFY(window.inputShortcutHint_->isHidden()); QTest::keyRelease(window.inputText_,Qt::Key_Control); window.coordinator_->cancelAll();
 }
 void GuiTest::removeProjectsWhileWaiting() {
     QTemporaryDir directory; Window window(true); window.show(); auto flow=Flow::initial(); Node input; input.id=3; input.kind=Kind::UserInput; flow.nodes[3]=input; flow.edges={{1,3},{3,2}};
@@ -718,6 +926,15 @@ void GuiTest::projectStatusIndicators() {
         auto *run = icon(index,"projectRunningIcon"), *input = icon(index,"projectInputWaitingIcon"); QVERIFY(run); QVERIFY(input);
         QCOMPARE(run->property("active").toBool(),running); QCOMPARE(input->property("active").toBool(),waiting);
         QCOMPARE(!run->pixmap().isNull(),running); QCOMPARE(!input->pixmap().isNull(),waiting);
+        auto *row=run->parentWidget(); row->layout()->activate(); auto *name=row->findChild<QLabel *>("projectName"); QVERIFY(name); QVERIFY(name->width()>0);
+        QCOMPARE(!run->isHidden(),running); QCOMPARE(!input->isHidden(),waiting);
+        if(running) QVERIFY(name->geometry().right()<run->geometry().left());
+        if(waiting) QVERIFY(name->geometry().right()<input->geometry().left());
+        if(running && waiting) QVERIFY(run->geometry().right()<input->geometry().left());
+        QVERIFY(name->geometry().right()<row->findChild<QToolButton *>("projectOpenMenu")->geometry().left());
+        QVERIFY(run->styleSheet().contains("background:transparent")); QVERIFY(input->styleSheet().contains("background:transparent"));
+        if(running) { const auto image=run->pixmap().toImage(); QCOMPARE(image.pixelColor(0,0).alpha(),0); QCOMPARE(image.pixelColor(5,9).alpha(),0); }
+        if(waiting) { const auto image=input->pixmap().toImage(); QCOMPARE(image.pixelColor(0,0).alpha(),0); QCOMPARE(image.pixelColor(5,6).alpha(),0); }
         if (running) { QVERIFY(run->toolTip().contains("実行中")); QVERIFY(run->accessibleName().contains("実行中")); }
         if (waiting) { QVERIFY(input->toolTip().contains("入力待ち")); QVERIFY(input->accessibleName().contains("入力待ち")); }
         auto colored = [](const QImage &image, bool amber) {
@@ -734,15 +951,20 @@ void GuiTest::projectStatusIndicators() {
     auto flow = Flow::initial(); Node agent; agent.id=3; agent.kind=Kind::Agent; agent.model="fixture"; agent.prompt="SLEEP"; flow.nodes[3]=agent; flow.edges={{1,3},{3,2}};
     window.editGraph_->replace(flow); window.changed(); window.refreshProjects(); window.tabs_->setCurrentIndex(1);
     for (int index=0; index<3; ++index) verify(index,false,false);
+    auto nameWidth=[&] { auto *row=icon(0,"projectRunningIcon")->parentWidget(); row->layout()->activate(); return row->findChild<QLabel *>("projectName")->width(); };
+    const int idleWidth=nameWidth();
     window.config_.codex = QCoreApplication::applicationDirPath() + "/fake_agent";
 #ifdef Q_OS_WIN
     window.config_.codex += ".exe";
 #endif
     window.executeFlow(); QTRY_VERIFY(window.runner_->results().at(3).state==State::Running); verify(0,true,false); verify(1,false,false);
+    QCOMPARE(nameWidth(),idleWidth-24);
     QVERIFY(window.coordinator_->running(window.projects_[0].historyId)); QVERIFY(!window.coordinator_->running(window.projects_[1].historyId));
     window.coordinator_->cancelAll(); QTRY_VERIFY(!window.busy()); verify(0,false,false);
+    QCOMPARE(nameWidth(),idleWidth);
     flow=Flow::initial(); Node input; input.id=3; input.kind=Kind::UserInput; flow.nodes[3]=input; flow.edges={{1,3},{3,2}};
     window.editGraph_->replace(flow); window.changed(); window.executeFlow(); QTRY_COMPARE(window.inputPrompts_.size(),size_t(1)); verify(0,true,true); verify(1,false,false);
+    QCOMPARE(nameWidth(),idleWidth-48);
     QVERIFY(window.coordinator_->start(window.coordinator_->projects[1])); QTRY_COMPARE(window.inputPrompts_.size(),size_t(2)); verify(0,true,true); verify(1,true,true); verify(2,false,false);
     QVERIFY(window.projectList_->isEnabled()); QVERIFY(window.projectList_->grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-project-status-icons.png")));
     QString first,second;
@@ -862,11 +1084,13 @@ void GuiTest::scopedInputSelectionAndStop() {
     window.selectProject(1); QVERIFY(window.inputPanel_->isHidden()); QCOMPARE(window.inputSelector_->count(),0); QVERIFY(!window.stopButton_->isEnabled());
     window.selectProject(0); QCOMPARE(window.inputSelector_->currentIndex(),1); QCOMPARE(window.inputText_->toPlainText(),QString("second draft")); QTRY_VERIFY(qAbs(split->sizes()[1]-height)<5);
     window.selectProject(1); window.executeFlow(); QTRY_COMPARE(window.inputPrompts_.size(),size_t(4)); QCOMPARE(window.inputSelector_->count(),2);
-    QTest::mouseClick(window.stopButton_,Qt::LeftButton); QTRY_VERIFY(!window.coordinator_->running(window.projects_[1].historyId)); QVERIFY(window.coordinator_->running(window.projects_[0].historyId));
+    auto stop=[&](QMessageBox::StandardButton answer) { QTimer::singleShot(0,&window,[answer]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); QCOMPARE(box->windowTitle(),QString("フローを停止")); box->button(answer)->click();}); QTest::mouseClick(window.stopButton_,Qt::LeftButton); };
+    stop(QMessageBox::Cancel); QVERIFY(window.coordinator_->running(window.projects_[1].historyId)); QCOMPARE(window.inputPrompts_.size(),size_t(4));
+    stop(QMessageBox::Ok); QTRY_VERIFY(!window.coordinator_->running(window.projects_[1].historyId)); QVERIFY(window.coordinator_->running(window.projects_[0].historyId));
     QVERIFY(window.inputPanel_->isHidden()); QCOMPARE(window.inputSelector_->count(),0); QCOMPARE(window.inputPrompts_.size(),size_t(2));
     window.selectProject(0); QCOMPARE(window.inputSelector_->currentIndex(),1); QCOMPARE(window.inputText_->toPlainText(),QString("second draft"));
     window.project_=-1; window.refreshUserInputPanel(); QVERIFY(window.inputPanel_->isHidden()); QCOMPARE(window.inputSelector_->count(),0);
-    window.selectProject(0); QTest::mouseClick(window.stopButton_,Qt::LeftButton); QTRY_VERIFY(!window.busy()); QVERIFY(window.inputPanel_->isHidden());
+    window.selectProject(0); stop(QMessageBox::Ok); QTRY_VERIFY(!window.busy()); QVERIFY(window.inputPanel_->isHidden());
 }
 void GuiTest::contextCheckboxColors() {
     Node node; node.id = 3; node.kind = Kind::Agent; NodeForm form(node); form.show(); QCoreApplication::processEvents();

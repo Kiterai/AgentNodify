@@ -72,6 +72,9 @@ void ProgressParser::finalResponse(const Json &output, bool structured) {
 void ProgressParser::line(const QString &text) {
     ++line_; if (text.trimmed().isEmpty()) return;
     const auto value = plainLog_ ? Json(Json::value_t::discarded) : displayJson(text);
+    if (line_ == 1 && value.is_object() && str(value, "type") == "agentnodify.prompt" && value.contains("prompt") && value["prompt"].is_string()) {
+        auto &entry = item("input-prompt", ProgressKind::Prompt); entry.name = "入力プロンプト"; entry.text = str(value, "prompt"); return;
+    }
     if (value.is_discarded() || !value.is_object()) {
         auto &entry = item(QString("plain:%1").arg(line_), ProgressKind::Simple); entry.text = text; return;
     }

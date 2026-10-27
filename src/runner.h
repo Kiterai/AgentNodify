@@ -27,12 +27,14 @@ struct NodeExecution {
     QString title;
     quint64 executionNumber = 0;
     QString agent, directory;
+    QString model, effort;
     QDateTime startedAt, finishedAt;
     State state = State::Running;
     QString log;
     Json output;
     quint64 sequence = 0; // Assigned by the project's persistent history.
     bool structuredOutput = false;
+    bool retainContext = false, contextResumed = false;
 };
 struct AgentConfig {
     QString codex = "codex";

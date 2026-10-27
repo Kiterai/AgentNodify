@@ -84,6 +84,7 @@ void CatalogTest::manualValuePreserved() {
     auto *form = graph.form(id); auto *combo = form->findChild<QComboBox *>("nodeModel"); QVERIFY(combo);
     QSignalSpy edited(&graph, &Graph::edited);
     QTRY_VERIFY(catalog.entry("Codex").state == CatalogState::Ready);
+    auto *status=form->findChild<QLabel *>("modelCatalogStatus"); QVERIFY(status); QVERIFY(status->text().isEmpty()); QVERIFY(status->isHidden());
     QCOMPARE(combo->currentData().toString(), QString("custom-id")); QCOMPARE(graph.flow.nodes.at(id).model, QString("custom-id")); QCOMPARE(edited.count(), 0);
     const auto alpha = combo->findData("code-alpha"); QVERIFY(alpha >= 0); combo->setCurrentIndex(alpha);
     QCOMPARE(graph.flow.nodes.at(id).model, QString("code-alpha")); QCOMPARE(combo->currentText(), combo->itemText(alpha)); QVERIFY(!combo->currentText().contains(" · "));

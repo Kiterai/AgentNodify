@@ -11,6 +11,7 @@ using Json = nlohmann::json;
 using Id = unsigned int;
 enum class Kind { Start, End, Agent, All, Branch, Script, Shell, ProjectCreate, FlowRun, FlowWait, Any, UserInput };
 bool isHostOperation(Kind kind);
+bool hasNodeName(Kind kind);
 QString kindName(Kind kind);
 QString kindKey(Kind kind);
 Kind parseKind(const std::string &key);

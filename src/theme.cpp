@@ -4,8 +4,23 @@
 #include <QLineEdit>
 #include <QPalette>
 #include <QStyledItemDelegate>
+#include <QStyleOptionButton>
+#include <QStylePainter>
 
 namespace an {
+QString ElidedButton::displayedText() const {
+    QStyleOptionButton option; initStyleOption(&option);
+    int available = style()->subElementRect(QStyle::SE_PushButtonContents, &option, this).width();
+    if (!icon().isNull()) available -= iconSize().width() + 4;
+    if (fontMetrics().horizontalAdvance(text()) <= available) return text();
+    const auto width = qMax(0, available - fontMetrics().horizontalAdvance("...") + fontMetrics().horizontalAdvance(QChar(0x2026)));
+    return fontMetrics().elidedText(text(), Qt::ElideRight, width).replace(QChar(0x2026), "...");
+}
+QSize ElidedButton::minimumSizeHint() const { auto size = QPushButton::minimumSizeHint(); size.setWidth(0); return size; }
+void ElidedButton::paintEvent(QPaintEvent *) {
+    QStyleOptionButton option; initStyleOption(&option); option.text = displayedText();
+    QStylePainter painter(this); painter.drawControl(QStyle::CE_PushButton, option);
+}
 void styleComboBoxPopup(QComboBox *combo) {
     // Override the graphics view's ScrollHandDrag cursor on embedded controls.
     combo->setCursor(Qt::ArrowCursor);

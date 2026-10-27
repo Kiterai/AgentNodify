@@ -31,9 +31,11 @@ void saveNodeExecution(const QString &directory, const NodeExecution &execution)
     if (!QDir().mkpath(directory)) throw std::runtime_error("実行履歴の保存先を作成できません");
     Json value = {{"version", 2}, {"id", text(execution.id)}, {"node", execution.node}, {"title", text(execution.title)},
         {"executionNumber", execution.executionNumber}, {"agent", text(execution.agent)}, {"directory", text(execution.directory)},
+        {"model", text(execution.model)}, {"effort", text(execution.effort)},
         {"startedAt", text(execution.startedAt.toUTC().toString(Qt::ISODateWithMs))},
         {"finishedAt", text(execution.finishedAt.toUTC().toString(Qt::ISODateWithMs))},
-        {"state", text(stateKey(execution.state))}, {"log", text(execution.log)}, {"output", execution.output}, {"sequence", execution.sequence}, {"structuredOutput", execution.structuredOutput}};
+        {"state", text(stateKey(execution.state))}, {"log", text(execution.log)}, {"output", execution.output}, {"sequence", execution.sequence}, {"structuredOutput", execution.structuredOutput},
+        {"retainContext", execution.retainContext}, {"contextResumed", execution.contextResumed}};
     QSaveFile file(QDir(directory).filePath(uuid.toString(QUuid::WithoutBraces) + ".json"));
     const auto bytes = QByteArray::fromStdString(value.dump());
     if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit())
@@ -53,12 +55,16 @@ std::vector<NodeExecution> loadNodeExecutions(const QString &directory, QStringL
             execution.node = value.at("node").get<Id>(); execution.title = string(value, "title");
             execution.executionNumber = value.at("executionNumber").get<quint64>();
             execution.agent = string(value, "agent"); execution.directory = string(value, "directory");
+            execution.model = QString::fromStdString(value.value("model", std::string()));
+            execution.effort = QString::fromStdString(value.value("effort", std::string()));
             execution.startedAt = QDateTime::fromString(string(value, "startedAt"), Qt::ISODateWithMs);
             execution.finishedAt = QDateTime::fromString(string(value, "finishedAt"), Qt::ISODateWithMs);
             if (!execution.startedAt.isValid()) throw std::runtime_error("実行履歴の日時が不正です");
             execution.state = parseState(string(value, "state")); execution.log = string(value, "log");
             execution.output = value.at("output"); execution.sequence = value.value("sequence", quint64(0));
             execution.structuredOutput = value.value("structuredOutput", false);
+            execution.retainContext = value.value("retainContext", false);
+            execution.contextResumed = value.value("contextResumed", false);
             if (execution.state == State::Running) {
                 execution.state = State::Cancelled;
                 execution.log += "\n[前回の実行は終了を確認できなかったため、中断として表示します]\n";

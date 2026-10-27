@@ -13,12 +13,42 @@ Edge edge(ConnectionId c) { return {c.outNodeId, c.inNodeId, c.outPortIndex, c.i
 Graph::~Graph() {
     for (auto &[id, widget] : forms_) if (widget && !widget->graphicsProxyWidget()) delete widget;
 }
+bool Graph::canEdit() const {
+    if (readOnly) return false;
+    if (editsLocked && editsLocked()) { emit const_cast<Graph *>(this)->editRejected(); return false; }
+    return true;
+}
 void Graph::replace(const Flow &value) {
     for (auto &[id, widget] : forms_) if (widget && !widget->graphicsProxyWidget()) delete widget;
     flow = value;
+    for (auto &[id, node] : flow.nodes) if (!hasNodeName(node.kind)) node.title.clear();
     if (!nodeExists(highlightedNode_)) highlightedNode_ = 0;
     if (!flow.nodes.empty()) flow.nextNodeId = qMax(flow.nextNodeId, quint64(flow.nodes.rbegin()->first) + 1);
     sizes_.clear(); states.clear(); forms_.clear(); emit modelReset();
+}
+void Graph::restore(const Flow &value) {
+    const auto previous = flow;
+    auto target = value; target.nextNodeId = qMax(flow.nextNodeId, target.nextNodeId);
+    for (auto &[id, node] : target.nodes) if (!hasNodeName(node.kind)) node.title.clear();
+    flow = std::move(target);
+    for (const auto &item : previous.edges)
+        if (std::find(flow.edges.begin(), flow.edges.end(), item) == flow.edges.end()) emit connectionDeleted(connection(item));
+    for (const auto &[id, node] : previous.nodes) if (!nodeExists(id)) {
+        if (forms_.contains(id) && forms_.at(id) && !forms_.at(id)->graphicsProxyWidget()) delete forms_.at(id);
+        forms_.erase(id); sizes_.erase(id); states.erase(id); emit nodeDeleted(id);
+    }
+    for (const auto &[id, node] : flow.nodes) {
+        if (!previous.nodes.contains(id)) emit nodeCreated(id);
+        else {
+            if (forms_.contains(id) && forms_.at(id)) forms_.at(id)->setNode(node);
+            emit nodeUpdated(id);
+            if (previous.nodes.at(id).position != node.position) emit nodePositionUpdated(id);
+        }
+    }
+    for (const auto &item : flow.edges)
+        if (std::find(previous.edges.begin(), previous.edges.end(), item) == previous.edges.end()) emit connectionCreated(connection(item));
+    if (!nodeExists(highlightedNode_)) highlightedNode_ = 0;
+    emit edited();
 }
 void Graph::setHighlightedNode(Id id) {
     if (!nodeExists(id)) id = 0;
@@ -28,7 +58,11 @@ void Graph::setHighlightedNode(Id id) {
     if (nodeExists(id)) emit nodeUpdated(id);
 }
 void Graph::updateNode(const Node &node, std::optional<unsigned> removedOutput) {
-    if (readOnly || !nodeExists(node.id)) return;
+    if (!nodeExists(node.id)) return;
+    if (!canEdit()) {
+        if (nodeExists(node.id) && forms_.contains(node.id) && forms_.at(node.id)) forms_.at(node.id)->setNode(flow.nodes.at(node.id));
+        return;
+    }
     const auto &old = flow.nodes.at(node.id);
     const auto oldOutputs = flow.outputCount(old), newOutputs = flow.outputCount(node);
     std::vector<int> ports(oldOutputs, -1);
@@ -73,6 +107,7 @@ void Graph::updateNode(const Node &node, std::optional<unsigned> removedOutput) 
     // Publish a consistent model before notifying QtNodes. Keep the original
     // edge order for FIFO fan-out, and rebuild only removed/reindexed graphics.
     auto updated = node; updated.position = old.position;
+    if (!hasNodeName(updated.kind)) updated.title.clear();
     flow.nodes[node.id] = updated; flow.edges = std::move(kept);
     for (const auto &port : removed) emit connectionDeleted(port);
     if (forms_.contains(node.id) && forms_.at(node.id)) forms_.at(node.id)->setNode(updated);
@@ -92,6 +127,7 @@ NodeForm *Graph::form(Id id) const {
     auto *self = const_cast<Graph *>(this);
     auto *widget = new NodeForm(node, nullptr, modelCatalog); forms_[id] = widget;
     widget->setReadOnly(readOnly);
+    widget->beforeEdit = [self] { return self->canEdit(); };
     widget->setFlowChoices(flowChoices);
     connect(widget, &NodeForm::edited, self, [self, widget] { self->updateNode(widget->node()); });
     connect(widget, &NodeForm::outputRemoved, self, [self, widget](unsigned index) { self->updateNode(widget->node(), index); });
@@ -120,23 +156,24 @@ std::unordered_set<ConnectionId> Graph::connections(Id id, PortType type, unsign
 }
 bool Graph::connectionExists(ConnectionId c) const { return std::find(flow.edges.begin(), flow.edges.end(), edge(c)) != flow.edges.end(); }
 Id Graph::addNode(QString type) {
-    if (readOnly) return InvalidNodeId;
+    if (!canEdit()) return InvalidNodeId;
     Kind kind;
     try { kind = parseKind(type.toStdString()); } catch (...) { return InvalidNodeId; }
     if (kind == Kind::Start || kind == Kind::End)
         for (auto &[id, n] : flow.nodes) if (n.kind == kind) return InvalidNodeId;
-    Node n; n.id = newNodeId(); n.kind = kind; n.title = kindName(kind);
+    Node n; n.id = newNodeId(); n.kind = kind; if (hasNodeName(kind)) n.title = kindName(kind);
     if (n.id == InvalidNodeId) return InvalidNodeId;
-    n.position = {double((n.id % 4) * 220), double((n.id / 4) * 160)};
+    n.position = newNodePosition ? newNodePosition() : QPointF(double((n.id % 4) * 220), double((n.id / 4) * 160));
     if (kind == Kind::Branch) n.rules.push_back({"result", "ok", true});
     flow.nodes[n.id] = n; emit nodeCreated(n.id); emit edited(); return n.id;
 }
 bool Graph::connectionPossible(ConnectionId c) const {
-    if (readOnly || !nodeExists(c.outNodeId) || !nodeExists(c.inNodeId) || connectionExists(c)) return false;
+    if (readOnly || (editsLocked && editsLocked()) || !nodeExists(c.outNodeId) || !nodeExists(c.inNodeId) || connectionExists(c)) return false;
     if (c.inPortIndex >= flow.inputCount(flow.nodes.at(c.inNodeId)) || c.outPortIndex >= flow.outputCount(flow.nodes.at(c.outNodeId))) return false;
     return true;
 }
 void Graph::addConnection(ConnectionId c) {
+    if (!canEdit()) return;
     if (!connectionPossible(c)) return;
     flow.edges.push_back(edge(c)); emit connectionCreated(c); emit edited();
 }
@@ -148,7 +185,7 @@ QVariant Graph::nodeData(Id id, NodeRole role) const {
     case NodeRole::Size: return sizes_.contains(id) ? sizes_.at(id) : QSize(180, 80);
     case NodeRole::CaptionVisible: return n.kind != Kind::Start && n.kind != Kind::End;
     case NodeRole::Caption: {
-        QString title = n.title.isEmpty() ? kindName(n.kind) : n.title;
+        QString title = kindName(n.kind);
         if (states.contains(id)) {
             auto state = states.at(id);
             QString icon = state == State::Running ? QStringList{"◐", "◓", "◑", "◒"}.at(frame % 4) : state == State::Succeeded ? "✓" : state == State::Failed ? "!" : "·";
@@ -194,11 +231,11 @@ QVariant Graph::nodeData(Id id, NodeRole role) const {
     default: return {};
     }
 }
-NodeFlags Graph::nodeFlags(Id) const { return readOnly ? NodeFlag::Locked : NodeFlag::NoFlags; }
+NodeFlags Graph::nodeFlags(Id) const { return NodeFlag::NoFlags; }
 bool Graph::setNodeData(Id id, NodeRole role, QVariant value) {
     if (!nodeExists(id)) return false;
     if (role == NodeRole::Size) { sizes_[id] = value.toSize(); return true; }
-    if (role == NodeRole::Position && !readOnly) {
+    if (role == NodeRole::Position) {
         flow.nodes[id].position = value.toPointF(); emit nodePositionUpdated(id); emit edited(); return true;
     }
     return false;
@@ -218,12 +255,14 @@ QVariant Graph::portData(Id id, PortType type, unsigned index, PortRole role) co
     return {};
 }
 bool Graph::deleteConnection(ConnectionId c) {
-    if (readOnly || !connectionExists(c)) return false;
+    if (!canEdit() || !connectionExists(c)) return false;
     std::erase(flow.edges, edge(c)); emit connectionDeleted(c); emit edited(); return true;
 }
 bool Graph::deleteNode(Id id) {
-    if (readOnly || !nodeExists(id) || flow.nodes.at(id).kind == Kind::Start || flow.nodes.at(id).kind == Kind::End) return false;
-    auto cs = allConnectionIds(id); for (auto c : cs) deleteConnection(c);
+    if (!canEdit() || !nodeExists(id) || flow.nodes.at(id).kind == Kind::Start || flow.nodes.at(id).kind == Kind::End) return false;
+    auto cs = allConnectionIds(id);
+    std::erase_if(flow.edges, [id](const Edge &item) { return item.from == id || item.to == id; });
+    for (auto c : cs) emit connectionDeleted(c);
     if (forms_.contains(id) && forms_.at(id) && !forms_.at(id)->graphicsProxyWidget()) delete forms_.at(id);
     flow.nodes.erase(id); sizes_.erase(id); forms_.erase(id); emit nodeDeleted(id); emit edited(); return true;
 }
@@ -233,7 +272,7 @@ QJsonObject Graph::saveNode(Id id) const {
     return {{"id", int(id)}, {"payload", obj}};
 }
 void Graph::loadNode(const QJsonObject &obj) {
-    if (readOnly || !obj.contains("payload")) return;
+    if (!canEdit() || !obj.contains("payload")) return;
     try {
         auto f = Flow::fromJson(Json::parse(QJsonDocument(obj["payload"].toObject()).toJson().toStdString()));
         auto n = f.nodes.begin()->second; n.id = Id(obj["id"].toInt());

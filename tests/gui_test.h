@@ -11,6 +11,10 @@ private slots:
     void branchAndInputForms();
     void terminalAppearance();
     void editorAndFlowRail();
+    void paletteWidthAndElision();
+    void editorUndoRedoParameters();
+    void editorUndoRedoDeletion();
+    void editorUndoIsolationAndPorts();
     void widgetLifetime();
     void comboPopupColors();
     void workSelection();
@@ -20,6 +24,13 @@ private slots:
     void projectOpeners();
     void comboPopupWheel();
     void nodeExecutionHistory();
+    void historyLabelFormat();
+    void compactNamelessNodes();
+    void runningFlowEditRestrictions();
+    void startAndStopDialogs();
+    void addedNodeAutoFit();
+    void nodePlacementFromLastInteraction();
+    void userInputControlEnter();
     void historyAfterRestart();
     void scriptNodeForm();
     void scriptPathDialogs();

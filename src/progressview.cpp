@@ -351,6 +351,14 @@ public:
             if (kind != ProgressKind::Simple && kind != ProgressKind::Tool && kind != ProgressKind::FileAccess) layout->addWidget(heading_);
         }
         if (kind == ProgressKind::Message) { content_ = new ContentView(this); layout->addWidget(content_); }
+        else if (kind == ProgressKind::Prompt) {
+            prompt_ = new QLabel; prompt_->setObjectName("agentInputPrompt"); prompt_->setTextFormat(Qt::PlainText); prompt_->setWordWrap(true);
+            prompt_->setMinimumWidth(0); prompt_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+            prompt_->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard); layout->addWidget(prompt_);
+            auto *separator = new QFrame; separator->setObjectName("inputPromptSeparator"); separator->setFixedHeight(1);
+            separator->setStyleSheet("background:#46566e; border:0;");
+            layout->addSpacing(6); layout->addWidget(separator); layout->addSpacing(4);
+        }
         else if (kind == ProgressKind::Tool) {
             commandHeader_ = new ToggleRow; commandHeader_->setObjectName("commandHeader");
             auto *row = new QHBoxLayout(commandHeader_); row->setContentsMargins(0, 0, 0, 0); row->setSpacing(4);
@@ -382,6 +390,7 @@ public:
     void update(const ProgressItem &item) {
         layout()->setContentsMargins(4, item.spaceBefore ? 12 : 2, 4, 2);
         if (kind_ == ProgressKind::Message) { content_->setValue(item.content, true, item.jsonContent); }
+        else if (kind_ == ProgressKind::Prompt) { heading_->setText(item.name); prompt_->setText(item.text); }
         else if (kind_ == ProgressKind::Tool) {
             const bool command = !item.commandLabel.isEmpty();
             heading_->setText(command ? item.commandLabel : item.name); heading_->setWordWrap(!command);
@@ -404,6 +413,7 @@ public:
 private:
     ProgressKind kind_;
     QLabel *heading_ = nullptr;
+    QLabel *prompt_ = nullptr;
     QLabel *status_ = nullptr, *commandFull_ = nullptr;
     CommandPreview *commandPreview_ = nullptr;
     DisclosureButton *commandToggle_ = nullptr;

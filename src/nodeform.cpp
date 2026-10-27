@@ -126,7 +126,7 @@ void TextPreview::resizeToText() {
 }
 
 NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : QWidget(parent), node_(node), catalog_(catalog) {
-    setObjectName("nodeForm"); setFixedWidth(320);
+    setObjectName("nodeForm"); setFixedWidth(node.kind == Kind::All || node.kind == Kind::Any || node.kind == Kind::Branch || node.kind == Kind::UserInput ? 210 : 320);
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     setToolTip(nodeDescription(node.kind));
     setStyleSheet(R"(
@@ -143,8 +143,11 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
     if (node.kind == Kind::UserInput) setStyleSheet(styleSheet() + "QWidget#nodeForm, QWidget#nodeForm QLabel { color:#40242c; }");
     auto *layout = new QVBoxLayout(this); layout->setContentsMargins(8, 8, 8, 8); layout->setSpacing(6);
     auto *form = new QFormLayout; form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-    title_ = new QLineEdit(node.title); title_->setObjectName("nodeTitle"); form->addRow("名前", title_);
-    connect(title_, &QLineEdit::textEdited, this, [this](const QString &text) { node_.title = text; publish(); });
+    parameterForm_ = form;
+    if (hasNodeName(node.kind)) {
+        title_ = new QLineEdit(node.title); title_->setMinimumWidth(0); title_->setObjectName("nodeTitle"); form->addRow("名前", title_);
+        connect(title_, &QLineEdit::textEdited, this, [this](const QString &text) { node_.title = text; publish(); });
+    } else node_.title.clear();
     layout->addLayout(form);
     auto addPreview = [this, layout](const QString &label, const QString &field, const QString &text) {
         layout->addWidget(new QLabel(label));
@@ -280,8 +283,7 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
         auto *add = new QPushButton("＋ 条件"); add->setObjectName("addRule"); layout->addWidget(add);
         connect(add, &QPushButton::clicked, this, [this] { node_.rules.push_back({"", "", true}); rebuildRules(); publish(); });
     }
-    for (auto *widget : findChildren<QWidget *>())
-        if (qobject_cast<QLineEdit *>(widget) || qobject_cast<QComboBox *>(widget) || qobject_cast<QSpinBox *>(widget) || qobject_cast<QCheckBox *>(widget)) widget->installEventFilter(this);
+    for (auto *widget : findChildren<QWidget *>()) widget->installEventFilter(this);
     layout->activate(); setFixedHeight(layout->sizeHint().height()); scheduleResize();
 }
 bool NodeForm::event(QEvent *event) {
@@ -295,6 +297,10 @@ bool NodeForm::eventFilter(QObject *object, QEvent *event) {
     if (event->type() == QEvent::LayoutRequest || event->type() == QEvent::StyleChange || event->type() == QEvent::FontChange || event->type() == QEvent::Polish) scheduleResize();
     if (event->type() == QEvent::FocusIn || event->type() == QEvent::MouseButtonPress) emit activated();
     const bool preview = qobject_cast<TextPreview *>(object) || (prompt_ && object == prompt_->viewport()) || (schema_ && object == schema_->viewport()) || (shellCommand_ && object == shellCommand_->viewport());
+    const bool control = preview || qobject_cast<QLineEdit *>(object) || qobject_cast<QComboBox *>(object) || qobject_cast<QSpinBox *>(object) || qobject_cast<QAbstractButton *>(object);
+    const bool editEvent = event->type() == QEvent::MouseButtonPress || event->type() == QEvent::KeyPress || event->type() == QEvent::InputMethod ||
+        (event->type() == QEvent::Wheel && (qobject_cast<QComboBox *>(object) || qobject_cast<QSpinBox *>(object)));
+    if (!readOnly_ && control && editEvent && beforeEdit && !beforeEdit()) return true;
     if (readOnly_ && !preview &&
         (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease ||
          event->type() == QEvent::KeyPress || event->type() == QEvent::Wheel || event->type() == QEvent::InputMethod)) return true;
@@ -337,12 +343,13 @@ void NodeForm::populateModels() {
     QString status = "未取得";
     QString tooltip = "取得した候補からモデルを選択してください。";
     if (entry.state == CatalogState::Loading) status = "取得中…";
-    else if (entry.state == CatalogState::Ready) status = QString("%1件のモデル").arg(entry.models.size());
+    else if (entry.state == CatalogState::Ready) status.clear();
     else if (entry.state == CatalogState::Error) {
         status = entry.models.empty() ? "取得失敗" : "取得失敗 · 前回の候補を表示";
         tooltip = entry.error + "\n" + tooltip;
     }
     modelStatus_->setText(status); modelStatus_->setToolTip(tooltip); model_->setToolTip(tooltip);
+    parameterForm_->setRowVisible(modelStatus_, !status.isEmpty());
     refreshModels_->setEnabled(catalog_ && entry.state != CatalogState::Loading);
     refreshModels_->setToolTip("モデル一覧を再取得\n" + tooltip); populateEfforts(); scheduleResize();
 }
@@ -370,7 +377,8 @@ void NodeForm::setNode(const Node &node) {
     }
     updating_ = true; node_ = node;
     if (retainContext_) retainContext_->setChecked(node.retainContext);
-    if (title_->text() != node.title) title_->setText(node.title);
+    if (!hasNodeName(node_.kind)) node_.title.clear();
+    if (title_ && title_->text() != node.title) title_->setText(node.title);
     if (agent_) { agent_->setCurrentText(node.agent); if (modelChanged) populateModels(); }
     if (prompt_ && prompt_->toPlainText() != node.prompt) prompt_->setPlainText(node.prompt);
     if (schema_ && schema_->toPlainText() != node.schema) schema_->setPlainText(node.schema);
@@ -420,12 +428,12 @@ void NodeForm::rebuildRules() {
         auto *card = new QWidget; auto *layout = new QVBoxLayout(card); layout->setContentsMargins(0, 0, 0, 0); layout->setSpacing(4);
         auto *heading = new QHBoxLayout; heading->addWidget(new QLabel(QString("条件%1").arg(i + 1)), 1);
         auto *remove = new QPushButton("×"); remove->setObjectName("removeRule"); remove->setFixedWidth(28); remove->setToolTip("この条件を削除"); heading->addWidget(remove); layout->addLayout(heading);
-        auto *variable = new QLineEdit(node_.rules[i].variable); variable->setObjectName("ruleVariable"); variable->setPlaceholderText("前段の変数名");
+        auto *variable = new QLineEdit(node_.rules[i].variable); variable->setMinimumWidth(0); variable->setObjectName("ruleVariable"); variable->setPlaceholderText("前段の変数名");
         auto *subject = new QHBoxLayout; subject->addWidget(new QLabel("もしも")); subject->addWidget(variable, 1); subject->addWidget(new QLabel("が")); layout->addLayout(subject);
         auto *comparison = new QHBoxLayout;
         auto *op = new QComboBox; op->setObjectName("ruleOperator"); op->addItems({"等しい", "異なる"}); op->setCurrentIndex(node_.rules[i].equals ? 0 : 1);
         styleComboBoxPopup(op);
-        auto *value = new QLineEdit(node_.rules[i].value); value->setObjectName("ruleValue"); value->setPlaceholderText("比較する値");
+        auto *value = new QLineEdit(node_.rules[i].value); value->setMinimumWidth(0); value->setObjectName("ruleValue"); value->setPlaceholderText("比較する値");
         variable->installEventFilter(this); value->installEventFilter(this); op->installEventFilter(this);
         comparison->addWidget(value, 1); comparison->addWidget(new QLabel("と")); comparison->addWidget(op); comparison->addWidget(new QLabel("ならば")); layout->addLayout(comparison); rulesLayout_->addWidget(card);
         connect(variable, &QLineEdit::textEdited, card, [this, i](const QString &text) { if (i < node_.rules.size()) { node_.rules[i].variable = text; publish(); } });
@@ -436,7 +444,7 @@ void NodeForm::rebuildRules() {
             node_.rules.erase(node_.rules.begin() + i); rebuildRules(); emit outputRemoved(unsigned(i)); scheduleResize();
         });
     }
-    rulesLayout_->addWidget(new QLabel("それ以外")); scheduleResize();
+    rulesLayout_->addWidget(new QLabel("それ以外")); setReadOnly(readOnly_); scheduleResize();
 }
 void NodeForm::scheduleResize() {
     if (resizeScheduled_) return; resizeScheduled_ = true;

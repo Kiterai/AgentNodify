@@ -5,12 +5,48 @@
 #include <QCoreApplication>
 #include <QWheelEvent>
 #include <QKeyEvent>
+#include <QMouseEvent>
+#include <QtNodes/internal/AbstractNodeGeometry.hpp>
 #include <QtNodes/internal/NodeGraphicsObject.hpp>
 #include <QtNodes/internal/ConnectionGraphicsObject.hpp>
 #include <QtNodes/BasicGraphicsScene>
 #include <cmath>
 
 namespace an {
+void GraphView::mousePressEvent(QMouseEvent *event) {
+    if (interactionStarted) interactionStarted();
+    trackingInteraction_ = false; interactionNode_.reset();
+    if (event->button() == Qt::LeftButton && beforePortEdit) {
+        auto *graphScene = dynamic_cast<QtNodes::BasicGraphicsScene *>(scene());
+        for (auto *item = itemAt(event->position().toPoint()); graphScene && item; item = item->parentItem()) {
+            if (auto *node = dynamic_cast<QtNodes::NodeGraphicsObject *>(item)) {
+                const auto point = node->mapFromScene(mapToScene(event->position().toPoint()));
+                for (auto type : {QtNodes::PortType::In, QtNodes::PortType::Out})
+                    if (graphScene->nodeGeometry().checkPortHit(node->nodeId(), type, point) != QtNodes::InvalidPortIndex && !beforePortEdit()) { event->accept(); return; }
+                break;
+            }
+        }
+    }
+    if (event->button() == Qt::LeftButton || event->button() == Qt::MiddleButton || event->button() == Qt::RightButton) {
+        auto *hit = itemAt(event->position().toPoint());
+        trackingInteraction_ = !hit;
+        for (auto *item = hit; item; item = item->parentItem()) {
+            if (auto *node = dynamic_cast<QtNodes::NodeGraphicsObject *>(item)) {
+                interactionNode_ = node->nodeId(); trackingInteraction_ = true; break;
+            }
+        }
+    }
+    // Popups can take the release event away from this view. Remember the
+    // click immediately, then update its final scene location after a drag.
+    if (trackingInteraction_ && interactionFinished) interactionFinished(interactionNode_, mapToScene(event->position().toPoint()));
+    QtNodes::GraphicsView::mousePressEvent(event);
+}
+void GraphView::mouseReleaseEvent(QMouseEvent *event) {
+    QtNodes::GraphicsView::mouseReleaseEvent(event);
+    if (trackingInteraction_ && interactionFinished && (event->button() == Qt::LeftButton || event->button() == Qt::MiddleButton || event->button() == Qt::RightButton))
+        interactionFinished(interactionNode_, mapToScene(event->position().toPoint()));
+    trackingInteraction_ = false; interactionNode_.reset();
+}
 void GraphView::zoomToNode(QtNodes::NodeId id) {
     auto *graphScene = dynamic_cast<QtNodes::BasicGraphicsScene *>(scene());
     auto *node = graphScene ? graphScene->nodeGraphicsObject(id) : nullptr;

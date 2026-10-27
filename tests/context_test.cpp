@@ -1,4 +1,5 @@
 #include "runner.h"
+#include "history.h"
 #include <QtTest>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -17,7 +18,7 @@ AgentConfig config() {
 }
 Node agent(Id id, QString name, bool retain = true, bool structured = true) {
     Node node; node.id = id; node.kind = Kind::Agent; node.agent = name; node.model = "fixture";
-    node.prompt = "CONTEXT_FIXTURE"; node.retainContext = retain; if (structured) node.schema = countSchema(); return node;
+    node.prompt = "CONTEXT_FIXTURE"; node.effort = "high"; node.retainContext = retain; if (structured) node.schema = countSchema(); return node;
 }
 Flow loop(QString name, bool retain = true, bool structured = true, QString extra = {}) {
     auto flow = Flow::initial(); flow.nodes[3] = agent(3, name, retain, structured); flow.nodes[3].prompt += extra;
@@ -35,6 +36,13 @@ Json value(const NodeExecution &entry) { return entry.output.is_string() ? Json:
 class ContextTest : public QObject {
     Q_OBJECT
 private slots:
+    void legacyHistoryMetadata() {
+        QTemporaryDir directory; NodeExecution entry; entry.id="12345678-1234-1234-1234-123456789abc"; entry.startedAt=QDateTime::currentDateTimeUtc(); entry.state=State::Succeeded;
+        saveNodeExecution(directory.path(),entry); QFile file(directory.filePath(entry.id+".json")); QVERIFY(file.open(QIODevice::ReadOnly)); auto json=Json::parse(file.readAll().toStdString()); file.close();
+        json.erase("model"); json.erase("effort"); json.erase("retainContext"); json.erase("contextResumed");
+        QVERIFY(file.open(QIODevice::WriteOnly|QIODevice::Truncate)); file.write(QByteArray::fromStdString(json.dump())); file.close();
+        QStringList errors; auto saved=loadNodeExecutions(directory.path(),&errors); QVERIFY(errors.isEmpty()); QCOMPARE(saved.size(),size_t(1)); QVERIFY(saved[0].model.isEmpty()); QVERIFY(saved[0].effort.isEmpty()); QVERIFY(!saved[0].retainContext); QVERIFY(!saved[0].contextResumed);
+    }
     void settingsRoundtrip() {
         auto flow = loop("Codex"); const auto json = flow.toJson(); QVERIFY(Flow::fromJson(json).nodes.at(3).retainContext);
         auto legacy = json; for (auto &node : legacy["nodes"]) node.erase("retainContext");
@@ -55,9 +63,20 @@ private slots:
             if (run) QVERIFY(QFile::remove(directory.filePath("counter.txt")));
             done.clear(); QVERIFY(runner.start(flow, directory.path(), config())); QTRY_COMPARE_WITH_TIMEOUT(done.count(), 1, 10000); QVERIFY2(done[0][0].toBool(), qPrintable(done[0][1].toString()));
             QCOMPARE(runner.results().at(3).executions, quint64(3));
-            for (int i = 0; i < 3; ++i) { const auto &entry = history.at(size_t(run * 3 + i)); QVERIFY(ids.insert(entry.id).second); QCOMPARE(entry.executionNumber, quint64(i + 1)); QVERIFY(value(entry).at("count") == (retain ? i + 1 : 1)); }
+            for (int i = 0; i < 3; ++i) {
+                const auto &entry = history.at(size_t(run * 3 + i)); QVERIFY(ids.insert(entry.id).second); QCOMPARE(entry.executionNumber, quint64(i + 1)); QVERIFY(value(entry).at("count") == (retain ? i + 1 : 1));
+                QCOMPARE(entry.retainContext,retain); QCOMPARE(entry.contextResumed,retain && i>0);
+                QCOMPARE(entry.model,QString("fixture")); QCOMPARE(entry.effort,QString("high"));
+                const auto header=Json::parse(entry.log.section('\n',0,0).toStdString()); QVERIFY(header.at("type")=="agentnodify.prompt");
+                QString expected=flow.nodes.at(3).prompt;
+                if(name=="OpenCode" && structured) expected+="\nReturn only JSON (no Markdown) matching this JSON Schema:\n"+countSchema();
+                QCOMPARE(QString::fromStdString(header.at("prompt").get<std::string>()),expected);
+                saveNodeExecution(directory.filePath("history"),entry);
+            }
         }
         const auto entries = trace(directory.path()); QCOMPARE(entries.size(), size_t(6));
+        QStringList errors; const auto saved=loadNodeExecutions(directory.filePath("history"),&errors); QVERIFY(errors.isEmpty()); QCOMPARE(saved.size(),history.size());
+        for(const auto &entry:saved) { QCOMPARE(entry.retainContext,retain); QCOMPARE(entry.contextResumed,retain && entry.executionNumber>1); QVERIFY(entry.log.startsWith("{\"prompt\":")); QCOMPARE(entry.model,QString("fixture")); QCOMPARE(entry.effort,QString("high")); }
         for (size_t i = 0; i < entries.size(); ++i) {
             const bool resumed = retain && i % 3 != 0; QVERIFY(entries[i].at("resumed") == resumed);
             if (resumed) QVERIFY(entries[i].at("session") == entries[i-1].at("session"));

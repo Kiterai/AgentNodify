@@ -13,6 +13,8 @@
 #include <QUuid>
 #include <QtNodes/BasicGraphicsScene>
 #include <QtNodes/GraphicsView>
+#include <QUndoStack>
+#include <memory>
 
 class QSystemTrayIcon;
 class QComboBox;
@@ -29,16 +31,24 @@ signals:
     void quitRequested();
 protected:
     void closeEvent(QCloseEvent *event) override;
+    bool eventFilter(QObject *object, QEvent *event) override;
 private:
     friend class GuiTest;
     void removeFlow(int index);
-    struct Document { Flow flow; QString path; bool dirty = false; };
+    struct Document {
+        Flow flow; QString path; bool dirty = false;
+        std::optional<QPointF> creationAnchor;
+        bool offsetCreation = false;
+        std::shared_ptr<QUndoStack> undo = std::make_shared<QUndoStack>();
+        quint64 savedNextNodeId = 0;
+    };
     struct Project {
         QString name, directory, flowPath;
         std::map<Id, Result> results;
         QString historyId = QUuid::createUuid().toString(QUuid::WithoutBraces);
         std::vector<NodeExecution> history;
         std::optional<Flow> runFlow;
+        std::map<Id, QPointF> workPositions;
     };
     std::vector<Document> documents_;
     std::vector<Project> projects_;
@@ -93,6 +103,10 @@ private:
     ContentView *inputMessage_ = nullptr;
     QPlainTextEdit *inputText_ = nullptr;
     QHBoxLayout *inputButtons_ = nullptr;
+    QLabel *inputShortcutHint_ = nullptr;
+    bool controlPressed_ = false;
+    void updateInputShortcutHint();
+    QPointF nextNodePosition() const;
     void refreshUserInputPanel();
     void focusUserInputNode();
     void buildUi();
@@ -115,10 +129,23 @@ private:
     void validateFlow();
     void addProject();
     void executeFlow();
+    bool currentFlowRunning() const;
     void settings();
     void persist();
     void restore();
     void changed();
+    QAction *undoAction_ = nullptr, *redoAction_ = nullptr;
+    bool applyingHistory_ = false;
+    int editBatch_ = 0;
+    quint64 historyGroup_ = 0;
+    void recordEdit(const Flow &before, const Flow &after);
+    void updateUndoActions();
+    void stepHistory(bool redo);
+    void applyHistory(const Flow &flow);
+    bool confirmNodeDeletion(int count);
+    void deleteEditorObjects(std::optional<Id> node = {});
+    void editorOperation(const std::function<void()> &operation);
+    bool editorTarget(QWidget *widget) const;
     void reportError(const QString &message);
 };
 }
