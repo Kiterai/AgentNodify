@@ -17,16 +17,21 @@ public:
     static QString normalizedPath(const QString &path);
     bool start(const Project &project, Runner *runner = nullptr);
     bool running() const;
+    bool running(const QString &projectId) const;
     void cancelAll();
+    bool submitUserInput(const QString &requestId, const QString &text, unsigned choice);
 signals:
     void projectCreated(QString id, QString flowPath, QString directory);
     void executionChanged(QString projectId, const an::NodeExecution &execution);
     void resultChanged(QString projectId, unsigned int node, const an::Result &result);
     void activityChanged();
     void sessionStarted(QString projectId);
+    void userInputRequested(QString projectId, const an::UserInputRequest &request);
+    void userInputClosed(QString requestId);
 private:
     struct Waiter { QPointer<Runner> caller; Runner::HostCompletion complete; };
     struct Session {
+        QString projectId;
         QPointer<Runner> runner;
         bool active = false, success = false;
         Json output;
@@ -36,6 +41,7 @@ private:
     std::map<QString, std::shared_ptr<Session>> sessions_;
     std::map<Runner *, QString> callers_;
     bool stopping_ = false;
+    std::map<QString, QPointer<Runner>> inputOwners_;
     QString key(const QString &flow, const QString &directory) const;
     void operation(Runner *caller, Id node, const Node &target, const QString &path, Runner::HostCompletion complete);
     void detach(Runner *caller);

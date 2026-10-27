@@ -43,11 +43,13 @@ public:
     void setFlowChoices(const std::vector<std::pair<QString, QString>> &choices);
 signals:
     void edited();
+    void outputRemoved(unsigned index);
     void activated();
     void textEditRequested(QString field);
     void sizeChanged();
 protected:
     bool eventFilter(QObject *object, QEvent *event) override;
+    bool event(QEvent *event) override;
 private:
     bool readOnly_ = false;
     Node node_;
@@ -70,11 +72,15 @@ private:
     TextPreview *prompt_ = nullptr, *schema_ = nullptr;
     TextPreview *shellCommand_ = nullptr;
     QWidget *rules_ = nullptr;
+    QWidget *choices_ = nullptr;
+    QVBoxLayout *choicesLayout_ = nullptr;
+    QPushButton *addChoice_ = nullptr;
     QVBoxLayout *rulesLayout_ = nullptr;
     void publish();
     void populateModels();
     void populateEfforts();
     void rebuildRules();
+    void rebuildChoices();
     void scheduleResize();
 };
 }

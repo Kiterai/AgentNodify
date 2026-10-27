@@ -43,6 +43,7 @@ Json outputSchema(const Flow &f, Id id, QSet<Id> &visiting) {
     Json out;
     if (n.kind == Kind::Start) out = {{"type", "object"}, {"properties", Json::object()}, {"additionalProperties", false}};
     else if (n.kind == Kind::Agent) out = n.schema.trimmed().isEmpty() ? Json{{"type", "string"}} : parseJson(n.schema);
+    else if (n.kind == Kind::UserInput) out = {{"type", "string"}};
     else if (n.kind == Kind::Script || n.kind == Kind::FlowWait) out = {{"_anUnknown", true}};
     else if (n.kind == Kind::ProjectCreate) out = {{"type", "object"}, {"properties", {{"result", {{"type", "string"}}}, {"path", {{"type", "string"}}}, {"reason", {{"type", "string"}}}}}};
     else if (n.kind == Kind::FlowRun) out = {{"type", "object"}, {"properties", {{"result", {{"type", "string"}}}}}};
@@ -75,6 +76,7 @@ QString kindName(Kind k) {
     case Kind::End: return QStringLiteral("終端");
     case Kind::All: return QStringLiteral("All");
     case Kind::Any: return QStringLiteral("Any");
+    case Kind::UserInput: return QStringLiteral("ユーザ入力");
     case Kind::Branch: return QStringLiteral("分岐");
     case Kind::Script: return QStringLiteral("スクリプト");
     case Kind::Shell: return QStringLiteral("シェル実行");
@@ -86,7 +88,7 @@ QString kindName(Kind k) {
 }
 QString kindKey(Kind k) {
     switch(k) { case Kind::Start: return "start"; case Kind::End: return "end";
-    case Kind::All: return "all"; case Kind::Any: return "any"; case Kind::Branch: return "branch"; case Kind::Script: return "script"; case Kind::Shell: return "shell";
+    case Kind::All: return "all"; case Kind::Any: return "any"; case Kind::UserInput: return "user_input"; case Kind::Branch: return "branch"; case Kind::Script: return "script"; case Kind::Shell: return "shell";
     case Kind::ProjectCreate: return "project_create"; case Kind::FlowRun: return "flow_run"; case Kind::FlowWait: return "flow_wait"; default: return "agent"; }
 }
 Kind parseKind(const std::string &k) {
@@ -94,6 +96,7 @@ Kind parseKind(const std::string &k) {
     if (k == "end") return Kind::End;
     if (k == "and" || k == "all") return Kind::All;
     if (k == "any") return Kind::Any;
+    if (k == "user_input") return Kind::UserInput;
     if (k == "branch") return Kind::Branch;
     if (k == "agent") return Kind::Agent;
     if (k == "script") return Kind::Script;
@@ -104,17 +107,18 @@ Kind parseKind(const std::string &k) {
     error("不明なノード種別: " + q(k));
 }
 unsigned Flow::inputCount(const Node &n) const { return n.kind == Kind::Start ? 0 : (n.kind == Kind::All || n.kind == Kind::Any) ? n.inputs : 1; }
-unsigned Flow::outputCount(const Node &n) const { return n.kind == Kind::End ? 0 : n.kind == Kind::Branch ? unsigned(n.rules.size()) + 1 : 1; }
+unsigned Flow::outputCount(const Node &n) const { return n.kind == Kind::End ? 0 : n.kind == Kind::UserInput ? unsigned(n.userChoices.size()) : n.kind == Kind::Branch ? unsigned(n.rules.size()) + 1 : 1; }
 Json Flow::toJson() const {
     Json ns = Json::array(), es = Json::array();
     for (auto &[id, n] : nodes) {
         Json rules = Json::array();
+        Json choices = Json::array(); for (const auto &choice : n.userChoices) choices.push_back(s(choice));
         for (auto &r : n.rules) rules.push_back({{"variable", s(r.variable)}, {"value", s(r.value)}, {"equals", r.equals}});
         ns.push_back({{"id", id}, {"kind", s(kindKey(n.kind))}, {"title", s(n.title)},
             {"x", n.position.x()}, {"y", n.position.y()}, {"agent", s(n.agent)}, {"model", s(n.model)}, {"effort", s(n.effort)},
             {"prompt", s(n.prompt)}, {"schema", s(n.schema)}, {"retainContext", n.retainContext}, {"inputs", n.inputs}, {"rules", rules},
             {"scriptLanguage", s(n.scriptLanguage)}, {"scriptPath", s(n.scriptPath)}, {"scriptDirectory", s(n.scriptDirectory)},
-            {"shellCommand", s(n.shellCommand)}, {"shellDirectory", s(n.shellDirectory)}, {"targetFlow", s(n.targetFlow)}, {"projectPath", s(n.projectPath)}});
+            {"shellCommand", s(n.shellCommand)}, {"shellDirectory", s(n.shellDirectory)}, {"targetFlow", s(n.targetFlow)}, {"projectPath", s(n.projectPath)}, {"userChoices", choices}});
     }
     for (auto &e : edges) es.push_back({{"from", e.from}, {"to", e.to}, {"output", e.output}, {"input", e.input}});
     const auto next = qMax(nextNodeId, nodes.empty() ? quint64(1) : quint64(nodes.rbegin()->first) + 1);
@@ -135,6 +139,10 @@ Flow Flow::fromJson(const Json &j) {
         n.scriptLanguage = q(v.value("scriptLanguage", "python")); n.scriptPath = q(v.value("scriptPath", "")); n.scriptDirectory = q(v.value("scriptDirectory", ""));
         n.shellCommand = q(v.value("shellCommand", "")); n.shellDirectory = q(v.value("shellDirectory", ""));
         n.targetFlow = q(v.value("targetFlow", "")); n.projectPath = q(v.value("projectPath", ""));
+        if (v.contains("userChoices")) {
+            if (!v.at("userChoices").is_array()) error("ユーザー選択肢は配列で指定してください");
+            n.userChoices.clear(); for (const auto &choice : v.at("userChoices")) n.userChoices.push_back(q(choice.get<std::string>()));
+        }
         if (n.inputs > 256) error("入力数は256以下にしてください");
         for (auto &r : v.at("rules")) n.rules.push_back({q(r.at("variable")), q(r.at("value")), r.at("equals").get<bool>()});
         if (!f.nodes.emplace(n.id, n).second) error("ノードIDが重複しています");
@@ -264,6 +272,14 @@ QStringList Flow::validate() const {
         if (!terminal.contains(id)) errors << label + "終端に到達できません";
         for (unsigned p = 0; p < inputCount(n); ++p) if (!incoming.contains({id, p})) errors << label + QString("入力%1が未接続です").arg(p);
         if ((n.kind == Kind::All || n.kind == Kind::Any) && (n.inputs == 0 || n.inputs > 256)) errors << label + "入力数は1〜256にしてください";
+        if (n.kind == Kind::UserInput) {
+            if (n.userChoices.isEmpty()) errors << label + "ユーザー選択肢は1個以上必要です";
+            for (const auto &choice : n.userChoices) if (choice.trimmed().isEmpty()) errors << label + "選択肢の名前が空です";
+            for (unsigned port = 0; port < outputCount(n); ++port) {
+                bool connected = false; for (const auto &edge : edges) if (edge.from == id && edge.output == port) connected = true;
+                if (!connected) errors << label + QString("選択肢出力%1が未接続です").arg(port);
+            }
+        }
         if (isHostOperation(n.kind)) {
             if (n.targetFlow.isEmpty()) errors << label + "フローを選択してください";
             if (n.projectPath.trimmed().isEmpty()) errors << label + "プロジェクトパスが空です";

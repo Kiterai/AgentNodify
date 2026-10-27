@@ -100,6 +100,95 @@ void GuiTest::embeddedParameters() {
         QCOMPARE(preview->verticalScrollBar()->maximum(), 0);
     }
 }
+void GuiTest::removedOutputsPreservePaths_data() {
+    QTest::addColumn<bool>("branch"); QTest::addColumn<bool>("duplicates"); QTest::addColumn<int>("removed");
+    for(bool branch:{false,true}) for(bool duplicates:{false,true}) for(int removed:{0,1,2})
+        QTest::newRow(qPrintable(QString("%1 %2 remove %3").arg(branch?"branch":"user",duplicates?"duplicates":"unique").arg(removed))) << branch << duplicates << removed;
+}
+void GuiTest::removedOutputsPreservePaths() {
+    QFETCH(bool,branch); QFETCH(bool,duplicates); QFETCH(int,removed);
+    Graph graph; BasicGraphicsScene scene(graph); graph.replace(Flow::initial()); const auto id=graph.addNode(branch?"branch":"user_input");
+    auto node=graph.flow.nodes.at(id); node.rules.clear(); node.userChoices.clear();
+    for(int i=0;i<3;++i) { const auto name=duplicates?QString("Same"):QString::number(i); if(branch) node.rules.push_back({"x",name,true}); else node.userChoices.push_back(name); }
+    graph.updateNode(node); graph.addConnection({1,0,id,0}); std::vector<Id> targets;
+    for(unsigned port=0;port<graph.flow.outputCount(node);++port) {
+        const auto target=graph.addNode("branch"); auto pass=graph.flow.nodes.at(target); pass.rules.clear(); graph.updateNode(pass); targets.push_back(target);
+        graph.addConnection({id,port,target,0}); graph.addConnection({id,port,2,0}); graph.addConnection({target,0,2,0});
+    }
+    graph.addConnection({id,1,id,0}); const auto original=graph.flow.edges; auto *incoming=scene.connectionGraphicsObject({1,0,id,0}); auto *first=scene.connectionGraphicsObject({id,0,targets[0],0});
+    QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete); auto buttons=graph.form(id)->findChildren<QPushButton *>(branch?"removeRule":"removeChoice"); QCOMPARE(buttons.size(),3);
+    QTest::mouseClick(buttons[removed],Qt::LeftButton);
+    std::vector<Edge> expected;
+    for(auto edge:original) { if(edge.from==id && edge.output==unsigned(removed)) continue; if(edge.from==id && edge.output>unsigned(removed)) --edge.output; expected.push_back(edge); }
+    QVERIFY(graph.flow.edges==expected); QCOMPARE(scene.connectionGraphicsObject({1,0,id,0}),incoming);
+    if(removed!=0) QCOMPARE(scene.connectionGraphicsObject({id,0,targets[0],0}),first);
+    QVERIFY(!scene.connectionGraphicsObject({id,unsigned(removed),targets[size_t(removed)],0}));
+    for(const auto &edge:expected) QVERIFY(scene.connectionGraphicsObject({edge.from,edge.output,edge.to,edge.input}));
+    if(branch) { QCOMPARE(graph.portData(id,PortType::Out,2,PortRole::Caption).toString(),QString("それ以外")); QVERIFY(graph.connectionExists({id,2,targets.back(),0})); }
+    QVERIFY(Flow::fromJson(graph.flow.toJson()).edges==expected);
+}
+void GuiTest::bulkPortReduction() {
+    for(bool branch:{false,true}) {
+        Graph graph; BasicGraphicsScene scene(graph); graph.replace(Flow::initial()); const auto id=graph.addNode(branch?"branch":"user_input");
+        auto node=graph.flow.nodes.at(id); node.rules.clear(); node.userChoices={"A","B","C","D"}; for(auto name:node.userChoices) node.rules.push_back({"x",name,true}); graph.updateNode(node);
+        graph.addConnection({1,0,id,0}); for(unsigned port=0;port<graph.flow.outputCount(node);++port) graph.addConnection({id,port,2,0});
+        node.userChoices={"B","D"}; node.rules={node.rules[1],node.rules[3]}; graph.updateNode(node);
+        QCOMPARE(graph.flow.edges.size(),branch?size_t(4):size_t(3)); QVERIFY(graph.connectionExists({1,0,id,0})); QVERIFY(graph.connectionExists({id,0,2,0})); QVERIFY(graph.connectionExists({id,1,2,0}));
+        if(branch) { QVERIFY(graph.connectionExists({id,2,2,0})); node.rules.clear(); graph.updateNode(node); QCOMPARE(graph.flow.edges.size(),size_t(2)); QVERIFY(graph.connectionExists({id,0,2,0})); }
+    }
+    Graph graph; BasicGraphicsScene scene(graph); graph.replace(Flow::initial()); const auto id=graph.addNode("all"); auto node=graph.flow.nodes.at(id); node.inputs=3; graph.updateNode(node);
+    for(unsigned port=0;port<3;++port) graph.addConnection({1,0,id,port}); graph.addConnection({id,0,2,0}); node.inputs=2; graph.updateNode(node);
+    QCOMPARE(graph.flow.edges.size(),size_t(3)); QVERIFY(graph.connectionExists({1,0,id,0})); QVERIFY(graph.connectionExists({1,0,id,1})); QVERIFY(graph.connectionExists({id,0,2,0}));
+}
+void GuiTest::reducedUserInputExecutesSurvivingPath() {
+    QTemporaryDir directory; Graph graph; BasicGraphicsScene scene(graph); auto flow=Flow::initial(); Node input; input.id=3; input.kind=Kind::UserInput; input.userChoices={"Same","Same","Same"}; flow.nodes[3]=input;
+    for(Id id:{4u,5u,6u}) { Node pass; pass.id=id; pass.kind=Kind::Branch; flow.nodes[id]=pass; }
+    flow.edges={{1,3},{3,4,0,0},{3,5,1,0},{3,6,2,0},{4,2},{5,2},{6,2}}; graph.replace(flow);
+    auto removes=graph.form(3)->findChildren<QPushButton *>("removeChoice"); QTest::mouseClick(removes[1],Qt::LeftButton);
+    graph.deleteNode(5); QVERIFY(graph.flow.validate().isEmpty()); Runner runner; QSignalSpy done(&runner,&Runner::finished);
+    connect(&runner,&Runner::userInputRequested,&runner,[&](const UserInputRequest &request){QVERIFY(runner.submitUserInput(request.id,"answer",1));});
+    QVERIFY(runner.start(graph.flow,directory.path(),{})); QTRY_COMPARE(done.count(),1); QVERIFY(done[0][0].toBool()); QCOMPARE(runner.results().at(6).executions,quint64(1)); QVERIFY(runner.results().at(4).state==State::Skipped); QVERIFY(runner.results().at(2).output=="answer");
+}
+void GuiTest::appendedOutputsPreservePaths() {
+    Graph graph; BasicGraphicsScene scene(graph); graph.replace(Flow::initial()); const auto branch=graph.addNode("branch");
+    const auto condition=graph.addNode("branch"), fallback=graph.addNode("branch"), other=graph.addNode("branch");
+    graph.addConnection({1,0,branch,0}); graph.addConnection({branch,0,condition,0});
+    for(auto target:{fallback,other,branch}) graph.addConnection({branch,1,target,0});
+    for(auto target:{condition,fallback,other}) graph.addConnection({target,0,2,0});
+    const auto original=graph.flow.edges; auto *incoming=scene.connectionGraphicsObject({1,0,branch,0}), *matched=scene.connectionGraphicsObject({branch,0,condition,0}); QVERIFY(incoming); QVERIFY(matched);
+    auto expected=original; for(auto &edge:expected) if(edge.from==branch && edge.output==1) edge.output=2;
+    auto *form=graph.form(branch); QTest::mouseClick(form->findChild<QPushButton *>("addRule"),Qt::LeftButton);
+    QVERIFY(graph.flow.edges==expected); QCOMPARE(scene.connectionGraphicsObject({1,0,branch,0}),incoming); QCOMPARE(scene.connectionGraphicsObject({branch,0,condition,0}),matched);
+    for(auto target:{fallback,other,branch}) { QVERIFY(!scene.connectionGraphicsObject({branch,1,target,0})); QVERIFY(scene.connectionGraphicsObject({branch,2,target,0})); }
+    QCOMPARE(graph.portData(branch,PortType::Out,2,PortRole::Caption).toString(),QString("それ以外"));
+    auto node=graph.flow.nodes.at(branch); node.rules.push_back({"x","a",true}); node.rules.push_back({"x","b",true}); graph.updateNode(node);
+    expected=original; for(auto &edge:expected) if(edge.from==branch && edge.output==1) edge.output=4; QVERIFY(graph.flow.edges==expected);
+    for(auto target:{fallback,other,branch}) QVERIFY(scene.connectionGraphicsObject({branch,4,target,0}));
+    const auto empty=graph.addNode("branch"); auto noRules=graph.flow.nodes.at(empty); noRules.rules.clear(); graph.updateNode(noRules); graph.addConnection({1,0,empty,0}); graph.addConnection({empty,0,2,0});
+    noRules.rules.push_back({"x","a",true}); graph.updateNode(noRules); QVERIFY(graph.connectionExists({1,0,empty,0})); QVERIFY(graph.connectionExists({empty,1,2,0})); QVERIFY(!graph.connectionExists({empty,0,2,0}));
+    Graph user; BasicGraphicsScene userScene(user); user.replace(Flow::initial()); const auto input=user.addNode("user_input");
+    user.addConnection({1,0,input,0}); user.addConnection({input,0,2,0}); user.addConnection({input,0,input,0}); const auto paths=user.flow.edges;
+    auto *inputEdge=userScene.connectionGraphicsObject({1,0,input,0}), *outputEdge=userScene.connectionGraphicsObject({input,0,2,0}), *loopEdge=userScene.connectionGraphicsObject({input,0,input,0});
+    QTest::mouseClick(user.form(input)->findChild<QPushButton *>("addChoice"),Qt::LeftButton); QVERIFY(user.flow.edges==paths);
+    QCOMPARE(userScene.connectionGraphicsObject({1,0,input,0}),inputEdge); QCOMPARE(userScene.connectionGraphicsObject({input,0,2,0}),outputEdge); QCOMPARE(userScene.connectionGraphicsObject({input,0,input,0}),loopEdge);
+    auto choices=user.flow.nodes.at(input); choices.userChoices.append({"A","B","C"}); user.updateNode(choices); QVERIFY(user.flow.edges==paths);
+    user.addConnection({input,4,2,0}); const auto extended=user.flow.edges; choices.userChoices.push_back("D"); user.updateNode(choices); QVERIFY(user.flow.edges==extended); QVERIFY(userScene.connectionGraphicsObject({input,4,2,0}));
+    QVERIFY(Flow::fromJson(user.flow.toJson()).edges==extended); user.readOnly=true; choices.userChoices.push_back("Ignored"); const auto before=user.flow.toJson(); user.updateNode(choices); QVERIFY(user.flow.toJson()==before);
+}
+void GuiTest::appendedBranchExecutesElse() {
+    QTemporaryDir directory; Graph graph; BasicGraphicsScene scene(graph); auto flow=Flow::initial();
+    Node source; source.id=3; source.kind=Kind::Agent; source.model="fixture"; source.prompt="Say hello"; source.schema=R"({"type":"object","properties":{"result":{"type":"string"}},"required":["result"]})"; flow.nodes[3]=source;
+    Node branch; branch.id=4; branch.kind=Kind::Branch; branch.rules={{"result","never",true}}; flow.nodes[4]=branch;
+    for(Id id:{5u,6u,7u}) { Node pass; pass.id=id; pass.kind=Kind::Branch; flow.nodes[id]=pass; }
+    flow.edges={{1,3},{3,4},{4,5,0,0},{4,6,1,0},{5,2},{6,2},{7,2}}; graph.replace(flow);
+    branch.rules.push_back({"result","also never",true}); graph.updateNode(branch); graph.addConnection({4,1,7,0}); QVERIFY(graph.flow.validate().isEmpty());
+    AgentConfig config; config.codex=QCoreApplication::applicationDirPath()+"/fake_agent";
+#ifdef Q_OS_WIN
+    config.codex+=".exe";
+#endif
+    Runner runner; QSignalSpy done(&runner,&Runner::finished); QVERIFY(runner.start(graph.flow,directory.path(),config)); QTRY_COMPARE(done.count(),1); QVERIFY(done[0][0].toBool());
+    QCOMPARE(runner.results().at(6).executions,quint64(1)); QVERIFY(runner.results().at(5).state==State::Skipped); QVERIFY(runner.results().at(7).state==State::Skipped);
+}
 void GuiTest::branchAndInputForms() {
     Graph graph; BasicGraphicsScene scene(graph); graph.replace(Flow::initial());
     auto branch = graph.addNode("branch"); auto *form = graph.form(branch); QVERIFY(form);
@@ -117,7 +206,7 @@ void GuiTest::branchAndInputForms() {
     auto join = graph.addNode("and"); graph.addConnection({1, 0, join, 0});
     auto *joinForm = graph.form(join); auto *inputs = joinForm->findChild<QSpinBox *>("nodeInputs"); QVERIFY(inputs);
     inputs->setValue(3); QCOMPARE(graph.flow.nodes.at(join).inputs, 3u);
-    QVERIFY(graph.allConnectionIds(join).empty()); QCOMPARE(graph.form(join), joinForm);
+    QCOMPARE(graph.allConnectionIds(join).size(),size_t(1)); QCOMPARE(graph.form(join), joinForm);
 }
 void GuiTest::terminalAppearance() {
     Graph graph; BasicGraphicsScene scene(graph); graph.replace(Flow::initial());
@@ -571,6 +660,140 @@ void GuiTest::simplifiedCliSettings() {
     QVERIFY(!current.contains("timeout")); QVERIFY(!current.contains("workspaceWrite"));
     QCOMPARE(QString::fromStdString(current.at("claude")), QString("custom-claude"));
 }
+void GuiTest::projectStatusIndicators() {
+    QTemporaryDir directory; Window window(true); window.show();
+    const auto flowPath = window.documents_[0].path;
+    for (QString name : {"Running project", "Other project", "Idle project"}) {
+        const auto path = directory.filePath(name); QVERIFY(QDir().mkpath(path)); window.projects_.push_back({name,path,flowPath,{}});
+    }
+    auto icon = [&](int index, const char *name) -> QLabel * {
+        for (int row = 0; row < window.projectList_->count(); ++row) if (window.projectList_->item(row)->data(Qt::UserRole).toInt() == index)
+            return window.projectList_->itemWidget(window.projectList_->item(row))->findChild<QLabel *>(name);
+        return nullptr;
+    };
+    auto verify = [&](int index, bool running, bool waiting) {
+        auto *run = icon(index,"projectRunningIcon"), *input = icon(index,"projectInputWaitingIcon"); QVERIFY(run); QVERIFY(input);
+        QCOMPARE(run->property("active").toBool(),running); QCOMPARE(input->property("active").toBool(),waiting);
+        QCOMPARE(!run->pixmap().isNull(),running); QCOMPARE(!input->pixmap().isNull(),waiting);
+        if (running) { QVERIFY(run->toolTip().contains("実行中")); QVERIFY(run->accessibleName().contains("実行中")); }
+        if (waiting) { QVERIFY(input->toolTip().contains("入力待ち")); QVERIFY(input->accessibleName().contains("入力待ち")); }
+        auto colored = [](const QImage &image, bool amber) {
+            int pixels=0;
+            for(int y=0;y<image.height();++y) for(int x=0;x<image.width();++x) {
+                const auto color=image.pixelColor(x,y);
+                if(amber ? (color.red()>180 && color.green()>140 && color.blue()<160) : (color.blue()>180 && color.blue()>color.red()+30)) ++pixels;
+            }
+            return pixels>5;
+        };
+        QCOMPARE(colored(run->grab().toImage(),false),running);
+        QCOMPARE(colored(input->grab().toImage(),true),waiting);
+    };
+    auto flow = Flow::initial(); Node agent; agent.id=3; agent.kind=Kind::Agent; agent.model="fixture"; agent.prompt="SLEEP"; flow.nodes[3]=agent; flow.edges={{1,3},{3,2}};
+    window.editGraph_->replace(flow); window.changed(); window.refreshProjects(); window.tabs_->setCurrentIndex(1);
+    for (int index=0; index<3; ++index) verify(index,false,false);
+    window.config_.codex = QCoreApplication::applicationDirPath() + "/fake_agent";
+#ifdef Q_OS_WIN
+    window.config_.codex += ".exe";
+#endif
+    window.executeFlow(); QTRY_VERIFY(window.runner_->results().at(3).state==State::Running); verify(0,true,false); verify(1,false,false);
+    QVERIFY(window.coordinator_->running(window.projects_[0].historyId)); QVERIFY(!window.coordinator_->running(window.projects_[1].historyId));
+    window.coordinator_->cancelAll(); QTRY_VERIFY(!window.busy()); verify(0,false,false);
+    flow=Flow::initial(); Node input; input.id=3; input.kind=Kind::UserInput; flow.nodes[3]=input; flow.edges={{1,3},{3,2}};
+    window.editGraph_->replace(flow); window.changed(); window.executeFlow(); QTRY_COMPARE(window.inputPrompts_.size(),size_t(1)); verify(0,true,true); verify(1,false,false);
+    QVERIFY(window.coordinator_->start(window.coordinator_->projects[1])); QTRY_COMPARE(window.inputPrompts_.size(),size_t(2)); verify(0,true,true); verify(1,true,true); verify(2,false,false);
+    QVERIFY(!window.projectList_->isEnabled()); QVERIFY(window.projectList_->grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-project-status-icons.png")));
+    QString first,second;
+    for (const auto &prompt:window.inputPrompts_) if(prompt.projectId==window.projects_[0].historyId) first=prompt.request.id; else second=prompt.request.id;
+    QVERIFY(window.coordinator_->submitUserInput(first,"first",0)); QTRY_VERIFY(!window.coordinator_->running(window.projects_[0].historyId)); QVERIFY(window.busy()); verify(0,false,false); verify(1,true,true);
+    QVERIFY(window.coordinator_->submitUserInput(second,"second",0)); QTRY_VERIFY(!window.busy()); verify(0,false,false); verify(1,false,false);
+    window.projects_[1].results[3].state=State::Running; window.refreshProjectStatusIcons(); verify(1,false,false); // Historical results are not live status.
+    window.executeFlow(); QTRY_COMPARE(window.inputPrompts_.size(),size_t(1)); verify(0,true,true); window.coordinator_->cancelAll(); QTRY_VERIFY(!window.busy()); verify(0,false,false);
+    flow=Flow::initial(); flow.nodes[3]=input; input.id=4; flow.nodes[4]=input;
+    Node join; join.id=5; join.kind=Kind::All; flow.nodes[5]=join; flow.edges={{1,3},{1,4},{3,5,0,0},{4,5,0,1},{5,2}};
+    window.editGraph_->replace(flow); window.changed(); window.executeFlow(); QTRY_COMPARE(window.inputPrompts_.size(),size_t(2)); verify(0,true,true); QVERIFY(icon(0,"projectInputWaitingIcon")->toolTip().contains("2件"));
+    const auto one=window.inputPrompts_[0].request.id, two=window.inputPrompts_[1].request.id;
+    QVERIFY(window.coordinator_->submitUserInput(one,"one",0)); QTRY_COMPARE(window.inputPrompts_.size(),size_t(1)); verify(0,true,true); QVERIFY(icon(0,"projectInputWaitingIcon")->toolTip().contains("1件"));
+    QVERIFY(window.coordinator_->submitUserInput(two,"two",0)); QTRY_VERIFY(!window.busy()); verify(0,false,false);
+    flow=Flow::initial(); input.id=3; flow.nodes[3]=input; flow.edges={{1,3},{3,2}};
+    Node wait; wait.id=4; wait.kind=Kind::FlowWait; wait.targetFlow=flowPath; wait.projectPath="."; flow.nodes[4]=wait; flow.edges.push_back({1,4}); flow.edges.push_back({4,2});
+    window.editGraph_->replace(flow); window.changed(); QSignalSpy failed(window.runner_,&Runner::finished); window.executeFlow(); QTRY_COMPARE(failed.count(),1); QVERIFY(!failed[0][0].toBool()); verify(0,false,false); QVERIFY(window.inputPrompts_.empty());
+}
+void GuiTest::createdProjectStatusIcons() {
+    QTemporaryDir directory; Window window(true); window.show(); const auto path=window.documents_[0].path;
+    auto flow=Flow::initial(); Node create; create.id=3; create.kind=Kind::ProjectCreate; create.targetFlow=path; create.projectPath="generated"; flow.nodes[3]=create;
+    Node input; input.id=4; input.kind=Kind::UserInput; flow.nodes[4]=input; flow.edges={{1,3},{3,4},{4,2}};
+    window.editGraph_->replace(flow); window.changed(); window.projects_.push_back({"Parent",directory.path(),path,{}}); window.refreshProjects(); window.tabs_->setCurrentIndex(1); window.selectWorkNode(4);
+    window.executeFlow(); QTRY_COMPARE(window.inputPrompts_.size(),size_t(1)); QCOMPARE(window.projectList_->count(),2); QCOMPARE(window.project_,0); QCOMPARE(window.workSelected_,4u);
+    auto *parent=window.projectList_->itemWidget(window.projectList_->item(0)), *created=window.projectList_->itemWidget(window.projectList_->item(1));
+    QVERIFY(parent->findChild<QLabel *>("projectRunningIcon")->property("active").toBool()); QVERIFY(parent->findChild<QLabel *>("projectInputWaitingIcon")->property("active").toBool());
+    QVERIFY(!created->findChild<QLabel *>("projectRunningIcon")->property("active").toBool()); QVERIFY(!created->findChild<QLabel *>("projectInputWaitingIcon")->property("active").toBool());
+    window.coordinator_->cancelAll(); QVERIFY(!window.busy());
+}
+void GuiTest::userInputNodeForm() {
+    Window window(true); window.show(); auto *button = window.findChild<QPushButton *>("addNode_user_input"); QVERIFY(button); QTest::mouseClick(button,Qt::LeftButton);
+    const auto id = window.selected_; auto *form = window.editGraph_->form(id); QVERIFY(window.editGraph_->flow.nodes.at(id).kind == Kind::UserInput);
+    auto names = form->findChildren<QLineEdit *>("choiceName"); QCOMPARE(names.size(),1); QVERIFY(!form->findChild<QPushButton *>("removeChoice")->isEnabled());
+    window.editGraph_->addConnection({1,0,id,0}); window.editGraph_->addConnection({id,0,2,0});
+    names[0]->selectAll(); QTest::keyClicks(names[0],"Approve"); QCOMPARE(window.editGraph_->portData(id,PortType::Out,0,PortRole::Caption).toString(),QString("Approve")); QCOMPARE(window.editGraph_->allConnectionIds(id).size(),size_t(2));
+    QTest::mouseClick(form->findChild<QPushButton *>("addChoice"),Qt::LeftButton); QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+    QCOMPARE(window.editGraph_->flow.nodes.at(id).userChoices.size(),2); QCOMPARE(window.editGraph_->allConnectionIds(id).size(),size_t(2));
+    auto removes = form->findChildren<QPushButton *>("removeChoice"); QCOMPARE(removes.size(),2); QTest::mouseClick(removes.last(),Qt::LeftButton); QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+    QCOMPARE(window.editGraph_->flow.nodes.at(id).userChoices.size(),1); QVERIFY(!form->findChild<QPushButton *>("removeChoice")->isEnabled());
+    window.workGraph_->replace(window.editGraph_->flow); auto *readonly = window.workGraph_->form(id);
+    QVERIFY(readonly->findChild<QLineEdit *>("choiceName")->isReadOnly()); QVERIFY(!readonly->findChild<QPushButton *>("addChoice")->isEnabled());
+    for (auto state : {State::Pending,State::Running,State::Succeeded}) {
+        window.editGraph_->states[id] = state; NodeStyle style(QJsonObject::fromVariantMap(window.editGraph_->nodeData(id,NodeRole::Style).toMap())); QCOMPARE(style.GradientColor0,QColor("#f2a4a4")); QCOMPARE(style.FontColor,QColor("#40242c"));
+    }
+    window.editGraph_->setNodeData(1,NodeRole::Position,QPointF(0,140)); window.editGraph_->setNodeData(id,NodeRole::Position,QPointF(250,30)); window.editGraph_->setNodeData(2,NodeRole::Position,QPointF(850,140));
+    form->grab();
+    for (auto *edit : form->findChildren<QLineEdit *>()) QTRY_VERIFY2(edit->height() >= edit->sizeHint().height(),qPrintable(QString("edit height %1 / hint %2, form %3 / hint %4").arg(edit->height()).arg(edit->sizeHint().height()).arg(form->height()).arg(form->sizeHint().height())));
+    static_cast<GraphView *>(window.editView_)->zoomToFit(); QTest::qWait(50); window.editView_->viewport()->repaint(); QVERIFY(window.editView_->grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-user-input-node.png")));
+}
+void GuiTest::userInputWorkPanel() {
+    QTemporaryDir directory; Window window(true); window.show(); auto flow = Flow::initial();
+    Node source; source.id = 3; source.kind = Kind::Agent; source.model = "fixture"; source.prompt = "Say hello"; flow.nodes[3] = source;
+    Node input; input.id = 4; input.kind = Kind::UserInput; input.userChoices = {"送信", "別の経路"}; flow.nodes[4] = input;
+    for (Id id : {5u,6u}) { Node pass; pass.id = id; pass.kind = Kind::Branch; flow.nodes[id] = pass; }
+    flow.edges = {{1,3},{3,4},{4,5,0,0},{4,6,1,0},{5,2},{6,2}};
+    flow.nodes[1].position = {-150,140}; flow.nodes[3].position = {0,0}; flow.nodes[4].position = {450,0}; flow.nodes[5].position = {900,-160}; flow.nodes[6].position = {900,250}; flow.nodes[2].position = {1400,140};
+    window.editGraph_->replace(flow); window.changed();
+    window.projects_.push_back({"Input project",directory.path(),window.documents_[0].path,{}}); window.refreshProjects(); window.tabs_->setCurrentIndex(1); window.selectWorkNode(4);
+    window.config_.codex = QCoreApplication::applicationDirPath() + "/fake_agent";
+#ifdef Q_OS_WIN
+    window.config_.codex += ".exe";
+#endif
+    QSignalSpy done(window.runner_,&Runner::finished); window.executeFlow(); QTRY_COMPARE(window.inputPrompts_.size(),size_t(1));
+    QVERIFY(window.inputPanel_->isVisible()); QVERIFY(window.inputMessage_->toPlainText().contains("hello")); QVERIFY(window.inputText_->isEnabled()); QVERIFY(window.busy());
+    QVERIFY(window.inputPanel_->geometry().top() > window.workView_->geometry().bottom());
+    const QString answer = "日本語の回答\n{\"value\":42}"; window.inputText_->setPlainText(answer);
+    QVERIFY(!window.close()); QVERIFY(window.busy()); window.showWindow(); QCOMPARE(window.inputText_->toPlainText(),answer);
+    QCoreApplication::processEvents(); static_cast<GraphView *>(window.workView_)->zoomToFit(); QVERIFY(window.grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-user-input-work.png")));
+    QPushButton *choice = nullptr;
+    for (auto *candidate : window.inputPanel_->findChildren<QPushButton *>("userInputChoice")) if (candidate->property("choiceIndex").toInt()==1 && candidate->isVisible()) choice=candidate;
+    QVERIFY(choice); QCOMPARE(choice->text(),QString("別の経路")); QTest::mouseClick(choice,Qt::LeftButton);
+    QTRY_COMPARE(done.count(),1); QVERIFY(done[0][0].toBool()); QVERIFY(window.inputPrompts_.empty()); QVERIFY(!window.inputPanel_->isVisible());
+    QVERIFY(window.runner_->results().at(2).output == answer.toUtf8().toStdString()); QVERIFY(window.runner_->results().at(5).state == State::Skipped); QCOMPARE(window.runner_->results().at(6).executions,quint64(1)); QCOMPARE(window.historyList_->count(),1);
+    done.clear(); window.executeFlow(); QTRY_COMPARE(window.inputPrompts_.size(),size_t(1)); window.coordinator_->cancelAll(); QTRY_COMPARE(done.count(),1); QVERIFY(window.inputPrompts_.empty()); QVERIFY(!window.inputPanel_->isVisible());
+}
+void GuiTest::userInputParallelProjects() {
+    QTemporaryDir directory; Window window(true); window.show(); auto child = Flow::initial();
+    Node input; input.id = 3; input.kind = Kind::UserInput; child.nodes[3] = input; child.edges = {{1,3},{3,2}};
+    const auto childPath = directory.filePath("child.flow.json"); auto parent = Flow::initial();
+    Node run; run.id = 3; run.kind = Kind::FlowRun; run.targetFlow = childPath; run.projectPath = "."; parent.nodes[3] = run;
+    input.id = 4; parent.nodes[4] = input; parent.edges = {{1,3},{3,4},{4,2}};
+    window.editGraph_->replace(parent); window.changed(); window.documents_.push_back({child,childPath,false});
+    window.projects_.push_back({"Parent",directory.path(),window.documents_[0].path,{}}); window.projects_.push_back({"Child",directory.path(),childPath,{}}); window.refreshProjects(); window.tabs_->setCurrentIndex(1);
+    QSignalSpy done(window.runner_,&Runner::finished); window.executeFlow(); QTRY_COMPARE(window.inputPrompts_.size(),size_t(2));
+    const auto firstId = window.inputSelector_->currentData().toString(); window.inputText_->setPlainText("draft one"); window.inputSelector_->setCurrentIndex(1); const auto secondId = window.inputSelector_->currentData().toString();
+    QVERIFY(firstId != secondId); window.inputText_->setPlainText("draft two"); window.inputSelector_->setCurrentIndex(0); QCOMPARE(window.inputText_->toPlainText(),QString("draft one")); window.inputSelector_->setCurrentIndex(1); QCOMPARE(window.inputText_->toPlainText(),QString("draft two"));
+    QString parentRequest, childRequest;
+    for (const auto &prompt : window.inputPrompts_) { if (prompt.projectId == window.projects_[0].historyId) parentRequest=prompt.request.id; else childRequest=prompt.request.id; }
+    QVERIFY(!parentRequest.isEmpty()); QVERIFY(!childRequest.isEmpty());
+    QVERIFY(window.coordinator_->submitUserInput(parentRequest,"parent answer",0)); QTRY_COMPARE(done.count(),1); QVERIFY(done[0][0].toBool()); QVERIFY(window.busy()); QVERIFY(!window.runButton_->isEnabled());
+    QCOMPARE(window.inputPrompts_.size(),size_t(1)); QCOMPARE(window.inputSelector_->currentData().toString(),childRequest); QVERIFY(window.inputSelector_->currentText().contains("Child"));
+    QVERIFY(window.coordinator_->submitUserInput(childRequest,"child answer",0)); QTRY_VERIFY(!window.busy()); QVERIFY(window.inputPrompts_.empty()); QVERIFY(!window.inputPanel_->isVisible());
+    QVERIFY(window.projects_[0].results.at(2).output == "parent answer"); QVERIFY(window.projects_[1].results.at(2).output == "child answer"); QCOMPARE(window.projects_[1].history.size(),size_t(3));
+}
 void GuiTest::contextCheckboxColors() {
     Node node; node.id = 3; node.kind = Kind::Agent; NodeForm form(node); form.show(); QCoreApplication::processEvents();
     auto *checkbox = form.findChild<QCheckBox *>("retainContext"); QVERIFY(checkbox);
@@ -609,7 +832,7 @@ void GuiTest::allAndAnyForms() {
     QTest::mouseClick(any, Qt::LeftButton); const auto id = window.selected_; auto *form = window.editGraph_->form(id);
     QVERIFY(window.editGraph_->flow.nodes.at(id).kind == Kind::Any);
     auto *inputs = form->findChild<QSpinBox *>("nodeInputs"); QVERIFY(inputs); QCOMPARE(inputs->minimum(), 1); QCOMPARE(inputs->maximum(), 256);
-    window.editGraph_->addConnection({1,0,id,0}); inputs->setValue(3); QVERIFY(window.editGraph_->allConnectionIds(id).empty());
+    window.editGraph_->addConnection({1,0,id,0}); inputs->setValue(3); QCOMPARE(window.editGraph_->allConnectionIds(id).size(),size_t(1));
     QCOMPARE(window.editGraph_->flow.nodes.at(id).inputs, 3u);
     QCOMPARE(window.editGraph_->portData(id, PortType::In, 2, PortRole::Caption).toString(), QString("入力 2"));
     inputs->setValue(2); window.editGraph_->addConnection({1,0,id,1}); window.editGraph_->addConnection({1,0,id,0}); window.editGraph_->addConnection({id,0,2,0});
@@ -617,7 +840,7 @@ void GuiTest::allAndAnyForms() {
     auto *readonly = window.workGraph_->form(id)->findChild<QSpinBox *>("nodeInputs"); QVERIFY(readonly); QTest::keyClick(readonly, Qt::Key_Up); QCOMPARE(readonly->value(), 2);
     QSignalSpy done(window.runner_, &Runner::finished); window.executeFlow(); QTRY_COMPARE(done.count(), 1); QVERIFY(done[0][0].toBool());
     QCOMPARE(window.historyList_->count(), 2); QVERIFY(window.output_->toPlainText().contains("event")); QVERIFY(window.output_->toPlainText().contains("input"));
-    QVERIFY(window.runner_->results().at(2).output == Json({{"event",0},{"input",Json::object()}}));
+    QVERIFY(window.runner_->results().at(2).output == Json({{"event",1},{"input",Json::object()}})); // Preserved port 0 arrives before the newly added port 1.
 }
 void GuiTest::trayVisibilityAndIdleExit() {
     Window window(true); window.show(); QCoreApplication::processEvents();

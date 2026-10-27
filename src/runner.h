@@ -44,6 +44,12 @@ struct AgentConfig {
 #endif
     bool opencodeStandalone = false;
 };
+struct UserInputRequest {
+    QString id;
+    Id node = 0;
+    Json message;
+    QStringList choices;
+};
 // Every firing enqueues an event. Ordinary nodes consume one event; All consumes
 // exactly one event from every input FIFO, then waits for a fresh complete set.
 // Any consumes one event from the oldest nonempty input FIFO across all ports.
@@ -54,6 +60,7 @@ public:
     ~Runner() override;
     bool start(const Flow &flow, const QString &directory, const AgentConfig &config, const QString &flowPath = {});
     void cancel();
+    bool submitUserInput(const QString &requestId, const QString &text, unsigned choice);
     bool running() const { return active_; }
     const std::map<Id, Result> &results() const { return results_; }
     using HostCompletion = std::function<void(const Json &, const QString &)>;
@@ -65,6 +72,8 @@ signals:
     void changed(unsigned int id);
     void fired(unsigned int id, quint64 execution, QString outputJson);
     void finished(bool success, QString message);
+    void userInputRequested(const an::UserInputRequest &request);
+    void userInputClosed(QString requestId);
 private:
     struct Job {
         QProcess *process = nullptr;
@@ -86,6 +95,8 @@ private:
     quint64 arrival_ = 0;
     std::map<Id, std::unique_ptr<Job>> jobs_;
     std::set<Id> pendingHost_;
+    struct PendingInput { UserInputRequest request; bool submitted = false; };
+    std::map<Id, PendingInput> pendingInput_;
     bool active_ = false;
     bool pumping_ = false;
     bool pumpScheduled_ = false;
@@ -107,3 +118,4 @@ Json decodeAgentOutput(const QString &agent, const QByteArray &data, bool struct
 QString decodeAgentSessionId(const QString &agent, const QByteArray &data);
 }
 Q_DECLARE_METATYPE(an::NodeExecution)
+Q_DECLARE_METATYPE(an::UserInputRequest)

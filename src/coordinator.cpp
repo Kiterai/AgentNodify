@@ -34,11 +34,19 @@ bool Coordinator::running() const {
     for (const auto &[key, session] : sessions_) if (session->active) return true;
     return false;
 }
+bool Coordinator::running(const QString &projectId) const {
+    for (const auto &[key, session] : sessions_) if (session->active && session->projectId == projectId) return true;
+    return false;
+}
 void Coordinator::cancelAll() {
     stopping_ = true;
     // Cancellation callbacks can detach waiters, but never erase sessions.
     for (const auto &[key, session] : sessions_) if (session->active && session->runner) session->runner->cancel();
     stopping_ = false;
+}
+bool Coordinator::submitUserInput(const QString &requestId, const QString &text, unsigned choice) {
+    const auto owner = inputOwners_.find(requestId);
+    return owner != inputOwners_.end() && owner->second && owner->second->submitUserInput(requestId, text, choice);
 }
 void Coordinator::detach(Runner *caller) {
     for (auto &[key, session] : sessions_)
@@ -62,10 +70,14 @@ bool Coordinator::start(const Project &project, Runner *runner) {
     if (flow == flows.end() || !QFileInfo(project.directory).isDir() || !flow->second.validate().isEmpty()) return false;
     for (const auto &[id, node] : flow->second.nodes) if (node.kind == Kind::Agent && node.model.isEmpty()) return false;
     if (!runner) runner = new Runner(this);
-    auto session = std::make_shared<Session>(); session->runner = runner; session->active = true;
+    auto session = std::make_shared<Session>(); session->projectId = project.id; session->runner = runner; session->active = true;
     sessions_[identity] = session; callers_[runner] = identity;
     runner->hostHandler = [this](Runner *caller, Id id, const Node &node, const QString &path, Runner::HostCompletion done) { operation(caller, id, node, path, std::move(done)); };
     runner->cancelHostOperations = [this](Runner *caller) { detach(caller); };
+    connect(runner, &Runner::userInputRequested, this, [this, runner, id = project.id](const UserInputRequest &request) {
+        inputOwners_[request.id] = runner; emit userInputRequested(id, request);
+    });
+    connect(runner, &Runner::userInputClosed, this, [this](const QString &id) { inputOwners_.erase(id); emit userInputClosed(id); });
     connect(runner, &Runner::executionChanged, this, [this, id = project.id](const NodeExecution &entry) { emit executionChanged(id, entry); });
     connect(runner, &Runner::changed, this, [this, runner, id = project.id](Id node) { if (runner->results().contains(node)) emit resultChanged(id, node, runner->results().at(node)); });
     connect(runner, &QObject::destroyed, this, [this, runner, session] {

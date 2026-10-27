@@ -5,6 +5,7 @@
 #include <QtNodes/NodeData>
 #include <QSize>
 #include <QPointer>
+#include <optional>
 #include "nodeform.h"
 
 namespace an {
@@ -21,7 +22,7 @@ public:
     int frame = 0;
     void replace(const Flow &value);
     void setHighlightedNode(Id id);
-    void updateNode(const Node &node);
+    void updateNode(const Node &node, std::optional<unsigned> removedOutput = {});
     NodeForm *form(Id id) const;
     QtNodes::NodeId newNodeId() override;
     std::unordered_set<Id> allNodeIds() const override;

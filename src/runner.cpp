@@ -120,6 +120,8 @@ void Runner::finishExecution(Id id) {
     execution.finishedAt = QDateTime::currentDateTimeUtc(); emit executionChanged(execution);
 }
 void Runner::stopJobs() {
+    auto pending = std::move(pendingInput_); pendingInput_.clear();
+    for (const auto &[id, input] : pending) emit userInputClosed(input.request.id);
     agentSessions_.clear();
     pendingHost_.clear();
     if (cancelHostOperations) cancelHostOperations(this);
@@ -135,6 +137,22 @@ void Runner::stopJobs() {
         j->process->deleteLater();
     }
     jobs_.clear();
+}
+bool Runner::submitUserInput(const QString &requestId, const QString &text, unsigned choice) {
+    if (!active_) return false;
+    for (auto &[id, pending] : pendingInput_) if (pending.request.id == requestId) {
+        if (pending.submitted || choice >= unsigned(pending.request.choices.size())) return false;
+        pending.submitted = true;
+        const auto generation = generation_;
+        QTimer::singleShot(0, this, [this, generation, requestId, id, text, choice] {
+            if (!active_ || generation_ != generation || !pendingInput_.contains(id) || pendingInput_.at(id).request.id != requestId) return;
+            pendingInput_.erase(id); emit userInputClosed(requestId);
+            if (!active_ || generation_ != generation) return;
+            complete(id, Json(text.toUtf8().toStdString()), int(choice)); schedulePump();
+        });
+        return true;
+    }
+    return false;
 }
 void Runner::cancel() {
     if (!active_) return;
@@ -176,7 +194,7 @@ void Runner::pump() {
         progress = false;
         for (auto &[id, n] : flow_.nodes) {
             if (!active_ || budget == 0) break;
-            if (jobs_.contains(id) || pendingHost_.contains(id)) continue; // Serial per node, FIFO while busy.
+            if (jobs_.contains(id) || pendingHost_.contains(id) || pendingInput_.contains(id)) continue; // Serial per node, FIFO while busy.
             auto &inputs = tokens_.at(id);
             bool ready = n.kind == Kind::Start ? startPending_ : true;
             if (n.kind == Kind::Any) {
@@ -203,6 +221,10 @@ void Runner::pump() {
             try {
                 if (n.kind == Kind::Agent || n.kind == Kind::Script || n.kind == Kind::Shell) {
                     if (active_) launch(id, input);
+                }
+                else if (n.kind == Kind::UserInput) {
+                    UserInputRequest request{QUuid::createUuid().toString(QUuid::WithoutBraces), id, input, n.userChoices};
+                    pendingInput_[id] = {request, false}; emit userInputRequested(request);
                 }
                 else if (isHostOperation(n.kind)) {
                     if (!hostHandler) throw std::runtime_error("host_unavailable");
@@ -233,7 +255,7 @@ void Runner::pump() {
     if (!active_) return;
     // Even a synchronous infinite loop must yield to cancellation / GUI events.
     if (budget == 0) { schedulePump(); return; }
-    if (!jobs_.empty() || !pendingHost_.empty()) return;
+    if (!jobs_.empty() || !pendingHost_.empty() || !pendingInput_.empty()) return;
     for (auto &[id, inputs] : tokens_) for (auto &queue : inputs) if (!queue.empty()) {
         fail(id, "実行が停止しました（Allの全入力が揃わず、発火可能なノードがありません）"); return;
     }

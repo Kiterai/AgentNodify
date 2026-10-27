@@ -37,5 +37,16 @@ private slots:
     void allAndAnyForms();
     void agentContextSetting();
     void contextCheckboxColors();
+    void userInputNodeForm();
+    void userInputWorkPanel();
+    void userInputParallelProjects();
+    void projectStatusIndicators();
+    void createdProjectStatusIcons();
+    void appendedOutputsPreservePaths();
+    void appendedBranchExecutesElse();
+    void removedOutputsPreservePaths_data();
+    void removedOutputsPreservePaths();
+    void bulkPortReduction();
+    void reducedUserInputExecutesSurvivingPath();
 };
 }

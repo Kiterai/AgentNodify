@@ -72,9 +72,10 @@ QString nodeDescription(Kind kind) {
     case Kind::Agent: return "選択したエージェントへ1タスクを渡します。前段の値は ${name}、${obj.key}、${items[0]} で参照できます。入力を受けるたびに実行します。出力スキーマは省略可能です。";
     case Kind::Script: return "PythonまたはJavaScriptファイルをシステムのPython／Node.jsで実行します。前段データをUTF-8のJSONで標準入力へ渡し、標準出力を次段へ渡します（JSON、または文字列）。相対パスはプロジェクト基準です。実行ディレクトリの省略時はスクリプトのある場所を使います。";
     case Kind::Shell: return "シェルコマンドを実行します（Windows: PowerShell、その他: /bin/sh）。前段の値を ${name} 等でそのまま置換します。出力は exit_code・stdout・stderr を持つJSONです。実行ディレクトリの省略時・相対パスの基準はフローの保存先です。信頼できる入力だけを使用してください。";
-    case Kind::All: return "全入力の発火を待ち、入力ポート番号順の配列を出力します。発火後は待ち合わせ状態をリセットし、再び新しい全入力を待ちます。先着した入力はFIFOで保持します。ポート数の変更時は再接続が必要です。";
-    case Kind::Any: return "いずれかの入力にイベントが届くたびに発火します。出力はevent（入力の0始まりインデックス）とinput（その入力データ）です。複数イベントは到着順に1件ずつ処理します。ポート数の変更時は再接続が必要です。";
-    case Kind::Branch: return "上から順に条件を評価し、最初に一致した出力へ伝播します。一致しない場合はelseへ進みます。比較は文字列で行います。条件数の変更時は再接続が必要です。";
+    case Kind::All: return "全入力の発火を待ち、入力ポート番号順の配列を出力します。発火後は待ち合わせ状態をリセットし、再び新しい全入力を待ちます。先着した入力はFIFOで保持します。入力数を減らすと、削除した入力端への接続だけを消します。";
+    case Kind::Any: return "いずれかの入力にイベントが届くたびに発火します。出力はevent（入力の0始まりインデックス）とinput（その入力データ）です。複数イベントは到着順に1件ずつ処理します。入力数を減らすと、削除した入力端への接続だけを消します。";
+    case Kind::UserInput: return "作業画面の中央下部でユーザー入力を待ちます。前段データをメッセージとして表示し、選択したボタンの出力端だけへ入力文字列を渡します。選択肢は最低1個です。選択肢の追加・削除でも残った端への接続を維持します。";
+    case Kind::Branch: return "上から順に条件を評価し、最初に一致した出力へ伝播します。一致しない場合はelseへ進みます。比較は文字列で行います。条件の追加・削除でも残った条件と「それ以外」への接続を維持します。";
     }
     return {};
 }
@@ -139,6 +140,7 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
         QWidget#nodeForm QPushButton { background:#314159; color:#dce5f3; border:1px solid #4b5d79; border-radius:4px; padding:4px 8px; }
         QWidget#nodeForm QPushButton:hover { background:#455d7f; }
     )");
+    if (node.kind == Kind::UserInput) setStyleSheet(styleSheet() + "QWidget#nodeForm, QWidget#nodeForm QLabel { color:#40242c; }");
     auto *layout = new QVBoxLayout(this); layout->setContentsMargins(8, 8, 8, 8); layout->setSpacing(6);
     auto *form = new QFormLayout; form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     title_ = new QLineEdit(node.title); title_->setObjectName("nodeTitle"); form->addRow("名前", title_);
@@ -256,9 +258,19 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
         form->addRow("フロー", targetFlow_); form->addRow("プロジェクトパス", projectPath_); setFlowChoices({});
         connect(targetFlow_, &QComboBox::currentIndexChanged, this, [this] { if (!updating_) { node_.targetFlow = targetFlow_->currentData().toString(); publish(); } });
         connect(projectPath_, &QLineEdit::textEdited, this, [this](const QString &text) { node_.projectPath = text; publish(); });
+    } else if (node.kind == Kind::UserInput) {
+        layout->addWidget(new QLabel("ユーザー選択肢"));
+        choices_ = new QWidget; choices_->setObjectName("userChoices"); choicesLayout_ = new QVBoxLayout(choices_);
+        choicesLayout_->setContentsMargins(0, 0, 0, 0); choicesLayout_->setSpacing(4); layout->addWidget(choices_);
+        addChoice_ = new QPushButton("＋ 選択肢"); addChoice_->setObjectName("addChoice"); layout->addWidget(addChoice_);
+        connect(addChoice_, &QPushButton::clicked, this, [this] {
+            if (readOnly_) return;
+            node_.userChoices.push_back(QString("選択肢 %1").arg(node_.userChoices.size() + 1)); rebuildChoices(); publish();
+        });
+        rebuildChoices();
     } else if (node.kind == Kind::All || node.kind == Kind::Any) {
         inputs_ = new QSpinBox; inputs_->setObjectName("nodeInputs"); inputs_->setRange(1, 256); inputs_->setValue(int(node.inputs));
-        inputs_->setToolTip("入力ポート数を変更すると、このノードの接続は解除されます。");
+        inputs_->setToolTip("残った入力端と出力端への接続は維持し、削除した入力端への接続だけを消します。");
         form->addRow("入力ポート数", inputs_);
         connect(inputs_, &QSpinBox::valueChanged, this, [this](int count) { if (!updating_) { node_.inputs = unsigned(count); publish(); } });
     } else if (node.kind == Kind::Branch) {
@@ -272,7 +284,15 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
         if (qobject_cast<QLineEdit *>(widget) || qobject_cast<QComboBox *>(widget) || qobject_cast<QSpinBox *>(widget) || qobject_cast<QCheckBox *>(widget)) widget->installEventFilter(this);
     layout->activate(); setFixedHeight(layout->sizeHint().height()); scheduleResize();
 }
+bool NodeForm::event(QEvent *event) {
+    const bool handled = QWidget::event(event);
+    // Newly added choice rows can receive their final stylesheet/font metrics
+    // after the initial fixed height was computed. Re-fit instead of clipping.
+    if (layout() && (event->type() == QEvent::LayoutRequest || event->type() == QEvent::StyleChange || event->type() == QEvent::FontChange)) scheduleResize();
+    return handled;
+}
 bool NodeForm::eventFilter(QObject *object, QEvent *event) {
+    if (event->type() == QEvent::LayoutRequest || event->type() == QEvent::StyleChange || event->type() == QEvent::FontChange || event->type() == QEvent::Polish) scheduleResize();
     if (event->type() == QEvent::FocusIn || event->type() == QEvent::MouseButtonPress) emit activated();
     const bool preview = qobject_cast<TextPreview *>(object) || (prompt_ && object == prompt_->viewport()) || (schema_ && object == schema_->viewport()) || (shellCommand_ && object == shellCommand_->viewport());
     if (readOnly_ && !preview &&
@@ -283,6 +303,8 @@ bool NodeForm::eventFilter(QObject *object, QEvent *event) {
 void NodeForm::setReadOnly(bool readOnly) {
     readOnly_ = readOnly;
     if (retainContext_) retainContext_->setEnabled(!readOnly);
+    if (addChoice_) addChoice_->setEnabled(!readOnly);
+    if (choices_) for (auto *remove : choices_->findChildren<QPushButton *>("removeChoice")) remove->setEnabled(!readOnly && node_.userChoices.size() > 1);
     if (scriptFileBrowse_) scriptFileBrowse_->setEnabled(!readOnly);
     if (scriptDirectoryBrowse_) scriptDirectoryBrowse_->setEnabled(!readOnly);
     if (shellDirectoryBrowse_) shellDirectoryBrowse_->setEnabled(!readOnly);
@@ -339,6 +361,7 @@ void NodeForm::populateEfforts() {
 }
 void NodeForm::publish() { if (!updating_) { emit edited(); scheduleResize(); } }
 void NodeForm::setNode(const Node &node) {
+    const bool choicesChanged = node_.userChoices != node.userChoices;
     const bool modelChanged = node_.agent != node.agent || node_.model != node.model;
     bool rulesChanged = node_.rules.size() != node.rules.size();
     if (!rulesChanged) for (size_t i = 0; i < node.rules.size(); ++i) {
@@ -367,7 +390,26 @@ void NodeForm::setNode(const Node &node) {
         effort_->setCurrentIndex(effort_->findData(node.effort));
     }
     if (rules_ && rulesChanged) rebuildRules();
+    if (choices_ && choicesChanged) rebuildChoices();
     updating_ = false; scheduleResize();
+}
+void NodeForm::rebuildChoices() {
+    while (auto *item = choicesLayout_->takeAt(0)) {
+        if (auto *widget = item->widget()) { widget->hide(); widget->deleteLater(); }
+        delete item;
+    }
+    for (qsizetype i = 0; i < node_.userChoices.size(); ++i) {
+        auto *row = new QWidget; auto *layout = new QHBoxLayout(row); layout->setContentsMargins(0, 0, 0, 0);
+        auto *name = new QLineEdit(node_.userChoices[i]); name->setObjectName("choiceName"); name->setMinimumWidth(0);
+        name->setToolTip(QString("出力 %1 の表示名とボタンの文字列").arg(i)); layout->addWidget(name, 1);
+        auto *remove = new QPushButton("×"); remove->setObjectName("removeChoice"); remove->setFixedWidth(28); layout->addWidget(remove); choicesLayout_->addWidget(row);
+        connect(name, &QLineEdit::textEdited, this, [this, i](const QString &text) { if (!updating_ && !readOnly_ && i < node_.userChoices.size()) { node_.userChoices[i] = text; publish(); } });
+        connect(remove, &QPushButton::clicked, this, [this, i] {
+            if (readOnly_ || node_.userChoices.size() <= 1 || i >= node_.userChoices.size()) return;
+            node_.userChoices.removeAt(i); rebuildChoices(); emit outputRemoved(unsigned(i)); scheduleResize();
+        });
+    }
+    setReadOnly(readOnly_); scheduleResize();
 }
 void NodeForm::rebuildRules() {
     while (auto *item = rulesLayout_->takeAt(0)) {
@@ -390,8 +432,8 @@ void NodeForm::rebuildRules() {
         connect(value, &QLineEdit::textEdited, card, [this, i](const QString &text) { if (i < node_.rules.size()) { node_.rules[i].value = text; publish(); } });
         connect(op, &QComboBox::currentIndexChanged, card, [this, i](int index) { if (i < node_.rules.size()) { node_.rules[i].equals = index == 0; publish(); } });
         connect(remove, &QPushButton::clicked, card, [this, i] {
-            if (i >= node_.rules.size()) return;
-            node_.rules.erase(node_.rules.begin() + i); rebuildRules(); publish();
+            if (readOnly_ || i >= node_.rules.size()) return;
+            node_.rules.erase(node_.rules.begin() + i); rebuildRules(); emit outputRemoved(unsigned(i)); scheduleResize();
         });
     }
     rulesLayout_->addWidget(new QLabel("それ以外")); scheduleResize();

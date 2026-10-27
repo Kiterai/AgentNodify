@@ -15,6 +15,8 @@
 #include <QtNodes/GraphicsView>
 
 class QSystemTrayIcon;
+class QComboBox;
+class QHBoxLayout;
 
 namespace an {
 class Window : public QMainWindow {
@@ -75,12 +77,22 @@ private:
     ContentView *output_;
     QLabel *textTitle_, *textError_, *status_, *nodeStatus_;
     QPushButton *runButton_, *stopButton_;
+    struct InputPrompt { QString projectId; UserInputRequest request; QString draft; };
+    std::vector<InputPrompt> inputPrompts_;
+    QString activeInput_;
+    QWidget *inputPanel_ = nullptr;
+    QComboBox *inputSelector_ = nullptr;
+    ContentView *inputMessage_ = nullptr;
+    QPlainTextEdit *inputText_ = nullptr;
+    QHBoxLayout *inputButtons_ = nullptr;
+    void refreshUserInputPanel();
     void buildUi();
     void refreshActivities();
     void selectFlow(int index);
     void selectNode(Id id);
     void showText(const QString &field);
     void refreshProjects();
+    void refreshProjectStatusIcons();
     void selectProject(int index);
     void selectWorkNode(Id id);
     void refreshWorkHistory();

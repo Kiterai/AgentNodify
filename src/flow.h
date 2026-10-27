@@ -1,6 +1,7 @@
 #pragma once
 #include <nlohmann/json.hpp>
 #include <QString>
+#include <QStringList>
 #include <QPointF>
 #include <map>
 #include <vector>
@@ -8,7 +9,7 @@
 namespace an {
 using Json = nlohmann::json;
 using Id = unsigned int;
-enum class Kind { Start, End, Agent, All, Branch, Script, Shell, ProjectCreate, FlowRun, FlowWait, Any };
+enum class Kind { Start, End, Agent, All, Branch, Script, Shell, ProjectCreate, FlowRun, FlowWait, Any, UserInput };
 bool isHostOperation(Kind kind);
 QString kindName(Kind kind);
 QString kindKey(Kind kind);
@@ -35,6 +36,7 @@ struct Node {
     QString scriptPath, scriptDirectory;
     QString shellCommand, shellDirectory;
     QString targetFlow, projectPath;
+    QStringList userChoices = {QStringLiteral("OK")};
 };
 struct Edge {
     Id from, to;

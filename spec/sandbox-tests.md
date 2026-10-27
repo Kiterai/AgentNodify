@@ -144,7 +144,7 @@ CodexはWindows既定TLSで`workspace routing discovery failed`となりまし�
 | OpenCode実モデル and | 最新の再確認で成功。並列ノード各2回、ANDの新しい全入力の待ち合わせ2回を確認 |
 | Claude Code実モデル text / json / loop / and | 全4ケース成功（`claude-haiku-5-5`、Proログイン後） |
 | CTest core / gui_smoke | 成功 |
-| CTest gui | GUI改修後の再ビルド・テスト修正を行い成功（QtTest 33 passed / 0 failed、チェックボックス配色・コンテキスト設定・All／Any・トレイの表示・復帰・終了確認・非表示中の実行継続を含む） |
+| CTest gui | GUI改修後の再ビルド・テスト修正を行い成功（QtTest 54 passed / 0 failed、端の増減時の接続維持・プロジェクト状態アイコン・ユーザ入力フォーム・チェックボックス配色・コンテキスト設定・All／Any・トレイの表示・復帰・終了確認・非表示中の実行継続を含む） |
 | モデル一覧：Codex | 成功（7件、app-serverの`model/list`） |
 | モデル一覧：Claude Code | 成功（13件、制御プロトコル初期化応答の`models`） |
 | モデル一覧：OpenCode | 成功（25件、`models --standalone`） |
@@ -155,6 +155,7 @@ CodexはWindows既定TLSで`workspace routing discovery failed`となりまし�
 | CTest coordinator | 成功（QtTest 27 passed / 0 failed / 0 skipped、fake_agent使用、プロジェクト作成・非同期開始・待機・並列・循環検出・中止） |
 | CTest instance | 成功（QtTest 6 passed / 0 failed、別プロセスによる重複拒否・通常解放・強制終了後の回復・ファイルエラー） |
 | CTest context | 成功（QtTest 34 passed / 0 failed、3エージェントの引き継ぎオン／オフ・ループ個別履歴・ノード／Runner間分離・中止／エラー・再実行時のリセット。fake_agent使用、5回連続成功も確認） |
+| CTest userinput | 成功（QtTest 12 passed / 0 failed、ユーザー待機・選択分岐・文字列出力・ループ／FIFO／並列・個別履歴・中止／エラー・子プロジェクトへの回答） |
 
 最新のサンドボックス内実テストは3エージェント×4ケースの全12件が成功。
 以前のOpenCodeの並列起動2回の失敗（`Standalone server exited before reporting readiness`）は

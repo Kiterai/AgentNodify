@@ -27,18 +27,58 @@ void Graph::setHighlightedNode(Id id) {
     if (nodeExists(previous)) emit nodeUpdated(previous);
     if (nodeExists(id)) emit nodeUpdated(id);
 }
-void Graph::updateNode(const Node &node) {
+void Graph::updateNode(const Node &node, std::optional<unsigned> removedOutput) {
     if (readOnly || !nodeExists(node.id)) return;
-    // Changing indexed ports invalidates attached edges, never silently reassign them.
     const auto &old = flow.nodes.at(node.id);
-    if (flow.inputCount(old) != flow.inputCount(node) || flow.outputCount(old) != flow.outputCount(node)) {
-        auto attached = allConnectionIds(node.id);
-        for (auto c : attached) deleteConnection(c);
+    const auto oldOutputs = flow.outputCount(old), newOutputs = flow.outputCount(node);
+    std::vector<int> ports(oldOutputs, -1);
+    for (unsigned i = 0; i < qMin(oldOutputs, newOutputs); ++i) ports[i] = int(i);
+    if (old.kind == node.kind && (node.kind == Kind::Branch || node.kind == Kind::UserInput)) {
+        const unsigned oldCount = node.kind == Kind::Branch ? unsigned(old.rules.size()) : unsigned(old.userChoices.size());
+        const unsigned newCount = node.kind == Kind::Branch ? unsigned(node.rules.size()) : unsigned(node.userChoices.size());
+        for (unsigned i = 0; i < oldCount; ++i) ports[i] = i < newCount ? int(i) : -1;
+        if (newCount < oldCount) {
+            if (removedOutput && oldCount == newCount + 1 && *removedOutput < oldCount) {
+                // UI removals carry their exact index: duplicate names/rules
+                // must not make us disconnect a different, surviving choice.
+                for (unsigned i = 0; i < oldCount; ++i) ports[i] = i == *removedOutput ? -1 : int(i > *removedOutput ? i - 1 : i);
+            } else {
+                // Model updates may remove multiple entries in one operation.
+                // Match the surviving subsequence; fall back to index semantics
+                // when entries were also renamed/edited at the same time.
+                std::vector<int> matched(oldCount, -1); unsigned next = 0;
+                for (unsigned i = 0; i < oldCount && next < newCount; ++i) {
+                    const bool equal = node.kind == Kind::UserInput ? old.userChoices[i] == node.userChoices[next] :
+                        old.rules[i].variable == node.rules[next].variable && old.rules[i].value == node.rules[next].value && old.rules[i].equals == node.rules[next].equals;
+                    if (equal) matched[i] = int(next++);
+                }
+                if (next == newCount) for (unsigned i = 0; i < oldCount; ++i) ports[i] = matched[i];
+            }
+        }
+        if (node.kind == Kind::Branch) ports[oldCount] = int(newCount); // Else always stays else.
     }
+    std::vector<Edge> kept; std::vector<ConnectionId> removed, moved;
+    for (const auto &edge : flow.edges) {
+        auto updated = edge; bool drop = edge.to == node.id && edge.input >= flow.inputCount(node);
+        if (edge.from == node.id) {
+            if (edge.output >= ports.size() || ports[edge.output] < 0) drop = true;
+            else updated.output = unsigned(ports[edge.output]);
+        }
+        if (drop) removed.push_back(connection(edge));
+        else {
+            kept.push_back(updated);
+            if (!(updated == edge)) { removed.push_back(connection(edge)); moved.push_back(connection(updated)); }
+        }
+    }
+    // Publish a consistent model before notifying QtNodes. Keep the original
+    // edge order for FIFO fan-out, and rebuild only removed/reindexed graphics.
     auto updated = node; updated.position = old.position;
-    flow.nodes[node.id] = updated;
+    flow.nodes[node.id] = updated; flow.edges = std::move(kept);
+    for (const auto &port : removed) emit connectionDeleted(port);
     if (forms_.contains(node.id) && forms_.at(node.id)) forms_.at(node.id)->setNode(updated);
-    emit nodeUpdated(node.id); emit edited();
+    emit nodeUpdated(node.id);
+    for (const auto &port : moved) emit connectionCreated(port);
+    emit edited();
 }
 void Graph::setFlowChoices(const std::vector<std::pair<QString, QString>> &choices) {
     flowChoices = choices;
@@ -54,6 +94,7 @@ NodeForm *Graph::form(Id id) const {
     widget->setReadOnly(readOnly);
     widget->setFlowChoices(flowChoices);
     connect(widget, &NodeForm::edited, self, [self, widget] { self->updateNode(widget->node()); });
+    connect(widget, &NodeForm::outputRemoved, self, [self, widget](unsigned index) { self->updateNode(widget->node(), index); });
     connect(widget, &NodeForm::activated, self, [self, id] { emit self->nodeActivated(id); });
     connect(widget, &NodeForm::textEditRequested, self, [self, id](const QString &field) { emit self->textEditRequested(id, field); });
     connect(widget, &NodeForm::sizeChanged, self, [self, id] { if (self->nodeExists(id)) emit self->nodeUpdated(id); });
@@ -129,6 +170,10 @@ QVariant Graph::nodeData(Id id, NodeRole role) const {
         style.NormalBoundaryColor = accent; style.SelectedBoundaryColor = QColor("#ffffff");
         style.GradientColor0 = style.GradientColor1 = style.GradientColor2 = style.GradientColor3 = QColor("#252d3b");
         style.FontColor = QColor("#ecf0f7"); style.FontColorFaded = QColor("#9caec7");
+        if (n.kind == Kind::UserInput) {
+            style.GradientColor0 = style.GradientColor1 = style.GradientColor2 = style.GradientColor3 = QColor("#f2a4a4");
+            style.FontColor = style.FontColorFaded = QColor("#40242c");
+        }
         if (n.kind == Kind::Start || n.kind == Kind::End) {
             style.GradientColor0 = style.GradientColor1 = style.GradientColor2 = style.GradientColor3 = QColor("#efc65e");
             style.FontColor = style.FontColorFaded = QColor("#30260e");
@@ -167,6 +212,7 @@ QVariant Graph::portData(Id id, PortType type, unsigned index, PortRole role) co
         if (n.kind == Kind::Start || n.kind == Kind::End) return kindName(n.kind);
         if (type == PortType::In) return (n.kind == Kind::All || n.kind == Kind::Any) ? QString("入力 %1").arg(index) : QString("入力");
         if (n.kind == Kind::Branch) return index == n.rules.size() ? QString("それ以外") : QString("条件%1").arg(index + 1);
+        if (n.kind == Kind::UserInput) return n.userChoices.value(qsizetype(index));
         return QString("出力");
     }
     return {};
