@@ -20,6 +20,9 @@ int main(int argc, char **argv) {
         if (args.contains("run") && !args.contains("--standalone")) return 20;
     }
     if (prompt.contains("EXPECT_OK") && !prompt.contains("EXPECT_OK=ok")) return 10;
+    if (args.contains("exec") && args.value(args.indexOf("--sandbox") + 1) != "workspace-write") return 21;
+    if (!args.contains("exec") && !args.contains("run") && args.value(args.indexOf("--permission-mode") + 1) != "acceptEdits") return 22;
+    if (args.contains("--dangerously-skip-permissions") || args.contains("--dangerously-bypass-approvals-and-sandbox") || args.contains("--auto")) return 23;
     if (prompt.contains("CHECK_EFFORT_HIGH")) {
         if (args.contains("exec")) {
             if (args.value(args.indexOf("-c") + 1) != "model_reasoning_effort=\"high\"" || args.value(args.indexOf("--sandbox") + 1) != "workspace-write") return 14;
@@ -27,7 +30,7 @@ int main(int argc, char **argv) {
             if (args.value(args.indexOf("--model") + 1) != "provider/model#high" || args.contains("--auto")) return 15;
         } else if (args.value(args.indexOf("--effort") + 1) != "high" || args.value(args.indexOf("--permission-mode") + 1) != "acceptEdits") return 16;
     }
-    if (prompt.contains("CHECK_DEFAULT_EFFORT") && (args.contains("-c") || args.contains("--effort") || args.contains("provider/model#high") || args.contains("--sandbox") || args.contains("--permission-mode"))) return 17;
+    if (prompt.contains("CHECK_DEFAULT_EFFORT") && (args.contains("-c") || args.contains("--effort") || args.contains("provider/model#high"))) return 17;
     QByteArray text = args.contains("--output-schema") || args.contains("--json-schema") || prompt.contains("JSON Schema") ? "{\"result\":\"ok\"}" : "hello";
     if (prompt.contains("BAD_SCHEMA")) text = "{\"result\":12}";
     if (prompt.contains("RESPONSE_TWO")) text = "two";

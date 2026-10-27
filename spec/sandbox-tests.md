@@ -144,7 +144,7 @@ CodexはWindows既定TLSで`workspace routing discovery failed`となりまし�
 | OpenCode実モデル and | 最新の再確認で成功。並列ノード各2回、ANDの新しい全入力の待ち合わせ2回を確認 |
 | Claude Code実モデル text / json / loop / and | 全4ケース成功（`claude-haiku-5-5`、Proログイン後） |
 | CTest core / gui_smoke | 成功 |
-| CTest gui | GUI改修後の再ビルド・テスト修正を行い成功（QtTest 20 passed / 0 failed） |
+| CTest gui | GUI改修後の再ビルド・テスト修正を行い成功（QtTest 23 passed / 0 failed） |
 | モデル一覧：Codex | 成功（7件、app-serverの`model/list`） |
 | モデル一覧：Claude Code | 成功（13件、制御プロトコル初期化応答の`models`） |
 | モデル一覧：OpenCode | 成功（25件、`models --standalone`） |

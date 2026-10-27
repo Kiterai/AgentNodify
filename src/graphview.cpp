@@ -4,8 +4,38 @@
 #include <QGraphicsSceneWheelEvent>
 #include <QCoreApplication>
 #include <QWheelEvent>
+#include <QKeyEvent>
+#include <QtNodes/internal/NodeGraphicsObject.hpp>
+#include <QtNodes/internal/ConnectionGraphicsObject.hpp>
+#include <cmath>
 
 namespace an {
+void GraphView::zoomToFit() {
+    if (!scene()) return;
+    QRectF bounds;
+    for (auto *item : scene()->items()) {
+        if (!item->isVisible()) continue;
+        if (dynamic_cast<QtNodes::NodeGraphicsObject *>(item) || dynamic_cast<QtNodes::ConnectionGraphicsObject *>(item))
+            bounds = bounds.united(item->sceneBoundingRect());
+    }
+    constexpr qreal margin = 24;
+    if (bounds.isEmpty() || viewport()->width() <= 2 * margin || viewport()->height() <= 2 * margin) return;
+    const auto scale = qMin((viewport()->width() - 2 * margin) / bounds.width(), (viewport()->height() - 2 * margin) / bounds.height());
+    if (!std::isfinite(scale) || scale <= 0) return;
+    // Reset any panned view rect, including when nodes are outside QtNodes' initial
+    // scene range. Fitting may need a scale smaller than the manual wheel minimum.
+    const auto padding = margin / scale;
+    setSceneRect(bounds.adjusted(-padding, -padding, padding, padding));
+    setTransform(QTransform::fromScale(scale, scale)); centerOn(bounds.center());
+    emit scaleChanged(scale);
+}
+void GraphView::keyPressEvent(QKeyEvent *event) {
+    if (event->key() == Qt::Key_Space && event->modifiers() == Qt::NoModifier && hasFocus() && scene() && !scene()->focusItem()) {
+        if (!event->isAutoRepeat()) zoomToFit();
+        event->accept(); return;
+    }
+    QtNodes::GraphicsView::keyPressEvent(event);
+}
 void GraphView::wheelEvent(QWheelEvent *event) {
     // QtNodes zooms without first delivering wheel events to embedded widgets.
     // This includes combo popups, which are themselves child proxy widgets.

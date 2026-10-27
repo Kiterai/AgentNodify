@@ -40,9 +40,7 @@ struct AgentConfig {
 #else
     QString opencode = "opencode";
 #endif
-    int timeoutSeconds = 600;
     bool opencodeStandalone = false;
-    bool workspaceWrite = false;
 };
 // Every firing enqueues an event. Ordinary nodes consume one event; AND consumes
 // exactly one event from every input FIFO, then waits for a fresh complete set.
@@ -63,7 +61,6 @@ signals:
 private:
     struct Job {
         QProcess *process = nullptr;
-        QTimer *timer = nullptr;
         QByteArray stdoutData, stderrData;
         bool script = false;
         bool shell = false;

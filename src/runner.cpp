@@ -98,7 +98,7 @@ void Runner::finishExecution(Id id) {
 }
 void Runner::stopJobs() {
     for (auto &[id, j] : jobs_) {
-        j->timer->stop(); j->process->disconnect(this);
+        j->process->disconnect(this);
         if (j->process->state() != QProcess::NotRunning) { j->process->kill(); j->process->waitForFinished(3000); }
         auto &log = results_[id].log;
         const auto remaining = j->process->readAllStandardOutput();
@@ -106,7 +106,7 @@ void Runner::stopJobs() {
         log += QString(j->stderrDecoder.decode(j->process->readAllStandardError()));
         constexpr qsizetype limit = 2 * 1024 * 1024;
         if (log.size() > limit) log = "[古いログを省略]\n" + log.right(limit);
-        j->timer->deleteLater(); j->process->deleteLater();
+        j->process->deleteLater();
     }
     jobs_.clear();
 }
@@ -252,7 +252,7 @@ void Runner::launch(Id id, const Json &input) {
             j->finalPath = j->temp->filePath("response.txt");
             args << "exec" << "--json" << "--skip-git-repo-check" << "--output-last-message" << j->finalPath;
             args << "--cd" << directory_;
-            if (config_.workspaceWrite) args << "--sandbox" << "workspace-write";
+            args << "--sandbox" << "workspace-write";
             if (!n.schema.trimmed().isEmpty()) {
                 auto path = j->temp->filePath("schema.json"); QFile file(path);
                 if (!file.open(QIODevice::WriteOnly) || file.write(n.schema.toUtf8()) < 0) throw std::runtime_error("スキーマファイルを書き込めません");
@@ -263,7 +263,7 @@ void Runner::launch(Id id, const Json &input) {
             args << "-";
         } else if (n.agent == "Claude Code") {
             program = config_.claude; args << "-p" << "--verbose" << "--output-format" << "stream-json" << "--include-partial-messages";
-            if (config_.workspaceWrite) args << "--permission-mode" << "acceptEdits";
+            args << "--permission-mode" << "acceptEdits";
             if (!n.effort.isEmpty()) args << "--effort" << n.effort;
             if (!n.model.isEmpty()) args << "--model" << n.model;
             if (!n.schema.trimmed().isEmpty()) args << "--json-schema" << n.schema;
@@ -286,7 +286,6 @@ void Runner::launch(Id id, const Json &input) {
         throw std::runtime_error(".cmd/.batは非対応です。CLIのネイティブ.exeを指定してください");
     if (!active_) return;
     auto *process = new QProcess(this); j->process = process;
-    auto *timer = new QTimer(this); j->timer = timer; timer->setSingleShot(true);
     process->setWorkingDirectory(workingDirectory);
     auto environment = QProcessEnvironment::systemEnvironment();
     environment.insert("PWD", workingDirectory);
@@ -314,9 +313,7 @@ void Runner::launch(Id id, const Json &input) {
         if (e == QProcess::FailedToStart && jobs_.contains(id)) fail(id, jobs_[id]->process->errorString());
     });
     connect(process, &QProcess::finished, this, [this, id](int code, QProcess::ExitStatus status) { processFinished(id, code, status); });
-    connect(timer, &QTimer::timeout, this, [this, id] { fail(id, kindName(flow_.nodes.at(id).kind) + "の実行がタイムアウトしました"); });
     jobs_[id] = std::move(j);
-    timer->start(qMax(1, config_.timeoutSeconds) * 1000);
     process->start(resolved, args);
     process->write(standardInput);
     process->closeWriteChannel();
@@ -324,7 +321,6 @@ void Runner::launch(Id id, const Json &input) {
 void Runner::processFinished(Id id, int code, QProcess::ExitStatus status) {
     if (!active_ || !jobs_.contains(id)) return;
     auto &j = *jobs_.at(id);
-    j.timer->stop();
     const auto remaining = j.process->readAllStandardOutput();
     if (j.stdoutData.size() + remaining.size() > 32 * 1024 * 1024) { fail(id, "標準出力が32MiBを超えました"); return; }
     j.stdoutData += remaining;
@@ -354,7 +350,7 @@ void Runner::processFinished(Id id, int code, QProcess::ExitStatus status) {
             auto data = file.readAll(); output = n.schema.trimmed().isEmpty() ? Json(data.toStdString()) : Json::parse(data.toStdString());
         } else output = decodeAgentOutput(n.agent, j.stdoutData, !n.schema.trimmed().isEmpty());
         if (!j.script && !j.shell && !n.schema.trimmed().isEmpty()) validateOutput(parseJson(n.schema), output);
-        j.timer->deleteLater(); j.process->deleteLater(); jobs_.erase(id);
+        j.process->deleteLater(); jobs_.erase(id);
         complete(id, output); schedulePump();
     } catch (const std::exception &e) { fail(id, QString::fromUtf8(e.what())); }
 }

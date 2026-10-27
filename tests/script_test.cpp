@@ -94,27 +94,27 @@ void ScriptTest::outputTypes() {
 }
 void ScriptTest::failures_data() {
     QTest::addColumn<QString>("language"); QTest::addColumn<QString>("mode");
-    for (const QString language : {"python", "javascript"}) for (const QString mode : {"missing file", "missing directory", "exit", "timeout", "cancel", "invalid utf8"})
+    for (const QString language : {"python", "javascript"}) for (const QString mode : {"missing file", "missing directory", "exit", "no deadline", "cancel", "invalid utf8"})
         QTest::newRow(qPrintable(language + " " + mode)) << language << mode;
 }
 void ScriptTest::failures() {
     QFETCH(QString, language); QFETCH(QString, mode); if (!available(language)) QSKIP("System runtime not installed");
     QTemporaryDir project;
-    const bool sleep = mode == "timeout" || mode == "cancel";
+    const bool sleep = mode == "no deadline" || mode == "cancel";
     QString source = language == "python" ? (sleep ? "import time\ntime.sleep(30)\n" : "import sys\nprint('diagnostic 日本語', file=sys.stderr)\nsys.exit(7)\n") :
         (sleep ? "setTimeout(() => {}, 30000);\n" : "process.stderr.write('diagnostic 日本語\\n'); process.exit(7);\n");
     if (mode == "invalid utf8") source = language == "python" ? "import sys\nsys.stdout.buffer.write(bytes([0xe3,0x81]))\n" : "process.stdout.write(Buffer.from([0xe3,0x81]));\n";
     const auto file = scriptFile(project.path(), "failure" + extension(language), source); QVERIFY(!file.isEmpty());
     auto flow = scriptFlow(language, mode == "missing file" ? "absent.py" : file);
     if (mode == "missing directory") flow.nodes[3].scriptDirectory = "absent directory";
-    Runner runner; QSignalSpy done(&runner, &Runner::finished); AgentConfig config; config.timeoutSeconds = 1;
+    Runner runner; QSignalSpy done(&runner, &Runner::finished); AgentConfig config;
     QVERIFY(runner.start(flow, project.path(), config));
-    if (mode == "cancel") { QTRY_VERIFY(runner.results().at(3).state == State::Running); runner.cancel(); }
+    if (mode == "no deadline") { QTest::qWait(1200); QVERIFY(done.isEmpty()); QVERIFY(runner.running()); QVERIFY(runner.findChildren<QTimer *>().isEmpty()); }
+    if (sleep) { QTRY_VERIFY(runner.results().at(3).state == State::Running); runner.cancel(); }
     QTRY_COMPARE(done.count(), 1); QVERIFY(!done[0][0].toBool()); QVERIFY(!runner.running());
     QVERIFY(runner.results().at(2).state != State::Succeeded);
-    QVERIFY(runner.results().at(3).state == (mode == "cancel" ? State::Cancelled : State::Failed));
+    QVERIFY(runner.results().at(3).state == (sleep ? State::Cancelled : State::Failed));
     if (mode == "exit") { QVERIFY(runner.results().at(3).log.contains("diagnostic 日本語")); QVERIFY(runner.results().at(3).log.contains("exit 7")); }
-    if (mode == "timeout") QVERIFY(runner.results().at(3).log.contains("タイムアウト"));
     if (mode == "invalid utf8") QVERIFY(runner.results().at(3).log.contains("UTF-8"));
 }
 void ScriptTest::loop_data() {

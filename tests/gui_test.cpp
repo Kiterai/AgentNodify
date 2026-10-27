@@ -1,12 +1,15 @@
 #include "gui_test.h"
 #include "window.h"
 #include "nodeform.h"
+#include "graphview.h"
 #include "theme.h"
 #include "projectopener.h"
 #include "history.h"
 #include <QTemporaryDir>
 #include <QtTest>
 #include <QComboBox>
+#include <QCheckBox>
+#include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QScopeGuard>
 #include <QTimer>
@@ -33,6 +36,7 @@
 #include <QStyledItemDelegate>
 #include <QtNodes/NodeStyle>
 #include <QtNodes/internal/NodeGraphicsObject.hpp>
+#include <QtNodes/internal/ConnectionGraphicsObject.hpp>
 
 namespace an {
 using namespace QtNodes;
@@ -131,7 +135,9 @@ void GuiTest::editorAndFlowRail() {
     auto *palette = window.findChild<QWidget *>("nodePalette"); QVERIFY(palette);
     QVERIFY(palette->findChildren<QLineEdit *>().isEmpty());
     for (auto *button : palette->findChildren<QPushButton *>()) QVERIFY(!button->text().contains("接続"));
-    for (auto kind : {Kind::Start, Kind::End, Kind::Agent, Kind::Script, Kind::Shell, Kind::And, Kind::Branch}) {
+    QVERIFY(!palette->findChild<QPushButton *>("addNode_start")); QVERIFY(!palette->findChild<QPushButton *>("addNode_end"));
+    QCOMPARE(window.editGraph_->flow.nodes.size(), size_t(2)); QVERIFY(window.editGraph_->flow.nodes.at(1).kind == Kind::Start); QVERIFY(window.editGraph_->flow.nodes.at(2).kind == Kind::End);
+    for (auto kind : {Kind::Agent, Kind::Script, Kind::Shell, Kind::And, Kind::Branch}) {
         auto *button = palette->findChild<QPushButton *>("addNode_" + kindKey(kind)); QVERIFY(button); QCOMPARE(button->toolTip(), nodeDescription(kind));
     }
     for (auto *label : window.findChildren<QLabel *>()) QVERIFY(label->text() != "AN");
@@ -540,6 +546,82 @@ void GuiTest::shellNodeForm() {
     QCOMPARE(QDir::fromNativeSeparators(stdoutText), QFileInfo(directory.filePath("flows")).canonicalFilePath());
     window.tabs_->setCurrentIndex(0); window.editView_->centerScene(); QCoreApplication::processEvents();
     QVERIFY(window.grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-shell-node.png")));
+}
+void GuiTest::simplifiedCliSettings() {
+    Window window(true); window.show();
+    bool inspected = false;
+    QTimer::singleShot(0, &window, [&] {
+        auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()); QVERIFY(dialog); QCOMPARE(dialog->windowTitle(), QString("CLI設定"));
+        QVERIFY(dialog->findChildren<QSpinBox *>().isEmpty()); QVERIFY(dialog->findChildren<QCheckBox *>().isEmpty());
+        QVERIFY(dialog->grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-cli-settings.png")));
+        const auto edits = dialog->findChildren<QLineEdit *>(); QCOMPARE(edits.size(), 3);
+        edits[0]->setText("custom-codex"); edits[1]->setText("custom-claude"); edits[2]->setText("custom-opencode");
+        inspected = true; dialog->accept();
+    });
+    window.settings(); QVERIFY(inspected); QCOMPARE(window.config_.codex, QString("custom-codex")); QCOMPARE(window.config_.claude, QString("custom-claude")); QCOMPARE(window.config_.opencode, QString("custom-opencode"));
+    QTemporaryDir directory; const auto workspace = directory.filePath("workspace.json");
+    QFile file(workspace); QVERIFY(file.open(QIODevice::WriteOnly));
+    const Json legacy = {{"flows", Json::array()}, {"projects", Json::array()}, {"codex", "custom-codex"}, {"claude", "custom-claude"}, {"opencode", "custom-opencode"}, {"timeout", 1}, {"workspaceWrite", false}};
+    file.write(QByteArray::fromStdString(legacy.dump())); file.close();
+    Window restored(true); restored.dataDir_ = directory.path(); restored.documents_.clear(); restored.projects_.clear(); restored.restore();
+    QCOMPARE(restored.config_.codex, QString("custom-codex"));
+    restored.smoke_ = false; restored.persist(); restored.smoke_ = true;
+    QVERIFY(file.open(QIODevice::ReadOnly)); const auto current = Json::parse(file.readAll().toStdString());
+    QVERIFY(!current.contains("timeout")); QVERIFY(!current.contains("workspaceWrite"));
+    QCOMPARE(QString::fromStdString(current.at("claude")), QString("custom-claude"));
+}
+void GuiTest::spaceZoomToFit() {
+    Window window(true); window.resize(1400, 950); window.show();
+    auto flow = Flow::initial(); flow.nodes[1].position = {-100000, 5000}; flow.nodes[2].position = {100000, -5000};
+    Node script; script.id = 3; script.kind = Kind::Script; script.title = "Fit target"; script.position = {1000, 8000}; script.scriptPath = "transform.py";
+    flow.nodes[3] = script; flow.edges = {{1, 3}, {3, 2}};
+    window.editGraph_->replace(flow); window.workGraph_->replace(flow);
+    for (int tab : {0, 1}) {
+        window.tabs_->setCurrentIndex(tab); QCoreApplication::processEvents();
+        auto *view = tab == 0 ? window.editView_ : window.workView_;
+        auto *graph = tab == 0 ? window.editGraph_ : window.workGraph_;
+        auto *scene = tab == 0 ? window.editScene_ : window.workScene_;
+        graph->replace(flow); QCoreApplication::processEvents();
+        const auto before = graph->flow.toJson(); view->setupScale(1.8); view->centerOn(-3000, 12000);
+        scene->nodeGraphicsObject(1)->setSelected(true); scene->setFocusItem(nullptr); view->setFocus(); QTRY_VERIFY(view->hasFocus());
+        QTest::keyClick(view, Qt::Key_Space); QCoreApplication::processEvents();
+        QRectF bounds;
+        for (auto *item : scene->items()) if (dynamic_cast<NodeGraphicsObject *>(item) || dynamic_cast<ConnectionGraphicsObject *>(item)) bounds = bounds.united(item->sceneBoundingRect());
+        for (const auto &[id, node] : graph->flow.nodes) {
+            const auto rect = view->mapFromScene(scene->nodeGraphicsObject(id)->sceneBoundingRect()).boundingRect();
+            QVERIFY2(view->viewport()->rect().contains(rect), qPrintable(QString("Node %1 not fitted on tab %2").arg(id).arg(tab)));
+        }
+        const auto expected = qMin((view->viewport()->width() - 48.0) / bounds.width(), (view->viewport()->height() - 48.0) / bounds.height());
+        QVERIFY(qAbs(view->transform().m11() - expected) < 1e-8); QVERIFY(view->transform().m11() < 0.15);
+        QVERIFY(graph->flow.toJson() == before); QVERIFY(scene->nodeGraphicsObject(1)->isSelected());
+        const auto transform = view->transform(); const auto center = view->mapToScene(view->viewport()->rect().center());
+        QTest::keyClick(view, Qt::Key_Space); QCOMPARE(view->transform(), transform);
+        QVERIFY(QLineF(center, view->mapToScene(view->viewport()->rect().center())).length() < 1.0);
+        // Fit also zooms in after replacing a spread-out flow with a compact one.
+        graph->replace(Flow::initial()); QCoreApplication::processEvents(); scene->setFocusItem(nullptr); view->setFocus();
+        view->setupScale(0.2); QTest::keyClick(view, Qt::Key_Space); QVERIFY(view->transform().m11() > 0.2);
+    }
+}
+void GuiTest::spaceFitFocusAndEmpty() {
+    Window window(true); window.resize(1400, 950); window.show();
+    auto flow = Flow::initial(); Node node; node.id = 3; node.kind = Kind::Script; node.scriptPath = "before"; flow.nodes[3] = node;
+    window.editGraph_->replace(flow); window.workGraph_->replace(flow);
+    for (int tab : {0, 1}) {
+        window.tabs_->setCurrentIndex(tab); QCoreApplication::processEvents();
+        auto *view = tab == 0 ? window.editView_ : window.workView_;
+        auto *graph = tab == 0 ? window.editGraph_ : window.workGraph_;
+        auto *scene = tab == 0 ? window.editScene_ : window.workScene_;
+        view->setupScale(0.8); view->setFocus(); scene->setFocusItem(scene->nodeGraphicsObject(1)); QVERIFY(scene->focusItem());
+        const auto transform = view->transform(); QTest::keyClick(view, Qt::Key_Space); QCOMPARE(view->transform(), transform);
+        auto *edit = graph->form(3)->findChild<QLineEdit *>("scriptPath"); QVERIFY(edit); edit->setFocus(); edit->end(false); const auto beforeText = edit->text();
+        QTest::keyClicks(edit, " "); QCOMPARE(view->transform(), transform); QCOMPARE(edit->text(), tab == 0 ? beforeText + " " : beforeText);
+        scene->setFocusItem(nullptr); view->setFocus();
+        QTest::keyClick(view, Qt::Key_Space, Qt::ControlModifier); QCOMPARE(view->transform(), transform);
+        QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, view->viewport()->rect().bottomRight() - QPoint(5, 5));
+        QTRY_VERIFY(!scene->focusItem()); view->setupScale(0.2); QTest::keyClick(view, Qt::Key_Space); QVERIFY(view->transform().m11() > 0.2);
+    }
+    Graph graph; BasicGraphicsScene scene(graph); GraphView empty(&scene); empty.resize(640, 480); empty.show(); empty.setFocus();
+    QCoreApplication::processEvents(); const auto transform = empty.transform(); QTest::keyClick(&empty, Qt::Key_Space); QCOMPARE(empty.transform(), transform);
 }
 }
 QTEST_MAIN(an::GuiTest)

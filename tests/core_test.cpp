@@ -21,7 +21,7 @@ using namespace an;
 #ifndef Q_OS_WIN
         path = QCoreApplication::applicationDirPath() + "/fake_agent";
 #endif
-        return {path, path, path, 10};
+        return {path, path, path};
     }
     void CoreTest::variables() {
         Json j = {{"a", "b"}, {"hoge", {{"foo", "bar"}}}, {"foobar", {"baz", "qux"}}};
@@ -60,7 +60,7 @@ using namespace an;
             auto flow = simple(agent); flow.nodes[3].model = "provider/model";
             flow.nodes[3].effort = explicitEffort ? "high" : "";
             flow.nodes[3].prompt = explicitEffort ? "CHECK_EFFORT_HIGH" : "CHECK_DEFAULT_EFFORT";
-            auto settings = config(); settings.workspaceWrite = explicitEffort;
+            auto settings = config();
             Runner runner; QSignalSpy done(&runner, &Runner::finished);
             QVERIFY(runner.start(flow, dir.path(), settings)); QTRY_COMPARE(done.count(), 1);
             QVERIFY2(done[0][0].toBool(), qPrintable(runner.results().at(3).log));
@@ -267,15 +267,17 @@ using namespace an;
         spy.clear(); f.nodes[3].prompt = "SLEEP"; QVERIFY(r.start(f, dir.path(), config()));
         QTRY_VERIFY(r.results().at(3).state == State::Running); r.cancel();
         QCOMPARE(spy.count(), 1); QVERIFY(r.results().at(3).state == State::Cancelled); QVERIFY(!r.running());
-        spy.clear(); auto c = config(); c.timeoutSeconds = 1; QVERIFY(r.start(f, dir.path(), c)); QVERIFY(spy.wait(10000));
-        QVERIFY(!spy[0][0].toBool()); QVERIFY(spy[0][1].toString().contains("タイムアウト"));
+        spy.clear(); auto c = config(); QVERIFY(r.start(f, dir.path(), c)); QTest::qWait(1200);
+        QVERIFY(spy.isEmpty()); QVERIFY(r.running()); QVERIFY(r.findChildren<QTimer *>().isEmpty()); r.cancel();
+        QCOMPARE(spy.count(), 1); QVERIFY(r.results().at(3).state == State::Cancelled);
         spy.clear(); f.nodes[3].prompt = "BAD_SCHEMA"; f.nodes[3].schema = schema(); QVERIFY(r.start(f, dir.path(), config())); QVERIFY(spy.wait(15000));
         QVERIFY(!spy[0][0].toBool());
         spy.clear(); c.codex = dir.filePath("missing.exe"); f = simple(); QVERIFY(r.start(f, dir.path(), c)); QVERIFY(spy.wait(10000)); QVERIFY(!spy[0][0].toBool());
         QCOMPARE(history.size(), size_t(5)); QVERIFY(history[1].state == State::Cancelled);
         for (size_t i = 0; i < history.size(); ++i) {
             QVERIFY(history[i].startedAt.isValid() && history[i].finishedAt.isValid());
-            if (i != 1) { QVERIFY(history[i].state == State::Failed); QVERIFY(!history[i].log.isEmpty()); }
+            if (i != 1 && i != 2) { QVERIFY(history[i].state == State::Failed); QVERIFY(!history[i].log.isEmpty()); }
+            else QVERIFY(history[i].state == State::Cancelled);
         }
     }
     void CoreTest::rejectBeforeExecution() {

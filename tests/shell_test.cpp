@@ -140,23 +140,25 @@ void ShellTest::parallelJoin() {
     QVERIFY(done[0][0].toBool()); QVERIFY(runner.results().at(2).output.at("stdout") == "A:B");
 }
 void ShellTest::failures_data() {
-    QTest::addColumn<QString>("mode"); for (QString mode : {"no flow path", "bad cwd", "timeout", "cancel"}) QTest::newRow(qPrintable(mode)) << mode;
+    QTest::addColumn<QString>("mode"); for (QString mode : {"no flow path", "bad cwd", "no deadline", "cancel"}) QTest::newRow(qPrintable(mode)) << mode;
 }
 void ShellTest::failures() {
     if (!available()) QSKIP("System shell not installed"); QFETCH(QString, mode); QTemporaryDir directory; auto flow = shellFlow(command());
     if (mode == "bad cwd") flow.nodes[3].shellDirectory = "absent";
-    if (mode == "timeout" || mode == "cancel") {
+    const bool sleep = mode == "no deadline" || mode == "cancel";
+    if (sleep) {
 #ifdef Q_OS_WIN
         flow.nodes[3].shellCommand = "Start-Sleep -Seconds 30";
 #else
         flow.nodes[3].shellCommand = "exec sleep 30";
 #endif
     }
-    AgentConfig config; config.timeoutSeconds = 1; Runner runner; QSignalSpy done(&runner, &Runner::finished);
+    AgentConfig config; Runner runner; QSignalSpy done(&runner, &Runner::finished);
     QVERIFY(runner.start(flow, directory.path(), config, mode == "no flow path" ? QString() : directory.filePath("flow.json")));
-    if (mode == "cancel") { QTRY_VERIFY(runner.results().at(3).state == State::Running); runner.cancel(); }
+    if (mode == "no deadline") { QTest::qWait(1200); QVERIFY(done.isEmpty()); QVERIFY(runner.running()); QVERIFY(runner.findChildren<QTimer *>().isEmpty()); }
+    if (sleep) { QTRY_VERIFY(runner.results().at(3).state == State::Running); runner.cancel(); }
     QTRY_COMPARE_WITH_TIMEOUT(done.count(), 1, 15000); QVERIFY(!done[0][0].toBool()); QVERIFY(runner.results().at(2).state != State::Succeeded);
-    QVERIFY(runner.results().at(3).state == (mode == "cancel" ? State::Cancelled : State::Failed));
+    QVERIFY(runner.results().at(3).state == (sleep ? State::Cancelled : State::Failed));
 }
 void ShellTest::outputLimits_data() {
     QTest::addColumn<bool>("stderrStream"); QTest::newRow("stdout") << false; QTest::newRow("stderr") << true;
@@ -168,7 +170,7 @@ void ShellTest::outputLimits() {
 #else
     const QString source = "exec head -c 34603008 /dev/zero" + QString(stderrStream ? " >&2" : "");
 #endif
-    Runner runner; QSignalSpy done(&runner, &Runner::finished); AgentConfig config; config.timeoutSeconds = 20;
+    Runner runner; QSignalSpy done(&runner, &Runner::finished); AgentConfig config;
     QVERIFY(runner.start(shellFlow(source), directory.path(), config, directory.filePath("flow.json"))); QTRY_COMPARE_WITH_TIMEOUT(done.count(), 1, 25000);
     QVERIFY(!done[0][0].toBool()); QVERIFY(runner.results().at(3).log.contains("32MiB"));
 }

@@ -22,8 +22,8 @@ int main(int argc, char **argv) {
         {{"c", "case"}, "text / json / loop / and / file / cwd", "case", "text"},
         {"project", "Explicit test project directory (cwd case creates a unique marker)", "path"},
         {{"r", "report"}, "Write JSON test report", "path"},
-        {{"t", "timeout"}, "Per-node timeout in seconds", "seconds", "90"},
-        {"workspace-write", "Opt in to workspace-write / acceptEdits (not a permission bypass)"}
+        {{"t", "timeout"}, "Test harness time limit in seconds (not an application setting)", "seconds", "90"},
+        {"workspace-write", "Compatibility option: workspace-write / acceptEdits are always enabled"}
     }); parser.process(app);
     const auto agent = parser.value("agent"), model = parser.value("model"), test = parser.value("case");
     if ((agent != "Codex" && agent != "Claude Code" && agent != "OpenCode") ||
@@ -90,8 +90,6 @@ int main(int argc, char **argv) {
     AgentConfig config; config.codex = config.claude = config.opencode = parser.value("program");
     // Live tests must not share the user's managed OpenCode service/port.
     config.opencodeStandalone = true;
-    config.workspaceWrite = parser.isSet("workspace-write");
-    config.timeoutSeconds = qBound(1, parser.value("timeout").toInt(), 600);
     Json events = Json::array();
     QObject::connect(&runner, &Runner::fired, &app, [&](Id id, quint64 execution, const QString &json) {
         events.push_back({{"node", id}, {"execution", execution}, {"output", parseJson(json)}});
@@ -137,6 +135,7 @@ int main(int argc, char **argv) {
     });
     // start may emit finished synchronously, so invoke after entering the loop.
     QTimer::singleShot(0, &app, [&] { runner.start(flow, directory.path(), config); });
+    QTimer::singleShot(qBound(1, parser.value("timeout").toInt(), 600) * 1000, &runner, [&] { if (runner.running()) runner.cancel(); });
     QTimer::singleShot(480000, &runner, [&] { if (runner.running()) runner.cancel(); });
     return app.exec();
 }

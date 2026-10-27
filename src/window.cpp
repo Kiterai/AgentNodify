@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <QApplication>
 #include <QCloseEvent>
-#include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -20,7 +19,6 @@
 #include <QSaveFile>
 #include <QScrollArea>
 #include <QScrollBar>
-#include <QSpinBox>
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QSyntaxHighlighter>
@@ -127,10 +125,10 @@ void Window::buildUi() {
     editorSplit_ = new QSplitter;
     auto *left = new QWidget; auto *leftLayout = new QVBoxLayout(left);
     leftLayout->addWidget(new QLabel("ノードを追加"));
-    for (Kind k : {Kind::Start, Kind::Agent, Kind::Script, Kind::Shell, Kind::And, Kind::Branch, Kind::End}) {
+    for (Kind k : {Kind::Agent, Kind::Script, Kind::Shell, Kind::And, Kind::Branch}) {
         auto *add = button("＋ " + kindName(k), leftLayout, [this, k] {
             auto id = editGraph_->addNode(kindKey(k));
-            if (id == QtNodes::InvalidNodeId) statusBar()->showMessage("始端・終端はそれぞれ1つだけです", 5000);
+            if (id == QtNodes::InvalidNodeId) statusBar()->showMessage("ノードを追加できません", 5000);
             else selectNode(id);
         });
         add->setToolTip(nodeDescription(k)); add->setObjectName("addNode_" + kindKey(k));
@@ -141,6 +139,7 @@ void Window::buildUi() {
     editScene_ = new QtNodes::BasicGraphicsScene(*editGraph_, this); editView_ = new GraphView(editScene_);
     editView_->setScaleRange(0.15, 3); editorSplit_->addWidget(editView_);
     editView_->setObjectName("flowEditorView");
+    editView_->setToolTip("背景にフォーカスがあるとき、Spaceでフロー全体を画面に収めます。");
     connect(editScene_, &QtNodes::BasicGraphicsScene::nodeClicked, this, [this](Id id) { selectNode(id); });
     connect(editScene_, &QtNodes::BasicGraphicsScene::nodeContextMenu, this, [this](Id id, const QPointF &point) {
         if (runner_->running() || !editGraph_->nodeExists(id)) return;
@@ -183,6 +182,7 @@ void Window::buildUi() {
     runButton_ = button("▶ 実行", toolbar, [this] { executeFlow(); });
     stopButton_ = button("■ 停止", toolbar, [this] { runner_->cancel(); }); stopButton_->setEnabled(false); cl->addLayout(toolbar);
     workScene_ = new QtNodes::BasicGraphicsScene(*workGraph_, this); workView_ = new GraphView(workScene_); workView_->setScaleRange(0.15, 3); cl->addWidget(workView_, 1);
+    workView_->setToolTip("背景にフォーカスがあるとき、Spaceでフロー全体を画面に収めます。");
     connect(workScene_, &QtNodes::BasicGraphicsScene::nodeClicked, this, [this](Id id) { selectWorkNode(id); });
     connect(workGraph_, &Graph::nodeActivated, this, [this](Id id) { selectWorkNode(id); });
     connect(workGraph_, &Graph::textEditRequested, this, [this](Id id, const QString &) { selectWorkNode(id); });
@@ -510,7 +510,7 @@ void Window::executeFlow() {
 }
 void Window::settings() {
     if (runner_->running()) return;
-    QDialog dialog(this); dialog.setWindowTitle("CLI設定"); dialog.resize(650, 300);
+    QDialog dialog(this); dialog.setWindowTitle("CLI設定"); dialog.resize(650, 250);
     auto *layout = new QVBoxLayout(&dialog); auto *form = new QFormLayout;
     auto add = [this, form](const QString &label, const QString &value) {
         auto *row = new QWidget; auto *layout = new QHBoxLayout(row); layout->setContentsMargins(0, 0, 0, 0);
@@ -519,15 +519,12 @@ void Window::settings() {
         form->addRow(label, row); return edit;
     };
     auto *codex = add("Codex", config_.codex), *claude = add("Claude Code", config_.claude), *opencode = add("OpenCode", config_.opencode);
-    auto *timeout = new QSpinBox; timeout->setRange(1, 86400); timeout->setValue(config_.timeoutSeconds); form->addRow("タイムアウト（秒）", timeout); layout->addLayout(form);
-    auto *write = new QCheckBox("プロジェクトへの書き込みを許可（Codex / Claude Code）"); write->setChecked(config_.workspaceWrite); layout->addWidget(write);
-    auto *writeHint = new QLabel("明示的に選んだ場合のみ、Codexはworkspace-write、Claude CodeはacceptEditsを使います。\nClaude CodeのacceptEditsはOSサンドボックスではありません。CLIのdenyルールは維持されます。\nOpenCodeは既存の権限設定に従い、自動承認は追加しません。"); writeHint->setWordWrap(true); layout->addWidget(writeHint);
-    auto *hint = new QLabel("認証は各CLIで事前に行ってください。権限の自動承認は付与しません。\nWindowsでは.cmdではなくネイティブ.exeを指定します。\nOpenCodeのJSON出力はスキーマ指示＋受信後検証です。"); hint->setWordWrap(true); layout->addWidget(hint);
+    layout->addLayout(form);
+    auto *hint = new QLabel("Codexはworkspace-write、Claude CodeはacceptEditsで書き込みを許可します。\n既存の拒否ルールは維持します。OpenCodeは既存CLIの権限設定に従います。\n認証は各CLIで事前に行い、Windowsでは.cmdではなくネイティブ.exeを指定してください。\nOpenCodeのJSON出力はスキーマ指示＋受信後検証です。"); hint->setWordWrap(true); layout->addWidget(hint);
     auto *box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel); layout->addWidget(box);
     connect(box, &QDialogButtonBox::accepted, &dialog, &QDialog::accept); connect(box, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     if (dialog.exec() == QDialog::Accepted) {
-        config_ = {codex->text(), claude->text(), opencode->text(), timeout->value()};
-        config_.workspaceWrite = write->isChecked();
+        config_ = {codex->text(), claude->text(), opencode->text()};
         persist(); if (!smoke_) { modelCatalog_->setConfig(config_); modelCatalog_->refreshAll(true); }
     }
 }
@@ -537,8 +534,7 @@ void Window::persist() {
     Json paths = Json::array(), projects = Json::array();
     for (auto &d : documents_) paths.push_back(str(d.path));
     for (auto &p : projects_) projects.push_back({{"name", str(p.name)}, {"directory", str(p.directory)}, {"flow", str(p.flowPath)}, {"historyId", str(p.historyId)}});
-    Json j = {{"flows", paths}, {"projects", projects}, {"codex", str(config_.codex)}, {"claude", str(config_.claude)}, {"opencode", str(config_.opencode)}, {"timeout", config_.timeoutSeconds}};
-    j["workspaceWrite"] = config_.workspaceWrite;
+    Json j = {{"flows", paths}, {"projects", projects}, {"codex", str(config_.codex)}, {"claude", str(config_.claude)}, {"opencode", str(config_.opencode)}};
     QSaveFile file(dataDir_ + "/workspace.json"); auto bytes = QByteArray::fromStdString(j.dump(2));
     if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) reportError("ワークスペース設定を保存できません: " + file.errorString());
 }
@@ -547,8 +543,7 @@ void Window::restore() {
     if (!file.open(QIODevice::ReadOnly)) { reportError(file.errorString()); return; }
     try {
         auto j = Json::parse(file.readAll().toStdString());
-        config_ = {qs(j.at("codex")), qs(j.at("claude")), qs(j.at("opencode")), qBound(1, j.value("timeout", 600), 86400)};
-        config_.workspaceWrite = j.value("workspaceWrite", false);
+        config_ = {qs(j.at("codex")), qs(j.at("claude")), qs(j.at("opencode"))};
 #ifdef Q_OS_WIN
         // Migrate only our old bare default, never a user-specified executable path.
         if (config_.opencode == "opencode") config_.opencode = "opencode-cli";

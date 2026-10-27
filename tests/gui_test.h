@@ -24,5 +24,8 @@ private slots:
     void scriptNodeForm();
     void scriptPathDialogs();
     void shellNodeForm();
+    void simplifiedCliSettings();
+    void spaceZoomToFit();
+    void spaceFitFocusAndEmpty();
 };
 }
