@@ -138,7 +138,7 @@ void GuiTest::editorAndFlowRail() {
     for (auto *button : palette->findChildren<QPushButton *>()) QVERIFY(!button->text().contains("接続"));
     QVERIFY(!palette->findChild<QPushButton *>("addNode_start")); QVERIFY(!palette->findChild<QPushButton *>("addNode_end"));
     QCOMPARE(window.editGraph_->flow.nodes.size(), size_t(2)); QVERIFY(window.editGraph_->flow.nodes.at(1).kind == Kind::Start); QVERIFY(window.editGraph_->flow.nodes.at(2).kind == Kind::End);
-    for (auto kind : {Kind::Agent, Kind::Script, Kind::Shell, Kind::And, Kind::Branch}) {
+    for (auto kind : {Kind::Agent, Kind::Script, Kind::Shell, Kind::All, Kind::Any, Kind::Branch}) {
         auto *button = palette->findChild<QPushButton *>("addNode_" + kindKey(kind)); QVERIFY(button); QCOMPARE(button->toolTip(), nodeDescription(kind));
     }
     for (auto *label : window.findChildren<QLabel *>()) QVERIFY(label->text() != "AN");
@@ -390,7 +390,7 @@ void GuiTest::nodeExecutionHistory() {
     QTemporaryDir directory; QVERIFY(directory.isValid()); Window window(true); window.show();
     const auto agent = window.editGraph_->addNode("agent"), branch = window.editGraph_->addNode("branch");
     auto node = window.editGraph_->flow.nodes.at(agent); node.model = "fixture"; node.prompt = "COUNT_TO_3";
-    node.title = "ループの実行履歴"; node.schema = R"({"type":"object","properties":{"count":{"type":"integer"}},"required":["count"]})";
+    node.title = "ループの実行履歴"; node.retainContext = true; node.schema = R"({"type":"object","properties":{"count":{"type":"integer"}},"required":["count"]})";
     window.editGraph_->updateNode(node);
     auto condition = window.editGraph_->flow.nodes.at(branch); condition.rules = {{"count", "3", false}}; window.editGraph_->updateNode(condition);
     window.editGraph_->addConnection({1, 0, agent, 0}); window.editGraph_->addConnection({agent, 0, branch, 0});
@@ -570,6 +570,54 @@ void GuiTest::simplifiedCliSettings() {
     QVERIFY(file.open(QIODevice::ReadOnly)); const auto current = Json::parse(file.readAll().toStdString());
     QVERIFY(!current.contains("timeout")); QVERIFY(!current.contains("workspaceWrite"));
     QCOMPARE(QString::fromStdString(current.at("claude")), QString("custom-claude"));
+}
+void GuiTest::contextCheckboxColors() {
+    Node node; node.id = 3; node.kind = Kind::Agent; NodeForm form(node); form.show(); QCoreApplication::processEvents();
+    auto *checkbox = form.findChild<QCheckBox *>("retainContext"); QVERIFY(checkbox);
+    auto whitePixels = [](const QImage &image, int left, int right) {
+        int count = 0;
+        for (int y = 0; y < image.height(); ++y) for (int x = left; x < qMin(right, image.width()); ++x) {
+            const auto color = image.pixelColor(x, y); if (color.red() > 180 && color.green() > 180 && color.blue() > 180) ++count;
+        }
+        return count;
+    };
+    const auto unchecked = checkbox->grab().toImage();
+    const auto border = whitePixels(unchecked, 0, 20); QVERIFY(border > 10); QVERIFY(whitePixels(unchecked, 24, unchecked.width()) > 20);
+    checkbox->setChecked(true); const auto checked = checkbox->grab().toImage(); QVERIFY(whitePixels(checked, 0, 20) > border + 5);
+    form.setReadOnly(true); const auto readonly = checkbox->grab().toImage();
+    QVERIFY(!checkbox->isEnabled()); QVERIFY(whitePixels(readonly, 0, 20) > 10); QVERIFY(whitePixels(readonly, 24, readonly.width()) > 20);
+    QVERIFY(form.grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-context-checkbox.png")));
+}
+void GuiTest::agentContextSetting() {
+    QTemporaryDir directory; Window window(true); window.show();
+    const auto id = window.editGraph_->addNode("agent"); auto *form = window.editGraph_->form(id);
+    auto *checkbox = form->findChild<QCheckBox *>("retainContext"); QVERIFY(checkbox); QVERIFY(!checkbox->isChecked());
+    QTest::mouseClick(checkbox, Qt::LeftButton); QVERIFY(checkbox->isChecked());
+    QVERIFY(window.editGraph_->flow.nodes.at(id).retainContext); QVERIFY(window.documents_[0].flow.nodes.at(id).retainContext);
+    auto *agent = form->findChild<QComboBox *>("nodeAgent"); agent->setCurrentText("Claude Code"); QVERIFY(checkbox->isChecked());
+    agent->setCurrentText("OpenCode"); QVERIFY(checkbox->isChecked());
+    const auto path = directory.filePath("context.flow.json"); window.editGraph_->flow.save(path); QVERIFY(Flow::load(path).nodes.at(id).retainContext);
+    window.workGraph_->replace(window.editGraph_->flow); auto *readonly = window.workGraph_->form(id)->findChild<QCheckBox *>("retainContext");
+    QVERIFY(readonly); QVERIFY(readonly->isChecked()); QVERIFY(!readonly->isEnabled()); QTest::mouseClick(readonly, Qt::LeftButton); QVERIFY(readonly->isChecked());
+    auto node = window.editGraph_->flow.nodes.at(id); node.retainContext = false; window.editGraph_->updateNode(node); QVERIFY(!checkbox->isChecked());
+    const auto script = window.editGraph_->addNode("script"); QVERIFY(!window.editGraph_->form(script)->findChild<QCheckBox *>("retainContext"));
+}
+void GuiTest::allAndAnyForms() {
+    QTemporaryDir directory; Window window(true); window.show();
+    auto *all = window.findChild<QPushButton *>("addNode_all"), *any = window.findChild<QPushButton *>("addNode_any");
+    QVERIFY(all); QVERIFY(any); QVERIFY(all->text().contains("All")); QVERIFY(any->text().contains("Any")); QVERIFY(!window.findChild<QPushButton *>("addNode_and"));
+    QTest::mouseClick(any, Qt::LeftButton); const auto id = window.selected_; auto *form = window.editGraph_->form(id);
+    QVERIFY(window.editGraph_->flow.nodes.at(id).kind == Kind::Any);
+    auto *inputs = form->findChild<QSpinBox *>("nodeInputs"); QVERIFY(inputs); QCOMPARE(inputs->minimum(), 1); QCOMPARE(inputs->maximum(), 256);
+    window.editGraph_->addConnection({1,0,id,0}); inputs->setValue(3); QVERIFY(window.editGraph_->allConnectionIds(id).empty());
+    QCOMPARE(window.editGraph_->flow.nodes.at(id).inputs, 3u);
+    QCOMPARE(window.editGraph_->portData(id, PortType::In, 2, PortRole::Caption).toString(), QString("入力 2"));
+    inputs->setValue(2); window.editGraph_->addConnection({1,0,id,1}); window.editGraph_->addConnection({1,0,id,0}); window.editGraph_->addConnection({id,0,2,0});
+    window.projects_.push_back({"Any", directory.path(), window.documents_[0].path, {}}); window.refreshProjects(); window.tabs_->setCurrentIndex(1); window.selectWorkNode(id);
+    auto *readonly = window.workGraph_->form(id)->findChild<QSpinBox *>("nodeInputs"); QVERIFY(readonly); QTest::keyClick(readonly, Qt::Key_Up); QCOMPARE(readonly->value(), 2);
+    QSignalSpy done(window.runner_, &Runner::finished); window.executeFlow(); QTRY_COMPARE(done.count(), 1); QVERIFY(done[0][0].toBool());
+    QCOMPARE(window.historyList_->count(), 2); QVERIFY(window.output_->toPlainText().contains("event")); QVERIFY(window.output_->toPlainText().contains("input"));
+    QVERIFY(window.runner_->results().at(2).output == Json({{"event",0},{"input",Json::object()}}));
 }
 void GuiTest::trayVisibilityAndIdleExit() {
     Window window(true); window.show(); QCoreApplication::processEvents();

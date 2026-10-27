@@ -68,7 +68,7 @@ int main(int argc, char **argv) {
         Node branch; branch.id = 4; branch.kind = Kind::Branch; branch.rules = {{"count", "2", false}}; flow.nodes[4] = branch;
         agentNode(5, "The input count is ${count}. Return JSON with count equal to that integer plus 1.", countSchema);
         agentNode(6, "The input count is ${count}. Return JSON with count equal to that integer plus 1.", countSchema);
-        Node join; join.id = 7; join.kind = Kind::And; flow.nodes[7] = join;
+        Node join; join.id = 7; join.kind = Kind::All; flow.nodes[7] = join;
         agentNode(8, "Return JSON with count equal to ${[0].count}. The other input is ${[1].count}; do not add them.", countSchema);
         flow.edges = {{1, 3}, {3, 4}, {4, 5, 0, 0}, {4, 6, 0, 0}, {5, 7, 0, 0}, {6, 7, 0, 1}, {7, 8}, {8, 4}, {4, 2, 1, 0}};
         expected = {{"count", 2}};

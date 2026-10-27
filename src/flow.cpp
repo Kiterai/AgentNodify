@@ -47,7 +47,7 @@ Json outputSchema(const Flow &f, Id id, QSet<Id> &visiting) {
     else if (n.kind == Kind::ProjectCreate) out = {{"type", "object"}, {"properties", {{"result", {{"type", "string"}}}, {"path", {{"type", "string"}}}, {"reason", {{"type", "string"}}}}}};
     else if (n.kind == Kind::FlowRun) out = {{"type", "object"}, {"properties", {{"result", {{"type", "string"}}}}}};
     else if (n.kind == Kind::Shell) out = {{"type", "object"}, {"properties", {{"exit_code", {{"type", "integer"}}}, {"stdout", {{"type", "string"}}}, {"stderr", {{"type", "string"}}}}}, {"required", {"exit_code", "stdout", "stderr"}}, {"additionalProperties", false}};
-    else if (n.kind == Kind::And) {
+    else if (n.kind == Kind::All) {
         Json items = Json::array();
         for (unsigned i = 0; i < n.inputs; ++i) {
             std::vector<Json> incoming;
@@ -55,6 +55,10 @@ Json outputSchema(const Flow &f, Id id, QSet<Id> &visiting) {
             items.push_back(sources(incoming));
         }
         out = {{"type", "array"}, {"items", items}};
+    } else if (n.kind == Kind::Any) {
+        std::vector<Json> incoming;
+        for (const auto &e : f.edges) if (e.to == id) incoming.push_back(outputSchema(f, e.from, visiting));
+        out = {{"type", "object"}, {"properties", {{"event", {{"type", "integer"}, {"minimum", 0}, {"maximum", n.inputs ? n.inputs - 1 : 0}}}, {"input", sources(incoming)}}}, {"required", {"event", "input"}}, {"additionalProperties", false}};
     } else {
         std::vector<Json> incoming;
         for (auto &e : f.edges) if (e.to == id) incoming.push_back(outputSchema(f, e.from, visiting));
@@ -69,7 +73,8 @@ QString kindName(Kind k) {
     switch (k) {
     case Kind::Start: return QStringLiteral("始端");
     case Kind::End: return QStringLiteral("終端");
-    case Kind::And: return QStringLiteral("AND");
+    case Kind::All: return QStringLiteral("All");
+    case Kind::Any: return QStringLiteral("Any");
     case Kind::Branch: return QStringLiteral("分岐");
     case Kind::Script: return QStringLiteral("スクリプト");
     case Kind::Shell: return QStringLiteral("シェル実行");
@@ -81,13 +86,14 @@ QString kindName(Kind k) {
 }
 QString kindKey(Kind k) {
     switch(k) { case Kind::Start: return "start"; case Kind::End: return "end";
-    case Kind::And: return "and"; case Kind::Branch: return "branch"; case Kind::Script: return "script"; case Kind::Shell: return "shell";
+    case Kind::All: return "all"; case Kind::Any: return "any"; case Kind::Branch: return "branch"; case Kind::Script: return "script"; case Kind::Shell: return "shell";
     case Kind::ProjectCreate: return "project_create"; case Kind::FlowRun: return "flow_run"; case Kind::FlowWait: return "flow_wait"; default: return "agent"; }
 }
 Kind parseKind(const std::string &k) {
     if (k == "start") return Kind::Start;
     if (k == "end") return Kind::End;
-    if (k == "and") return Kind::And;
+    if (k == "and" || k == "all") return Kind::All;
+    if (k == "any") return Kind::Any;
     if (k == "branch") return Kind::Branch;
     if (k == "agent") return Kind::Agent;
     if (k == "script") return Kind::Script;
@@ -97,7 +103,7 @@ Kind parseKind(const std::string &k) {
     if (k == "flow_wait") return Kind::FlowWait;
     error("不明なノード種別: " + q(k));
 }
-unsigned Flow::inputCount(const Node &n) const { return n.kind == Kind::Start ? 0 : n.kind == Kind::And ? n.inputs : 1; }
+unsigned Flow::inputCount(const Node &n) const { return n.kind == Kind::Start ? 0 : (n.kind == Kind::All || n.kind == Kind::Any) ? n.inputs : 1; }
 unsigned Flow::outputCount(const Node &n) const { return n.kind == Kind::End ? 0 : n.kind == Kind::Branch ? unsigned(n.rules.size()) + 1 : 1; }
 Json Flow::toJson() const {
     Json ns = Json::array(), es = Json::array();
@@ -106,7 +112,7 @@ Json Flow::toJson() const {
         for (auto &r : n.rules) rules.push_back({{"variable", s(r.variable)}, {"value", s(r.value)}, {"equals", r.equals}});
         ns.push_back({{"id", id}, {"kind", s(kindKey(n.kind))}, {"title", s(n.title)},
             {"x", n.position.x()}, {"y", n.position.y()}, {"agent", s(n.agent)}, {"model", s(n.model)}, {"effort", s(n.effort)},
-            {"prompt", s(n.prompt)}, {"schema", s(n.schema)}, {"inputs", n.inputs}, {"rules", rules},
+            {"prompt", s(n.prompt)}, {"schema", s(n.schema)}, {"retainContext", n.retainContext}, {"inputs", n.inputs}, {"rules", rules},
             {"scriptLanguage", s(n.scriptLanguage)}, {"scriptPath", s(n.scriptPath)}, {"scriptDirectory", s(n.scriptDirectory)},
             {"shellCommand", s(n.shellCommand)}, {"shellDirectory", s(n.shellDirectory)}, {"targetFlow", s(n.targetFlow)}, {"projectPath", s(n.projectPath)}});
     }
@@ -120,14 +126,16 @@ Flow Flow::fromJson(const Json &j) {
     for (auto &v : j.at("nodes")) {
         Node n; n.id = v.at("id").get<Id>(); n.kind = parseKind(v.at("kind"));
         n.title = q(v.at("title")); n.position = {v.at("x").get<double>(), v.at("y").get<double>()};
+        if (n.kind == Kind::All && n.title == "AND") n.title = "All";
         n.agent = q(v.value("agent", "Codex")); n.model = q(v.value("model", ""));
         n.effort = q(v.value("effort", ""));
         n.prompt = q(v.value("prompt", "")); n.schema = q(v.value("schema", ""));
+        n.retainContext = v.value("retainContext", false);
         n.inputs = v.value("inputs", 2u);
         n.scriptLanguage = q(v.value("scriptLanguage", "python")); n.scriptPath = q(v.value("scriptPath", "")); n.scriptDirectory = q(v.value("scriptDirectory", ""));
         n.shellCommand = q(v.value("shellCommand", "")); n.shellDirectory = q(v.value("shellDirectory", ""));
         n.targetFlow = q(v.value("targetFlow", "")); n.projectPath = q(v.value("projectPath", ""));
-        if (n.inputs > 256) error("AND入力数は256以下にしてください");
+        if (n.inputs > 256) error("入力数は256以下にしてください");
         for (auto &r : v.at("rules")) n.rules.push_back({q(r.at("variable")), q(r.at("value")), r.at("equals").get<bool>()});
         if (!f.nodes.emplace(n.id, n).second) error("ノードIDが重複しています");
         f.nextNodeId = qMax(f.nextNodeId, quint64(n.id) + 1);
@@ -255,7 +263,7 @@ QStringList Flow::validate() const {
         if (!reachable.contains(id)) errors << label + "始端から到達できません";
         if (!terminal.contains(id)) errors << label + "終端に到達できません";
         for (unsigned p = 0; p < inputCount(n); ++p) if (!incoming.contains({id, p})) errors << label + QString("入力%1が未接続です").arg(p);
-        if (n.kind == Kind::And && n.inputs == 0) errors << label + "AND入力は1つ以上必要です";
+        if ((n.kind == Kind::All || n.kind == Kind::Any) && (n.inputs == 0 || n.inputs > 256)) errors << label + "入力数は1〜256にしてください";
         if (isHostOperation(n.kind)) {
             if (n.targetFlow.isEmpty()) errors << label + "フローを選択してください";
             if (n.projectPath.trimmed().isEmpty()) errors << label + "プロジェクトパスが空です";

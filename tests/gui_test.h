@@ -34,5 +34,8 @@ private slots:
     void trayQuitWithRunningFlows_data();
     void trayQuitWithRunningFlows();
     void trayExitSavesChanges();
+    void allAndAnyForms();
+    void agentContextSetting();
+    void contextCheckboxColors();
 };
 }

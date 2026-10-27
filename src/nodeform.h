@@ -10,6 +10,7 @@ class QSpinBox;
 class QVBoxLayout;
 class QLabel;
 class QPushButton;
+class QCheckBox;
 
 namespace an {
 QString nodeDescription(Kind kind);
@@ -53,6 +54,7 @@ private:
     bool updating_ = false, resizeScheduled_ = false;
     QLineEdit *title_ = nullptr;
     QComboBox *agent_ = nullptr, *model_ = nullptr, *effort_ = nullptr;
+    QCheckBox *retainContext_ = nullptr;
     QComboBox *scriptLanguage_ = nullptr;
     QLineEdit *scriptPath_ = nullptr, *scriptDirectory_ = nullptr;
     QPushButton *scriptFileBrowse_ = nullptr, *scriptDirectoryBrowse_ = nullptr;

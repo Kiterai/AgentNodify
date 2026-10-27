@@ -177,7 +177,7 @@ void Window::buildUi() {
     tools->addAction("モデル一覧を更新", this, [this] { if (!smoke_) modelCatalog_->refreshAll(true); });
     auto *help = menuBar()->addMenu("ヘルプ");
     help->addAction("操作方法", this, [this] {
-        QMessageBox::information(this, "操作方法", "左のボタンでノードを追加し、丸いポートをドラッグして接続します。\nパラメータはノード内のフォームで編集します。複数行欄をクリックすると右ペインで編集できます。\nノードや追加ボタンにカーソルを置くと機能説明を表示します。Deleteで選択要素を削除できます。\nAND入力は0-indexed、分岐は上から順・最後が「それ以外」です。\nポート数を変えると、そのノードの接続は解除されます。\nフロー一覧の右クリックで名前変更・一覧から削除、＋から新規作成・既存追加ができます。\nフローを保存し、プロジェクト作業タブでディレクトリを追加して実行します。\n作業ノードをクリックすると右ペインに状態・CLIログ・出力を表示します。\nCLIの認証と権限設定は各CLIで事前に行ってください。");
+        QMessageBox::information(this, "操作方法", "左のボタンでノードを追加し、丸いポートをドラッグして接続します。\nパラメータはノード内のフォームで編集します。複数行欄をクリックすると右ペインで編集できます。\nノードや追加ボタンにカーソルを置くと機能説明を表示します。Deleteで選択要素を削除できます。\nAll／Anyの入力は0-indexed、分岐は上から順・最後が「それ以外」です。\nポート数を変えると、そのノードの接続は解除されます。\nフロー一覧の右クリックで名前変更・一覧から削除、＋から新規作成・既存追加ができます。\nフローを保存し、プロジェクト作業タブでディレクトリを追加して実行します。\n作業ノードをクリックすると右ペインに状態・CLIログ・出力を表示します。\nCLIの認証と権限設定は各CLIで事前に行ってください。");
     });
     auto *root = new QWidget; auto *row = new QHBoxLayout(root); row->setContentsMargins(0, 0, 0, 0); row->setSpacing(0);
     auto *bar = new QWidget; bar->setFixedWidth(88); auto *barLayout = new QVBoxLayout(bar); barLayout->setContentsMargins(2, 6, 2, 6);
@@ -190,7 +190,7 @@ void Window::buildUi() {
     editorSplit_ = new QSplitter;
     auto *left = new QWidget; auto *leftLayout = new QVBoxLayout(left);
     leftLayout->addWidget(new QLabel("ノードを追加"));
-    for (Kind k : {Kind::Agent, Kind::Script, Kind::Shell, Kind::And, Kind::Branch, Kind::ProjectCreate, Kind::FlowRun, Kind::FlowWait}) {
+    for (Kind k : {Kind::Agent, Kind::Script, Kind::Shell, Kind::All, Kind::Any, Kind::Branch, Kind::ProjectCreate, Kind::FlowRun, Kind::FlowWait}) {
         auto *add = button("＋ " + kindName(k), leftLayout, [this, k] {
             auto id = editGraph_->addNode(kindKey(k));
             if (id == QtNodes::InvalidNodeId) statusBar()->showMessage("ノードを追加できません", 5000);

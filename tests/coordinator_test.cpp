@@ -143,7 +143,7 @@ private slots:
         auto flow = Flow::initial();
         for (Id id : {3u, 4u}) { auto node = operation(Kind::FlowRun, "child", id == 3 ? "a" : "b"); node.id = id; flow.nodes[id] = node; }
         for (Id id : {5u, 6u}) { auto node = operation(Kind::FlowWait, "child", id == 5 ? "a" : "b"); node.id = id; flow.nodes[id] = node; }
-        Node join; join.id = 7; join.kind = Kind::And; flow.nodes[7] = join;
+        Node join; join.id = 7; join.kind = Kind::All; flow.nodes[7] = join;
         flow.edges = {{1,3},{1,4},{3,5},{4,6},{5,7,0,0},{6,7,0,1},{7,2}};
         configure(host, directory.path(), flow);
         for (QString name : {"a", "b"}) { QVERIFY(QDir().mkpath(directory.filePath(name))); host.projects.push_back({name, "child", directory.filePath(name)}); }

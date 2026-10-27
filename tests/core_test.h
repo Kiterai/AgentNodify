@@ -30,4 +30,10 @@ private slots:
     void rejectBeforeExecution();
     void effortArguments();
     void historyStorage();
+    void allRenameAndAnyRoundtrip();
+    void anyQueuedArrivals();
+    void anyInactiveInput();
+    void anyAsyncAndVariables();
+    void anyLoopCancellation();
+    void anyPayloads();
 };

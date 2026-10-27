@@ -44,8 +44,9 @@ struct AgentConfig {
 #endif
     bool opencodeStandalone = false;
 };
-// Every firing enqueues an event. Ordinary nodes consume one event; AND consumes
+// Every firing enqueues an event. Ordinary nodes consume one event; All consumes
 // exactly one event from every input FIFO, then waits for a fresh complete set.
+// Any consumes one event from the oldest nonempty input FIFO across all ports.
 class Runner : public QObject {
     Q_OBJECT
 public:
@@ -78,8 +79,11 @@ private:
     AgentConfig config_;
     QString directory_, flowDirectory_;
     std::map<Id, Result> results_;
+    std::map<Id, QString> agentSessions_;
     std::map<Id, NodeExecution> activeExecutions_;
-    std::map<Id, std::vector<std::deque<Json>>> tokens_;
+    struct Token { Json value; quint64 arrival; };
+    std::map<Id, std::vector<std::deque<Token>>> tokens_;
+    quint64 arrival_ = 0;
     std::map<Id, std::unique_ptr<Job>> jobs_;
     std::set<Id> pendingHost_;
     bool active_ = false;
@@ -100,5 +104,6 @@ private:
 };
 // Exposed for protocol fixture tests. Never treat process output as commands.
 Json decodeAgentOutput(const QString &agent, const QByteArray &data, bool structured);
+QString decodeAgentSessionId(const QString &agent, const QByteArray &data);
 }
 Q_DECLARE_METATYPE(an::NodeExecution)

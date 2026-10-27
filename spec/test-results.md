@@ -2,6 +2,30 @@
 
 ## 自動テスト
 
+### コンテキスト引き継ぎチェックボックスの配色
+
+- 文字・枠・チェックマークをフォーム共通の白系へ統一。Windowsネイティブの黒いチェック表示に依存せず、読み取り専用時も同じ配色で表示する。
+- チェックなし・あり・読み取り専用の描画画像から、白い文字・枠・チェックマークが存在することをGUIテストで検証。画像`build/gui-context-checkbox.png`も確認済み。
+- GUIのQtTestは33 passed / 0 failed（`build/gui-results.txt`）。
+
+### エージェントノードのコンテキスト引き継ぎ
+
+- ノード内に「前回のコンテキストを引き継ぐ」チェックボックスを追加。既定オフ、フローへの保存・復元、旧ファイルでの未設定、エージェント切り替え時の保持、フォームの外部更新、作業画面での変更禁止を検証。
+- Codex／Claude Code／OpenCodeそれぞれについて、3回ループで有効なら同じセッションをID指定で再開、無効なら毎回新規であることをtext／JSON両形式で検証。同じRunnerによる次のフロー実行では再開せず、履歴IDは毎回別、実行番号は各フロー実行内で1〜3になることを確認。
+- 複数ノードと複数Runnerを同じプロジェクトディレクトリで並列実行し、セッションが4つに分離されること、FIFOで続く2回目だけが各セッションを再開することを検証。
+- ID欠落・不正形式・複数の異なるID・再開先ID変更・CLI再開エラーを検証。中止後の再実行でコンテキストを持ち越さないこと、引き継ぎ無効ならID欠落でも正常実行できることも確認した。
+- 既存GUIのループ履歴テストを引き継ぎ有効にして、毎回の履歴・出力選択と次のフロー実行での追加記録が維持されることを確認。
+- context用QtTestは34 passed / 0 failed（`build/context-results.txt`）、GUIは32 passed / 0 failed（`build/gui-results.txt`）。Releaseビルドとサンドボックス内CTest全10件が成功。contextはテスト用並列トレースの排他を追加後、CTestで5回連続成功も確認した。
+- CLIの公式資料と既存JSONイベントを参照し、fake_agentでセッション状態と再開引数を検証した。実AIサービスへの新たな推論リクエストは行っていない。
+
+### Allへの改名・Anyノード
+
+- ANDをAllへ改名し、追加ボタン・既定名・入力待ちエラー・操作説明を更新。旧`and`の読み込み、既定タイトル`AND`の移行、カスタム名の保持、新`all`／`any`の保存・復元を検証。
+- Anyが未発火の入力を待たず、0始まりの`event`と元データの`input`を出力することを検証。ポート番号とは逆順の到着、複数ポートのキュー、同じポートへの繰り返し到着をFIFOで処理し、各回に固有の履歴・実行番号を記録することを確認。
+- null・数値・真偽値・日本語文字列・配列・ネストしたオブジェクトの保持、非同期の前段とFIFOで動く後段、`${event}`／`${input.count}`のスキーマ参照、無効参照の拒否、自己ループと中止を検証。
+- GUIでAll／Anyの追加、Anyの入力数・番号表示・ポート数変更による接続解除、作業画面の読み取り専用、複数実行履歴とJSON出力を確認。既存のAll待ち合わせテストも引き続き成功。
+- コアQtTestは36 passed / 0 failed（`build/core-results.txt`）、GUIは31 passed / 0 failed（`build/gui-results.txt`）。Releaseビルドとサンドボックス内CTest全9件が成功。実AIサービスは利用していない。
+
 ### 多重起動防止
 
 - ウィンドウ生成前に取得する起動ロックを追加。通常起動はユーザーのAppLocalDataLocation、スモークテストはビルドディレクトリの専用パスを使用する。
@@ -117,14 +141,14 @@
 Windows 11 / MSVC 2022 / Qt 6.12.0 Release構成。
 ノード内フォームへのGUI改修後にReleaseビルドを完了し、以下がすべて成功。
 
-- コアのQtTest: 30 passed / 0 failed。
-- GUIのQtTest: 30 passed / 0 failed。
+- コアのQtTest: 36 passed / 0 failed。
+- GUIのQtTest: 33 passed / 0 failed。
 - スクリプト実行のQtTest: 36 passed / 0 failed。
 - シェル実行のQtTest: 23 passed / 0 failed。
 - モデル一覧取得のQtTest: 22 passed / 0 failed。
 - 進捗表示のQtTest: 25 passed / 0 failed。
 - GUI起動・編集・読み取り専用グラフのスモークテスト: 成功。
-- CTest: `core` / `script` / `shell` / `gui` / `catalog` / `progress` / `gui_smoke` の7件すべて成功。
+- CTest: `instance` / `core` / `script` / `shell` / `gui` / `catalog` / `progress` / `context` / `coordinator` / `gui_smoke` の10件すべて成功。
 
 ### CLI進捗の整形表示
 

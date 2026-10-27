@@ -9,6 +9,7 @@
 #include <QFile>
 #include <QCoreApplication>
 #include <QScopeGuard>
+#include <set>
 
 using namespace an;
     Flow CoreTest::simple(const QString &agent) {
@@ -22,6 +23,87 @@ using namespace an;
         path = QCoreApplication::applicationDirPath() + "/fake_agent";
 #endif
         return {path, path, path};
+    }
+    void CoreTest::allRenameAndAnyRoundtrip() {
+        QCOMPARE(kindName(Kind::All), QString("All")); QCOMPARE(kindKey(Kind::All), QString("all"));
+        QVERIFY(parseKind("and") == Kind::All); QVERIFY(parseKind("all") == Kind::All); QVERIFY(parseKind("any") == Kind::Any);
+        auto flow = Flow::initial(); Node node; node.id = 3; node.kind = Kind::All; node.title = "AND"; flow.nodes[3] = node;
+        flow.edges = {{1,3,0,0},{1,3,0,1},{3,2}};
+        auto legacy = flow.toJson(); legacy["nodes"][2]["kind"] = "and";
+        auto restored = Flow::fromJson(legacy); QCOMPARE(restored.nodes.at(3).title, QString("All")); QVERIFY(restored.validate().isEmpty());
+        QVERIFY(restored.toJson()["nodes"][2]["kind"] == "all");
+        legacy["nodes"][2]["title"] = "Custom join"; QCOMPARE(Flow::fromJson(legacy).nodes.at(3).title, QString("Custom join"));
+        flow.nodes[3].kind = Kind::Any; flow.nodes[3].title = "Any";
+        QVERIFY(Flow::fromJson(flow.toJson()).toJson() == flow.toJson());
+        flow.nodes[3].inputs = 0; QVERIFY(!flow.validate().isEmpty()); flow.nodes[3].inputs = 257; QVERIFY(!flow.validate().isEmpty());
+    }
+    void CoreTest::anyQueuedArrivals() {
+        QTemporaryDir directory; auto flow = Flow::initial(); Node node; node.id = 3; node.kind = Kind::Any; node.inputs = 3; flow.nodes[3] = node;
+        Node pass; pass.id = 4; pass.kind = Kind::Branch; flow.nodes[4] = pass;
+        flow.edges = {{1,3,0,2},{1,3,0,0},{1,3,0,1},{3,2},{1,4},{4,3,0,2}};
+        Runner runner; QSignalSpy done(&runner, &Runner::finished); std::vector<NodeExecution> history;
+        connect(&runner, &Runner::executionChanged, &runner, [&](const NodeExecution &entry) { if (entry.node == 3 && entry.state == State::Succeeded) history.push_back(entry); });
+        QVERIFY(runner.start(flow, directory.path(), config())); QVERIFY(done.wait(5000)); QVERIFY(done[0][0].toBool());
+        QCOMPARE(history.size(), size_t(4)); const unsigned order[] = {2,0,1,2};
+        for (size_t i = 0; i < history.size(); ++i) {
+            QVERIFY(history[i].output == Json({{"event", order[i]}, {"input", Json::object()}}));
+            QCOMPARE(history[i].executionNumber, quint64(i + 1)); QVERIFY(history[i].structuredOutput);
+            if (i) QVERIFY(history[i].id != history[i-1].id);
+        }
+        QCOMPARE(runner.results().at(2).executions, quint64(4));
+    }
+    void CoreTest::anyInactiveInput() {
+        QTemporaryDir directory; auto flow = simple(); flow.nodes[3].schema = schema();
+        Node branch; branch.id = 4; branch.kind = Kind::Branch; branch.rules = {{"result", "ok", true}}; flow.nodes[4] = branch;
+        Node any; any.id = 5; any.kind = Kind::Any; flow.nodes[5] = any;
+        flow.edges = {{1,3},{3,4},{4,5,0,1},{4,5,1,0},{5,2}};
+        Runner runner; QSignalSpy done(&runner, &Runner::finished); QVERIFY(runner.start(flow, directory.path(), config())); QVERIFY(done.wait(5000));
+        QVERIFY(done[0][0].toBool()); QVERIFY(runner.results().at(2).output == Json({{"event", 1}, {"input", {{"result", "ok"}}}}));
+        QCOMPARE(runner.results().at(5).executions, quint64(1));
+    }
+    void CoreTest::anyAsyncAndVariables() {
+        QTemporaryDir directory; auto flow = simple();
+        const QString countSchema = R"({"type":"object","properties":{"count":{"type":"integer"}},"required":["count"]})";
+        flow.nodes[3].prompt = "SHORT_DELAY PASS_COUNT=1"; flow.nodes[3].schema = countSchema;
+        auto other = flow.nodes[3]; other.id = 4; other.prompt = "PASS_COUNT=2"; flow.nodes[4] = other;
+        Node any; any.id = 5; any.kind = Kind::Any; flow.nodes[5] = any;
+        auto consumer = other; consumer.id = 6; consumer.prompt = "SHORT_DELAY PASS_COUNT=${input.count}"; flow.nodes[6] = consumer;
+        flow.edges = {{1,3},{1,4},{3,5,0,0},{4,5,0,1},{5,6},{6,2}};
+        QVERIFY(flow.validate().isEmpty());
+        flow.nodes[6].prompt = "${event} ${input.missing}"; QVERIFY(!flow.validate().isEmpty()); flow.nodes[6] = consumer;
+        Runner runner; QSignalSpy done(&runner, &Runner::finished); std::vector<Json> arrivals, consumed;
+        connect(&runner, &Runner::executionChanged, &runner, [&](const NodeExecution &entry) {
+            if (entry.state != State::Succeeded) return;
+            if (entry.node == 5) arrivals.push_back(entry.output);
+            if (entry.node == 6) consumed.push_back(entry.output);
+        });
+        QVERIFY(runner.start(flow, directory.path(), config())); QVERIFY(done.wait(10000)); QVERIFY(done[0][0].toBool());
+        QCOMPARE(arrivals.size(), size_t(2)); QCOMPARE(consumed.size(), size_t(2));
+        std::set<int> indices;
+        for (size_t i = 0; i < arrivals.size(); ++i) { indices.insert(arrivals[i].at("event").get<int>()); QVERIFY(consumed[i] == arrivals[i].at("input")); }
+        QCOMPARE(indices.size(), size_t(2));
+    }
+    void CoreTest::anyPayloads() {
+        QTemporaryDir directory;
+        for (const Json payload : {Json(), Json(42), Json(true), Json("日本語\ntext"), Json::array({1, "two", nullptr}), Json{{"nested", {{"value", true}}}}}) {
+            auto flow = Flow::initial(); Node source; source.id = 3; source.kind = Kind::FlowWait; source.targetFlow = "fixture"; source.projectPath = "."; flow.nodes[3] = source;
+            Node any; any.id = 4; any.kind = Kind::Any; any.inputs = 1; flow.nodes[4] = any;
+            flow.edges = {{1,3},{3,4},{4,2}}; Runner runner; QSignalSpy done(&runner, &Runner::finished);
+            runner.hostHandler = [payload](Runner *, Id, const Node &, const QString &, Runner::HostCompletion complete) { complete(payload, {}); };
+            QVERIFY(runner.start(flow, directory.path(), config())); QVERIFY(done.wait(5000)); QVERIFY(done[0][0].toBool());
+            QVERIFY(runner.results().at(2).output == Json({{"event", 0}, {"input", payload}}));
+        }
+    }
+    void CoreTest::anyLoopCancellation() {
+        QTemporaryDir directory; auto flow = Flow::initial(); Node node; node.id = 3; node.kind = Kind::Any; flow.nodes[3] = node;
+        flow.edges = {{1,3,0,0},{3,3,0,1},{3,2}};
+        Runner runner; QSignalSpy done(&runner, &Runner::finished); std::vector<Json> outputs;
+        connect(&runner, &Runner::fired, &runner, [&](Id id, quint64 execution, QString text) {
+            if (id != 3) return; outputs.push_back(parseJson(text)); if (execution == 5) runner.cancel();
+        });
+        QVERIFY(runner.start(flow, directory.path(), config())); QVERIFY(done.wait(5000)); QVERIFY(!done[0][0].toBool());
+        QCOMPARE(outputs.size(), size_t(5)); QVERIFY(outputs[0] == Json({{"event", 0}, {"input", Json::object()}}));
+        for (size_t i = 1; i < outputs.size(); ++i) { QVERIFY(outputs[i].at("event") == 1); QVERIFY(outputs[i].at("input") == outputs[i-1]); }
     }
     void CoreTest::variables() {
         Json j = {{"a", "b"}, {"hoge", {{"foo", "bar"}}}, {"foobar", {"baz", "qux"}}};
@@ -136,7 +218,7 @@ using namespace an;
     }
     void CoreTest::parallelJoin() {
         auto f = simple(); auto second = f.nodes[3]; second.id = 4; second.prompt = "RESPONSE_TWO"; f.nodes[4] = second;
-        Node join; join.id = 5; join.kind = Kind::And; f.nodes[5] = join;
+        Node join; join.id = 5; join.kind = Kind::All; f.nodes[5] = join;
         f.edges = {{1, 3}, {1, 4}, {4, 5, 0, 0}, {3, 5, 0, 1}, {5, 2}};
         QTemporaryDir dir; Runner r; QSignalSpy spy(&r, &Runner::finished); QVERIFY(r.start(f, dir.path(), config())); QVERIFY(spy.wait(15000));
         QVERIFY(spy[0][0].toBool()); QVERIFY(r.results().at(2).output == Json::array({"two", "hello"}));
@@ -203,7 +285,7 @@ using namespace an;
         Node branch; branch.id = 4; branch.kind = Kind::Branch; branch.rules = {{"count", "3", false}}; f.nodes[4] = branch;
         Node a = f.nodes[3]; a.id = 5; f.nodes[5] = a;
         Node b = a; b.id = 6; b.schema.clear(); b.prompt = "SHORT_DELAY"; f.nodes[6] = b;
-        Node join; join.id = 7; join.kind = Kind::And; f.nodes[7] = join;
+        Node join; join.id = 7; join.kind = Kind::All; f.nodes[7] = join;
         Node next = a; next.id = 8; next.prompt = "PASS_COUNT=${[0].count}"; f.nodes[8] = next;
         f.edges = {{1, 3}, {3, 4}, {4, 5, 0, 0}, {4, 6, 0, 0}, {4, 2, 1, 0}, {5, 7, 0, 0}, {6, 7, 0, 1}, {7, 8}, {8, 4}};
         QTemporaryDir dir; Runner r; QSignalSpy spy(&r, &Runner::finished), fired(&r, &Runner::fired);
@@ -225,18 +307,18 @@ using namespace an;
         QVERIFY(r.start(f, dir.path(), config())); QVERIFY(spy.wait(15000)); QVERIFY(spy[0][0].toBool());
         QCOMPARE(r.results().at(5).executions, quint64(2)); QCOMPARE(r.results().at(2).executions, quint64(2));
         // Two inputs to each AND port, queued before the slower input arrives.
-        Node join; join.id = 6; join.kind = Kind::And; f.nodes[6] = join;
+        Node join; join.id = 6; join.kind = Kind::All; f.nodes[6] = join;
         f.edges = {{1, 3}, {1, 4}, {3, 5}, {4, 5}, {3, 6, 0, 0}, {4, 6, 0, 0}, {5, 6, 0, 1}, {6, 2}};
         spy.clear(); QVERIFY(r.start(f, dir.path(), config())); QVERIFY(spy.wait(15000)); QVERIFY(spy[0][0].toBool());
         QCOMPARE(r.results().at(6).executions, quint64(2)); QCOMPARE(r.results().at(2).executions, quint64(2));
     }
     void CoreTest::incompleteAnd() {
-        auto f = simple(); Node join; join.id = 4; join.kind = Kind::And; f.nodes[4] = join;
+        auto f = simple(); Node join; join.id = 4; join.kind = Kind::All; f.nodes[4] = join;
         // Input 1 fires once. The join's own feedback must NOT reuse it.
         f.edges = {{1, 3}, {3, 4, 0, 0}, {1, 4, 0, 1}, {4, 4, 0, 0}, {4, 2}};
         QTemporaryDir dir; Runner r; QSignalSpy spy(&r, &Runner::finished);
         QVERIFY(r.start(f, dir.path(), config())); QVERIFY(spy.wait(15000));
-        QVERIFY(!spy[0][0].toBool()); QVERIFY(spy[0][1].toString().contains("AND"));
+        QVERIFY(!spy[0][0].toBool()); QVERIFY(spy[0][1].toString().contains("All"));
         QCOMPARE(r.results().at(4).executions, quint64(1));
     }
     void CoreTest::synchronousLoopCancellation() {

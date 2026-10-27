@@ -133,7 +133,7 @@ void ShellTest::loop() {
 void ShellTest::parallelJoin() {
     if (!available()) QSKIP("System shell not installed"); QTemporaryDir directory; auto flow = shellFlow(command("A"));
     auto second = flow.nodes[3]; second.id = 4; second.shellCommand = command("B"); flow.nodes[4] = second;
-    Node join; join.id = 5; join.kind = Kind::And; flow.nodes[5] = join;
+    Node join; join.id = 5; join.kind = Kind::All; flow.nodes[5] = join;
     auto last = flow.nodes[3]; last.id = 6; last.shellCommand = command("${[0].stdout}:${[1].stdout}"); flow.nodes[6] = last;
     flow.edges = {{1, 3}, {1, 4}, {3, 5, 0, 0}, {4, 5, 0, 1}, {5, 6}, {6, 2}};
     Runner runner; QSignalSpy done(&runner, &Runner::finished); QVERIFY(runner.start(flow, directory.path(), {}, directory.filePath("flow.json"))); QTRY_COMPARE_WITH_TIMEOUT(done.count(), 1, 15000);

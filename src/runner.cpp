@@ -6,6 +6,7 @@
 #include <QFileInfo>
 #include <QCoreApplication>
 #include <QProcessEnvironment>
+#include <QRegularExpression>
 #include <QUuid>
 #include <stdexcept>
 
@@ -43,6 +44,27 @@ Json decodeAgentOutput(const QString &agent, const QByteArray &data, bool struct
     if (text.isEmpty()) throw std::runtime_error("エージェントの最終応答がありません");
     return structured ? parseJson(text.trimmed()) : Json(text.toUtf8().toStdString());
 }
+QString decodeAgentSessionId(const QString &agent, const QByteArray &data) {
+    QString session;
+    const QRegularExpression uuid("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
+    const QRegularExpression openCodeId("^ses_[A-Za-z0-9_-]{1,128}$");
+    for (const auto &line : data.split('\n')) {
+        const auto event = Json::parse(line.toStdString(), nullptr, false);
+        if (!event.is_object()) continue;
+        const auto type = event.value("type", Json());
+        const char *field = nullptr;
+        if (agent == "Codex" && type == "thread.started") field = "thread_id";
+        else if (agent == "Claude Code" && (type == "result" || (type == "system" && event.value("subtype", Json()) == "init"))) field = "session_id";
+        else if (agent == "OpenCode" && (type == "step_start" || type == "step_finish" || type == "text" || type == "tool_use")) field = "sessionID";
+        if (!field || !event.contains(field)) continue;
+        if (!event.at(field).is_string()) throw std::runtime_error("CLIセッションIDの形式が不正です");
+        const auto id = QString::fromStdString(event.at(field).get<std::string>());
+        if (!(agent == "OpenCode" ? openCodeId : uuid).match(id).hasMatch()) throw std::runtime_error("CLIセッションIDの形式が不正です");
+        if (!session.isEmpty() && session != id) throw std::runtime_error("CLI応答に異なるセッションIDが含まれています");
+        session = id;
+    }
+    return session;
+}
 Runner::Runner(QObject *parent) : QObject(parent) {}
 Runner::~Runner() { active_ = false; stopJobs(); }
 bool Runner::start(const Flow &flow, const QString &directory, const AgentConfig &config, const QString &flowPath) {
@@ -53,7 +75,7 @@ bool Runner::start(const Flow &flow, const QString &directory, const AgentConfig
     flow_ = flow; directory_ = QFileInfo(directory).canonicalFilePath(); config_ = config;
     const auto source = flowPath.isEmpty() ? flow.sourcePath : flowPath;
     flowDirectory_ = source.isEmpty() ? QString() : QFileInfo(source).absolutePath();
-    results_.clear(); tokens_.clear(); jobs_.clear(); activeExecutions_.clear();
+    results_.clear(); tokens_.clear(); jobs_.clear(); activeExecutions_.clear(); agentSessions_.clear(); arrival_ = 0;
     ++generation_; active_ = true; pumpScheduled_ = false; startPending_ = true;
     for (auto &[id, n] : flow_.nodes) {
         tokens_[id].resize(flow_.inputCount(n)); results_[id] = {}; emit changed(id);
@@ -85,7 +107,7 @@ void Runner::beginExecution(Id id) {
         execution.agent = "sh";
 #endif
     }
-    execution.structuredOutput = isHostOperation(flow_.nodes.at(id).kind) || flow_.nodes.at(id).kind == Kind::Shell || (flow_.nodes.at(id).kind == Kind::Agent && !flow_.nodes.at(id).schema.trimmed().isEmpty());
+    execution.structuredOutput = flow_.nodes.at(id).kind == Kind::Any || isHostOperation(flow_.nodes.at(id).kind) || flow_.nodes.at(id).kind == Kind::Shell || (flow_.nodes.at(id).kind == Kind::Agent && !flow_.nodes.at(id).schema.trimmed().isEmpty());
     if (execution.title.isEmpty()) execution.title = kindName(flow_.nodes.at(id).kind);
     execution.startedAt = QDateTime::currentDateTimeUtc(); activeExecutions_[id] = execution;
     emit executionChanged(activeExecutions_.at(id));
@@ -98,6 +120,7 @@ void Runner::finishExecution(Id id) {
     execution.finishedAt = QDateTime::currentDateTimeUtc(); emit executionChanged(execution);
 }
 void Runner::stopJobs() {
+    agentSessions_.clear();
     pendingHost_.clear();
     if (cancelHostOperations) cancelHostOperations(this);
     for (auto &[id, j] : jobs_) {
@@ -133,7 +156,7 @@ void Runner::complete(Id id, const Json &output, int selected) {
     emit fired(id, r.executions, QString::fromStdString(output.dump()));
     if (!active_) return; // A consumer may cancel from a progress signal.
     for (auto &e : flow_.edges) if (e.from == id) {
-        if (selected < 0 || int(e.output) == selected) tokens_[e.to][e.input].push_back(output);
+        if (selected < 0 || int(e.output) == selected) tokens_[e.to][e.input].push_back({output, ++arrival_});
     }
 }
 void Runner::schedulePump() {
@@ -156,17 +179,25 @@ void Runner::pump() {
             if (jobs_.contains(id) || pendingHost_.contains(id)) continue; // Serial per node, FIFO while busy.
             auto &inputs = tokens_.at(id);
             bool ready = n.kind == Kind::Start ? startPending_ : true;
-            for (auto &queue : inputs) if (queue.empty()) ready = false;
+            if (n.kind == Kind::Any) {
+                ready = false;
+                for (const auto &queue : inputs) if (!queue.empty()) ready = true;
+            } else for (auto &queue : inputs) if (queue.empty()) ready = false;
             if (!ready) continue;
             --budget;
             progress = true;
             Json input;
-            if (n.kind == Kind::And) {
+            if (n.kind == Kind::All) {
                 input = Json::array();
                 // Pop the complete set BEFORE publishing, including self-loops.
-                for (auto &queue : inputs) { input.push_back(std::move(queue.front())); queue.pop_front(); }
+                for (auto &queue : inputs) { input.push_back(std::move(queue.front().value)); queue.pop_front(); }
+            } else if (n.kind == Kind::Any) {
+                unsigned selected = unsigned(inputs.size());
+                for (unsigned i = 0; i < inputs.size(); ++i) if (!inputs[i].empty() && (selected == inputs.size() || inputs[i].front().arrival < inputs[selected].front().arrival)) selected = i;
+                input = {{"event", selected}, {"input", std::move(inputs[selected].front().value)}};
+                inputs[selected].pop_front();
             } else if (n.kind == Kind::Start) { input = Json::object(); startPending_ = false; }
-            else { input = std::move(inputs.at(0).front()); inputs.at(0).pop_front(); }
+            else { input = std::move(inputs.at(0).front().value); inputs.at(0).pop_front(); }
             beginExecution(id);
             if (!active_) break;
             try {
@@ -204,7 +235,7 @@ void Runner::pump() {
     if (budget == 0) { schedulePump(); return; }
     if (!jobs_.empty() || !pendingHost_.empty()) return;
     for (auto &[id, inputs] : tokens_) for (auto &queue : inputs) if (!queue.empty()) {
-        fail(id, "実行が停止しました（ANDの全入力が揃わず、発火可能なノードがありません）"); return;
+        fail(id, "実行が停止しました（Allの全入力が揃わず、発火可能なノードがありません）"); return;
     }
     bool reachedEnd = false;
     for (auto &[id, n] : flow_.nodes) if (n.kind == Kind::End && results_[id].executions > 0) reachedEnd = true;
@@ -212,7 +243,7 @@ void Runner::pump() {
         for (auto &[id, n] : flow_.nodes) if (n.kind == Kind::End) { fail(id, "終端に到達せず実行が停止しました"); return; }
     }
     for (auto &[id, r] : results_) if (r.executions == 0) { r.state = State::Skipped; emit changed(id); }
-    active_ = false;
+    active_ = false; agentSessions_.clear();
     emit finished(true, "フローの実行が完了しました（タスクの達成・ファイル作成結果は各ノードの出力を確認してください）");
 }
 void Runner::launch(Id id, const Json &input) {
@@ -262,6 +293,7 @@ void Runner::launch(Id id, const Json &input) {
         standardInput = QByteArray::fromStdString(input.dump()) + '\n';
     } else {
         QString prompt = interpolate(n.prompt, input);
+        const auto session = n.retainContext && agentSessions_.contains(id) ? agentSessions_.at(id) : QString();
         j->temp = std::make_unique<QTemporaryDir>();
         if (!j->temp->isValid()) throw std::runtime_error("一時ディレクトリを作成できません");
         if (n.agent == "Codex") {
@@ -277,6 +309,9 @@ void Runner::launch(Id id, const Json &input) {
             }
             if (!n.model.isEmpty()) args << "--model" << n.model;
             if (!n.effort.isEmpty()) args << "-c" << ("model_reasoning_effort=" + QString::fromStdString(Json(n.effort.toStdString()).dump()));
+            // Exec options precede the resume subcommand (not all are accepted
+            // as resume-local flags). Never use --last across parallel nodes.
+            if (!session.isEmpty()) args << "resume" << session;
             args << "-";
         } else if (n.agent == "Claude Code") {
             program = config_.claude; args << "-p" << "--verbose" << "--output-format" << "stream-json" << "--include-partial-messages";
@@ -284,12 +319,14 @@ void Runner::launch(Id id, const Json &input) {
             if (!n.effort.isEmpty()) args << "--effort" << n.effort;
             if (!n.model.isEmpty()) args << "--model" << n.model;
             if (!n.schema.trimmed().isEmpty()) args << "--json-schema" << n.schema;
+            if (!session.isEmpty()) args << "--resume" << session;
         } else {
             // A shared service owns tool execution and can outlive the launcher's cwd.
             // Keep the server and its tools in this project's process tree instead.
             program = config_.opencode; args << "run" << "--format" << "json" << "--standalone";
             if (!n.effort.isEmpty() && n.model.isEmpty()) throw std::runtime_error("OpenCodeの思考量を指定する場合はモデルを選択してください");
             if (!n.model.isEmpty()) args << "--model" << (n.effort.isEmpty() ? n.model : n.model.section('#', 0, 0) + "#" + n.effort);
+            if (!session.isEmpty()) args << "--session" << session;
             // OpenCode CLI has no documented native output-schema flag.
             if (!n.schema.trimmed().isEmpty()) prompt += "\nReturn only JSON (no Markdown) matching this JSON Schema:\n" + n.schema;
             args << "--" << prompt;
@@ -367,6 +404,12 @@ void Runner::processFinished(Id id, int code, QProcess::ExitStatus status) {
             auto data = file.readAll(); output = n.schema.trimmed().isEmpty() ? Json(data.toStdString()) : Json::parse(data.toStdString());
         } else output = decodeAgentOutput(n.agent, j.stdoutData, !n.schema.trimmed().isEmpty());
         if (!j.script && !j.shell && !n.schema.trimmed().isEmpty()) validateOutput(parseJson(n.schema), output);
+        if (n.kind == Kind::Agent && n.retainContext) {
+            const auto session = decodeAgentSessionId(n.agent, j.stdoutData);
+            if (session.isEmpty()) throw std::runtime_error("コンテキストを引き継ぐためのCLIセッションIDを取得できません");
+            if (agentSessions_.contains(id) && agentSessions_.at(id) != session) throw std::runtime_error("CLIの再開先セッションIDが前回と一致しません");
+            agentSessions_[id] = session;
+        }
         j.process->deleteLater(); jobs_.erase(id);
         complete(id, output); schedulePump();
     } catch (const std::exception &e) { fail(id, QString::fromUtf8(e.what())); }

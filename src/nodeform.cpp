@@ -1,6 +1,10 @@
 #include "nodeform.h"
 #include "theme.h"
 #include <QComboBox>
+#include <QCheckBox>
+#include <QPainter>
+#include <QStyleOptionButton>
+#include <QStyle>
 #include <QFormLayout>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -25,6 +29,28 @@
 
 namespace an {
 namespace {
+class NodeCheckBox : public QCheckBox {
+public:
+    using QCheckBox::QCheckBox;
+protected:
+    void paintEvent(QPaintEvent *event) override {
+        QCheckBox::paintEvent(event);
+        // Native Windows checkbox indicators can remain black despite QSS text
+        // colors. Paint the indicator explicitly, including read-only forms.
+        QStyleOptionButton option; initStyleOption(&option);
+        const auto rect = style()->subElementRect(QStyle::SE_CheckBoxIndicator, &option, this);
+        QPainter painter(this); painter.fillRect(rect, QColor("#17202e")); painter.setRenderHint(QPainter::Antialiasing);
+        const QColor white("#e6edf8"); painter.setPen(QPen(white, 1.4)); painter.setBrush(QColor("#17202e"));
+        painter.drawRoundedRect(QRectF(rect).adjusted(1, 1, -1, -1), 2, 2);
+        if (isChecked()) {
+            painter.setPen(QPen(white, 1.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+            const QPointF points[] = {{rect.left() + rect.width() * .23, rect.top() + rect.height() * .50},
+                {rect.left() + rect.width() * .43, rect.top() + rect.height() * .72},
+                {rect.left() + rect.width() * .78, rect.top() + rect.height() * .27}};
+            painter.drawPolyline(points, 3);
+        }
+    }
+};
 class ModelCombo : public QComboBox {
 public:
     std::function<void()> beforePopup;
@@ -46,7 +72,8 @@ QString nodeDescription(Kind kind) {
     case Kind::Agent: return "選択したエージェントへ1タスクを渡します。前段の値は ${name}、${obj.key}、${items[0]} で参照できます。入力を受けるたびに実行します。出力スキーマは省略可能です。";
     case Kind::Script: return "PythonまたはJavaScriptファイルをシステムのPython／Node.jsで実行します。前段データをUTF-8のJSONで標準入力へ渡し、標準出力を次段へ渡します（JSON、または文字列）。相対パスはプロジェクト基準です。実行ディレクトリの省略時はスクリプトのある場所を使います。";
     case Kind::Shell: return "シェルコマンドを実行します（Windows: PowerShell、その他: /bin/sh）。前段の値を ${name} 等でそのまま置換します。出力は exit_code・stdout・stderr を持つJSONです。実行ディレクトリの省略時・相対パスの基準はフローの保存先です。信頼できる入力だけを使用してください。";
-    case Kind::And: return "全入力の発火を待ち、入力ポート番号順の配列を出力します。発火後は待ち合わせ状態をリセットし、再び新しい全入力を待ちます。先着した入力はFIFOで保持します。ポート数の変更時は再接続が必要です。";
+    case Kind::All: return "全入力の発火を待ち、入力ポート番号順の配列を出力します。発火後は待ち合わせ状態をリセットし、再び新しい全入力を待ちます。先着した入力はFIFOで保持します。ポート数の変更時は再接続が必要です。";
+    case Kind::Any: return "いずれかの入力にイベントが届くたびに発火します。出力はevent（入力の0始まりインデックス）とinput（その入力データ）です。複数イベントは到着順に1件ずつ処理します。ポート数の変更時は再接続が必要です。";
     case Kind::Branch: return "上から順に条件を評価し、最初に一致した出力へ伝播します。一致しない場合はelseへ進みます。比較は文字列で行います。条件数の変更時は再接続が必要です。";
     }
     return {};
@@ -105,6 +132,8 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
         QWidget#nodeForm { background: transparent; color:#e6edf8; }
         QWidget#nodeForm QWidget { background: transparent; }
         QWidget#nodeForm QLabel { background: transparent; color:#b8c8df; }
+        QWidget#nodeForm QCheckBox, QWidget#nodeForm QCheckBox:disabled { color:#e6edf8; spacing:6px; }
+        QWidget#nodeForm QCheckBox::indicator { width:16px; height:16px; }
         QWidget#nodeForm QLineEdit, QWidget#nodeForm QComboBox, QWidget#nodeForm QSpinBox,
         QWidget#nodeForm QPlainTextEdit { background:#17202e; color:#e6edf8; border:1px solid #46566e; border-radius:4px; padding:5px; selection-background-color:#3b5680; }
         QWidget#nodeForm QPushButton { background:#314159; color:#dce5f3; border:1px solid #4b5d79; border-radius:4px; padding:4px 8px; }
@@ -139,6 +168,10 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
         populateEfforts();
         effort_->setToolTip("モデルが対応する思考量を選んでください。未指定ならCLI・モデルの既定値を使います。OpenCodeではモデルの指定が必要です。");
         form->addRow("思考量", effort_);
+        retainContext_ = new NodeCheckBox("前回のコンテキストを引き継ぐ"); retainContext_->setObjectName("retainContext"); retainContext_->setChecked(node.retainContext);
+        retainContext_->setToolTip("同じフロー実行内で、このノードの前回のCLIセッションを再利用します。別ノードや次回のフロー実行とは共有しません。実行履歴は毎回個別に記録します。");
+        form->addRow(retainContext_);
+        connect(retainContext_, &QCheckBox::toggled, this, [this](bool enabled) { if (!updating_) { node_.retainContext = enabled; publish(); } });
         connect(effort_, &QComboBox::currentIndexChanged, this, [this] { if (!updating_) { node_.effort = effort_->currentData().toString(); publish(); } });
         populateModels();
         combo->beforePopup = [this] { if (catalog_) catalog_->request(node_.agent); };
@@ -223,7 +256,7 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
         form->addRow("フロー", targetFlow_); form->addRow("プロジェクトパス", projectPath_); setFlowChoices({});
         connect(targetFlow_, &QComboBox::currentIndexChanged, this, [this] { if (!updating_) { node_.targetFlow = targetFlow_->currentData().toString(); publish(); } });
         connect(projectPath_, &QLineEdit::textEdited, this, [this](const QString &text) { node_.projectPath = text; publish(); });
-    } else if (node.kind == Kind::And) {
+    } else if (node.kind == Kind::All || node.kind == Kind::Any) {
         inputs_ = new QSpinBox; inputs_->setObjectName("nodeInputs"); inputs_->setRange(1, 256); inputs_->setValue(int(node.inputs));
         inputs_->setToolTip("入力ポート数を変更すると、このノードの接続は解除されます。");
         form->addRow("入力ポート数", inputs_);
@@ -236,7 +269,7 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
         connect(add, &QPushButton::clicked, this, [this] { node_.rules.push_back({"", "", true}); rebuildRules(); publish(); });
     }
     for (auto *widget : findChildren<QWidget *>())
-        if (qobject_cast<QLineEdit *>(widget) || qobject_cast<QComboBox *>(widget) || qobject_cast<QSpinBox *>(widget)) widget->installEventFilter(this);
+        if (qobject_cast<QLineEdit *>(widget) || qobject_cast<QComboBox *>(widget) || qobject_cast<QSpinBox *>(widget) || qobject_cast<QCheckBox *>(widget)) widget->installEventFilter(this);
     layout->activate(); setFixedHeight(layout->sizeHint().height()); scheduleResize();
 }
 bool NodeForm::eventFilter(QObject *object, QEvent *event) {
@@ -249,6 +282,7 @@ bool NodeForm::eventFilter(QObject *object, QEvent *event) {
 }
 void NodeForm::setReadOnly(bool readOnly) {
     readOnly_ = readOnly;
+    if (retainContext_) retainContext_->setEnabled(!readOnly);
     if (scriptFileBrowse_) scriptFileBrowse_->setEnabled(!readOnly);
     if (scriptDirectoryBrowse_) scriptDirectoryBrowse_->setEnabled(!readOnly);
     if (shellDirectoryBrowse_) shellDirectoryBrowse_->setEnabled(!readOnly);
@@ -312,6 +346,7 @@ void NodeForm::setNode(const Node &node) {
         if (a.variable != b.variable || a.value != b.value || a.equals != b.equals) rulesChanged = true;
     }
     updating_ = true; node_ = node;
+    if (retainContext_) retainContext_->setChecked(node.retainContext);
     if (title_->text() != node.title) title_->setText(node.title);
     if (agent_) { agent_->setCurrentText(node.agent); if (modelChanged) populateModels(); }
     if (prompt_ && prompt_->toPlainText() != node.prompt) prompt_->setPlainText(node.prompt);

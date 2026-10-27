@@ -165,7 +165,7 @@ QVariant Graph::portData(Id id, PortType type, unsigned index, PortRole role) co
     if (role == PortRole::Caption) {
         auto &n = flow.nodes.at(id);
         if (n.kind == Kind::Start || n.kind == Kind::End) return kindName(n.kind);
-        if (type == PortType::In) return n.kind == Kind::And ? QString("入力 %1").arg(index) : QString("入力");
+        if (type == PortType::In) return (n.kind == Kind::All || n.kind == Kind::Any) ? QString("入力 %1").arg(index) : QString("入力");
         if (n.kind == Kind::Branch) return index == n.rules.size() ? QString("それ以外") : QString("条件%1").arg(index + 1);
         return QString("出力");
     }

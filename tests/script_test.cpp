@@ -138,7 +138,7 @@ void ScriptTest::parallelJoin() {
     const auto python = scriptFile(project.path(), "one.py", outputSource("python", "{\"a\":1}"));
     const auto javascript = scriptFile(project.path(), "two.js", outputSource("javascript", "{\"b\":2}")); QVERIFY(!python.isEmpty() && !javascript.isEmpty());
     auto flow = scriptFlow("python", python); Node second = flow.nodes[3]; second.id = 4; second.scriptLanguage = "javascript"; second.scriptPath = javascript; flow.nodes[4] = second;
-    Node join; join.id = 5; join.kind = Kind::And; flow.nodes[5] = join; flow.edges = {{1, 3}, {1, 4}, {3, 5, 0, 0}, {4, 5, 0, 1}, {5, 2}};
+    Node join; join.id = 5; join.kind = Kind::All; flow.nodes[5] = join; flow.edges = {{1, 3}, {1, 4}, {3, 5, 0, 0}, {4, 5, 0, 1}, {5, 2}};
     Runner runner; QSignalSpy done(&runner, &Runner::finished); QVERIFY(runner.start(flow, project.path(), {})); QTRY_COMPARE(done.count(), 1); QVERIFY(done[0][0].toBool());
     QVERIFY(runner.results().at(2).output == Json::array({{{"a", 1}}, {{"b", 2}}}));
 }

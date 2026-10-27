@@ -8,7 +8,7 @@
 namespace an {
 using Json = nlohmann::json;
 using Id = unsigned int;
-enum class Kind { Start, End, Agent, And, Branch, Script, Shell, ProjectCreate, FlowRun, FlowWait };
+enum class Kind { Start, End, Agent, All, Branch, Script, Shell, ProjectCreate, FlowRun, FlowWait, Any };
 bool isHostOperation(Kind kind);
 QString kindName(Kind kind);
 QString kindKey(Kind kind);
@@ -28,6 +28,7 @@ struct Node {
     QString effort;
     QString prompt;
     QString schema;
+    bool retainContext = false;
     unsigned inputs = 2;
     std::vector<Rule> rules;
     QString scriptLanguage = "python";
