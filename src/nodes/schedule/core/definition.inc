@@ -4,7 +4,7 @@ NodeDefinition NodeRegistry::schedule() {
     d.key = strings::Schedule;
     d.name = strings::ScheduleName;
     d.named = false;
-    d.validate = [](const Flow &, const Node &n) {
+    d.validate = [](const Node &n) {
         QStringList errors;
         try {
             Schedule(n).next(

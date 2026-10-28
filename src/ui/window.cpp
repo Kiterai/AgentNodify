@@ -967,7 +967,6 @@ void Window::showWorkResult() {
         if (it != history.end()) execution = &*it;
     }
     const QString key = execution ? execution->id : QString(strings::CurrentExecutionKey).arg(project_).arg(workSelected_);
-    displayedExecution_ = key;
     auto render = [this, &key](const QString &log, State state, const Json *output = nullptr, bool structured = false, const QString &directory = QString(), bool plainLog = false) {
         log_->setProgress(log, key, state, output, structured, directory, plainLog);
         if (output) output_->setValue(*output, true, structured || log_->finalIsJson()); else output_->setPlainText({});
@@ -1043,10 +1042,6 @@ void Window::focusUserInputNode() {
         });
         break;
     }
-}
-void Window::recordNodeExecution(const NodeExecution &value) {
-    if (project_ < 0) return;
-    recordNodeExecution(projects_[size_t(project_)].historyId, value);
 }
 void Window::recordNodeExecution(const QString &projectId, const NodeExecution &value) {
     auto found = std::find_if(projects_.begin(), projects_.end(), [&](const Project &p) { return p.historyId == projectId; });

@@ -2,14 +2,10 @@
 #include "shared/strings.h"
 #include "nodedefinition.h"
 #include "runner.h"
-#include "schedule.h"
-#include <QPointer>
 #include "cli.h"
-#include <QDir>
-#include <QFile>
 #include <QFileInfo>
-#include <QCoreApplication>
 #include <QProcessEnvironment>
+#include <QTimer>
 #include <QRegularExpression>
 #include <QUuid>
 #include <stdexcept>

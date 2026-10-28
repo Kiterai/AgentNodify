@@ -62,7 +62,6 @@ namespace an::defaults {
 inline constexpr unsigned InputPorts = 2;
 inline constexpr int WaitDuration = 1;
 inline constexpr int FlowVersion = 1;
-inline constexpr int HistoryVersion = 1;
 inline constexpr int JsonIndent = 2;
 inline constexpr int EditCommandId = 0x414e01;
 inline constexpr int RpcMethodNotFound = -32601;

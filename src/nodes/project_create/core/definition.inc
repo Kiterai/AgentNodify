@@ -15,7 +15,7 @@ NodeDefinition NodeRegistry::projectCreate() {
     d.operate = &Coordinator::operateProjectCreate;
     d.hostFailure = [](const QString &reason) { return Json{{strings::Result, strings::Failed}, {strings::Reason, reason.toStdString()}}; };
     d.interpolation = [](const Node &n) { return n.projectPath; };
-    d.validate = [](const Flow &, const Node &n) {
+    d.validate = [](const Node &n) {
         QStringList errors;
         if (n.targetFlow.isEmpty())
             errors << strings::MissingTargetFlow;

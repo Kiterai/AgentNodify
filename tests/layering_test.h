@@ -6,4 +6,5 @@ class LayeringTest : public QObject {
   private slots:
     void coreRunsWithoutTheUi();
     void lowerLayersNeverIncludeTheUi();
+    void allSourcesHaveBuildReferences();
 };

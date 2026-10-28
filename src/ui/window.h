@@ -82,7 +82,7 @@ private:
     QListWidget *projectList_;
     QListWidget *historyList_;
     QToolButton *followHistoryButton_;
-    QString selectedHistory_, displayedExecution_;
+    QString selectedHistory_;
     bool followLatestHistory_ = true, historySaveFailed_ = false;
     QTimer *historySaveTimer_;
     std::map<QString, std::pair<QString, NodeExecution>> pendingHistory_;
@@ -122,7 +122,6 @@ private:
     void selectWorkNode(Id id);
     void refreshWorkHistory();
     void showWorkResult();
-    void recordNodeExecution(const NodeExecution &execution);
     void recordNodeExecution(const QString &projectId, const NodeExecution &execution);
     void flushHistory();
     void newFlow();

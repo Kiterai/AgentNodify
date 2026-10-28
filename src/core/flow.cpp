@@ -241,7 +241,7 @@ QStringList Flow::validate() const {
         if (ends && !terminal.contains(id)) errors << label + strings::UnreachableEnd;
         for (unsigned p = 0; p < inputCount(n); ++p) if (!incoming.contains({id, p})) errors << label + QString(strings::UnconnectedInput).arg(p);
         const auto &definition = nodeDefinition(n.kind);
-        for (const auto &message : definition.validate(*this, n)) errors << label + message;
+        for (const auto &message : definition.validate(n)) errors << label + message;
         if (definition.outputConnectionsRequired) for (unsigned port = 0; port < outputCount(n); ++port) {
             const bool connected = std::any_of(edges.begin(), edges.end(), [&](const Edge &e) { return e.from == id && e.output == port; });
             if (!connected) errors << label + definition.unconnectedOutputMessage.arg(port);

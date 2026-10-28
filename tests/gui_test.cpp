@@ -642,7 +642,7 @@ void GuiTest::historyAfterRestart() {
     NodeExecution entry; entry.id = QUuid::createUuid().toString(QUuid::WithoutBraces); entry.node = 1; entry.title = "保存したノード";
     entry.startedAt = QDateTime::currentDateTimeUtc(); entry.finishedAt = entry.startedAt.addMSecs(10);
     entry.state = State::Succeeded; entry.log = "保存したログ\n日本語"; entry.output = {{"saved", true}};
-    original.smoke_ = false; original.recordNodeExecution(entry); original.persist(); original.smoke_ = true;
+    original.smoke_ = false; original.recordNodeExecution(original.projects_[0].historyId, entry); original.persist(); original.smoke_ = true;
     QVERIFY(original.pendingHistory_.empty());
     Window restored(true); restored.dataDir_ = directory.path(); restored.documents_.clear(); restored.projects_.clear(); restored.restore();
     QCOMPARE(restored.projects_.size(), size_t(1)); QCOMPARE(restored.projects_[0].historyId, original.projects_[0].historyId);
@@ -688,7 +688,7 @@ void GuiTest::scriptNodeForm() {
     window.projects_.push_back({"Script project", QDir::currentPath(), window.documents_[0].path, {}}); window.refreshProjects(); window.selectProject(0); window.selectWorkNode(id);
     NodeExecution execution; execution.id = QUuid::createUuid().toString(QUuid::WithoutBraces); execution.node = id; execution.agent = "Python";
     execution.log = "{\"type\":\"system\",\"subtype\":\"init\"}\n"; execution.startedAt = QDateTime::currentDateTimeUtc(); execution.state = State::Succeeded; execution.output = "Script output";
-    window.recordNodeExecution(execution);
+    window.recordNodeExecution(window.projects_[0].historyId, execution);
     auto *logHeading = window.log_->findChild<QLabel *>("progressHeading"); QVERIFY(logHeading && logHeading->text().contains("system"));
     window.tabs_->setCurrentIndex(0);
     window.editView_->centerScene(); QCoreApplication::processEvents(); QVERIFY(window.grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-script-node.png")));

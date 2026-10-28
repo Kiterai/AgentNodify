@@ -5,7 +5,7 @@ NodeDefinition NodeRegistry::script() {
     d.name = strings::ScriptName;
     d.schemaUsesInputs = false;
     d.schema = [](const Node &, const SchemaInputs &) { return Json{{strings::AnUnknown, true}}; };
-    d.validate = [](const Flow &, const Node &n) {
+    d.validate = [](const Node &n) {
         QStringList errors;
         if (n.scriptLanguage != strings::PythonLanguage && n.scriptLanguage != strings::JavaScriptLanguage)
             errors << strings::InvalidScriptLanguage;

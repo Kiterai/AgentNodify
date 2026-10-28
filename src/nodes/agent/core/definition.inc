@@ -9,7 +9,7 @@ NodeDefinition NodeRegistry::agent() {
     };
     d.requiresModel = true;
     d.interpolation = [](const Node &n) { return n.prompt; };
-    d.validate = [](const Flow &, const Node &n) {
+    d.validate = [](const Node &n) {
         QStringList errors;
         if (n.prompt.trimmed().isEmpty())
             errors << strings::EmptyPrompt;

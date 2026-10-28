@@ -18,22 +18,15 @@
 #include <QGraphicsProxyWidget>
 #include <QGraphicsScene>
 #include <QGraphicsView>
-#include <QEvent>
-#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
-#include <QMouseEvent>
 #include <QPushButton>
-#include <QScrollBar>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QGridLayout>
 #include <algorithm>
-#include <QTextBlock>
-#include <QTextLayout>
 #include <QTimer>
 #include <QVBoxLayout>
-#include <cmath>
 #include <functional>
 
 namespace an {
@@ -92,7 +85,6 @@ std::unique_ptr<NodeParameterForm> createNodeForm(NodeForm &form, QVBoxLayout *l
 #include <QPointer>
 #include <QUuid>
 #include <algorithm>
-#include <stdexcept>
 namespace an {
 #include "nodes/start/core/definition.inc"
 #include "nodes/end/core/definition.inc"

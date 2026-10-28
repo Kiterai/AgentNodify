@@ -6,7 +6,7 @@
 namespace an {
 class Runner;
 class Coordinator;
-enum class InputPolicy { Single, All, Any, Source };
+enum class InputPolicy { Single, All, Any };
 struct SchemaInputs {
     std::vector<Json> ports;
     Json merged;
@@ -24,7 +24,7 @@ struct NodeDefinition {
     std::function<unsigned(const Node &)> inputs = [](const Node &) { return 1u; };
     std::function<unsigned(const Node &)> outputs = [](const Node &) { return 1u; };
     std::function<Json(const Node &, const SchemaInputs &)> schema = [](const Node &, const SchemaInputs &in) { return in.merged; };
-    std::function<QStringList(const Flow &, const Node &)> validate = [](const Flow &, const Node &) { return QStringList{}; };
+    std::function<QStringList(const Node &)> validate = [](const Node &) { return QStringList{}; };
     std::function<QString(const Node &)> interpolation = [](const Node &) { return QString(); };
     std::function<QStringList(const Node &)> variables = [](const Node &) { return QStringList{}; };
     std::function<void(Node &)> initialize = [](Node &) {};

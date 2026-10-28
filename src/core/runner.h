@@ -2,12 +2,8 @@
 #include "shared/strings.h"
 #include "nodeprocess.h"
 #include "flow.h"
-#include <QElapsedTimer>
 #include <QObject>
 #include <QProcess>
-#include <QTemporaryDir>
-#include <QTimer>
-#include <QStringDecoder>
 #include <QDateTime>
 #include <QMetaType>
 #include <deque>

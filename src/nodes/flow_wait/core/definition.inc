@@ -9,7 +9,7 @@ NodeDefinition NodeRegistry::flowWait() {
     d.operate = &Coordinator::operateFlowWait;
     d.hostFailure = [](const QString &) { return Json(); };
     d.interpolation = [](const Node &n) { return n.projectPath; };
-    d.validate = [](const Flow &, const Node &n) {
+    d.validate = [](const Node &n) {
         QStringList errors;
         if (n.targetFlow.isEmpty())
             errors << strings::MissingTargetFlow;

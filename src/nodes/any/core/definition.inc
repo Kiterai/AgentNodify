@@ -15,7 +15,7 @@ NodeDefinition NodeRegistry::any() {
             {strings::Required, {strings::Event, strings::Input}},
             {strings::AdditionalProperties, false}};
     };
-    d.validate = [](const Flow &, const Node &n) {
+    d.validate = [](const Node &n) {
         QStringList errors;
         if (n.inputs == 0 || n.inputs > limits::InputPorts)
             errors << QString(strings::InvalidInputCount).arg(limits::InputPorts);

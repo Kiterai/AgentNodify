@@ -12,7 +12,7 @@ NodeDefinition NodeRegistry::userInput() {
     d.sameOutput = [](const Node &a, unsigned i, const Node &b, unsigned j) { return a.userChoices[i] == b.userChoices[j]; };
     d.schemaUsesInputs = false;
     d.schema = [](const Node &, const SchemaInputs &) -> Json { return {{strings::Type, strings::String}}; };
-    d.validate = [](const Flow &, const Node &n) {
+    d.validate = [](const Node &n) {
         QStringList errors;
         if (n.userChoices.isEmpty())
             errors << strings::MissingUserChoices;

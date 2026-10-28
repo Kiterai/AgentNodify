@@ -5,6 +5,7 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QMap>
 #include <QRegularExpression>
 #include <QSet>
 #include <QTemporaryDir>
@@ -72,5 +73,43 @@ void LayeringTest::lowerLayersNeverIncludeTheUi() {
         }
     }
     QCOMPARE(coreDefinitions, int(nodeDefinitions().size()));
+}
+void LayeringTest::allSourcesHaveBuildReferences() {
+    const QDir project(QStringLiteral(AGENTNODIFY_SOURCE_DIR));
+    const QDir source(project.filePath("src"));
+    QMap<QString, QString> contents;
+    QDirIterator files(source.path(), {"*.h", "*.cpp", "*.inc"}, QDir::Files, QDirIterator::Subdirectories);
+    while (files.hasNext()) {
+        const auto path = files.next();
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        contents.insert(source.relativeFilePath(path), QString::fromUtf8(file.readAll()));
+    }
+    QFile cmake(project.filePath("CMakeLists.txt"));
+    QVERIFY(cmake.open(QIODevice::ReadOnly));
+    const auto build = QString::fromUtf8(cmake.readAll());
+    const QRegularExpression sources(R"(\bsrc/([A-Za-z0-9_/.-]+\.(?:cpp|h|inc))\b)");
+    const QRegularExpression includes(R"inc(^\s*#include\s+"([^"]+)")inc", QRegularExpression::MultilineOption);
+    QStringList pending;
+    auto roots = sources.globalMatch(build);
+    while (roots.hasNext()) pending.push_back(roots.next().captured(1));
+    QVERIFY(!pending.isEmpty());
+    QSet<QString> reachable;
+    while (!pending.isEmpty()) {
+        const auto path = pending.takeLast();
+        if (reachable.contains(path) || !contents.contains(path)) continue;
+        reachable.insert(path);
+        auto imports = includes.globalMatch(contents.value(path));
+        while (imports.hasNext()) {
+            const auto include = imports.next().captured(1);
+            const auto local = QDir::cleanPath(QDir(QFileInfo(path).path()).filePath(include));
+            if (contents.contains(local)) pending.push_back(local);
+            else if (contents.contains(include)) pending.push_back(include);
+        }
+    }
+    QStringList unused;
+    for (auto it = contents.cbegin(); it != contents.cend(); ++it)
+        if (!reachable.contains(it.key())) unused.push_back(it.key());
+    QVERIFY2(unused.isEmpty(), qPrintable("Sources without CMake/include references: " + unused.join(", ")));
 }
 QTEST_GUILESS_MAIN(LayeringTest)

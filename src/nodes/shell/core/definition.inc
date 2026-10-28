@@ -15,7 +15,7 @@ NodeDefinition NodeRegistry::shell() {
                                                            {strings::AdditionalProperties, false}};
     };
     d.interpolation = [](const Node &n) { return n.shellCommand; };
-    d.validate = [](const Flow &, const Node &n) {
+    d.validate = [](const Node &n) {
         QStringList errors;
         if (n.shellCommand.trimmed().isEmpty())
             errors << strings::EmptyShellCommand;

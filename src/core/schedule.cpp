@@ -43,9 +43,6 @@ Schedule::Schedule(const Node &node)
 bool Schedule::matchesDate(const QDate &date) const {
     return date.isValid() && months_.contains(date.month()) && days_.contains(date.day()) && (weekdays_.empty() || weekdays_.contains(date.dayOfWeek()));
 }
-bool Schedule::matches(const QDateTime &time) const {
-    return time.isValid() && matchesDate(time.date()) && hours_.contains(time.time().hour()) && minutes_.contains(time.time().minute());
-}
 QDateTime Schedule::next(const QDateTime &after) const {
     if (!after.isValid()) invalid(strings::InvalidScheduleBase);
     const auto zone=after.timeZone(); const auto limit=after.date().addYears(limits::ScheduleSearchYears);

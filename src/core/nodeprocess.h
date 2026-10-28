@@ -18,7 +18,6 @@ struct ProcessJob {
     QString finalPath;
     std::unique_ptr<QTemporaryDir> temp;
 };
-struct Node;
 // Both time-based nodes use this cancellable timer state.
 struct PendingWait {
     QTimer *timer = nullptr;

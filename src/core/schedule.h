@@ -9,7 +9,6 @@ qint64 waitMilliseconds(const Node &node);
 class Schedule {
 public:
     explicit Schedule(const Node &node);
-    bool matches(const QDateTime &time) const;
     QDateTime next(const QDateTime &after) const; // Strictly future minute boundary.
 private:
     std::set<int> months_, days_, hours_, minutes_, weekdays_;

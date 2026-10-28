@@ -9,7 +9,7 @@ NodeDefinition NodeRegistry::all() {
     d.inputPolicy = InputPolicy::All;
     d.inputs = [](const Node &n) { return n.inputs; };
     d.schema = [](const Node &, const SchemaInputs &in) { return Json{{strings::Type, strings::Array}, {strings::Items, in.ports}}; };
-    d.validate = [](const Flow &, const Node &n) {
+    d.validate = [](const Node &n) {
         QStringList errors;
         if (n.inputs == 0 || n.inputs > limits::InputPorts)
             errors << QString(strings::InvalidInputCount).arg(limits::InputPorts);
