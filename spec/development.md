@@ -60,6 +60,8 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## テスト
 
+IFWインストーラの生成・配布ファイル・公開前の確認は[配布ガイド](packaging.md)を参照してください。通常ビルドにIFWは不要です。
+
 通常のビルド・CTestにエージェントCLI、アカウント、APIキーは不要です。CLI連携の自動テストは偽CLIを使用します。
 既存ビルドでテストだけを実行する場合も、Qt DLLを検出できるPATHを設定してください。
 

@@ -22,6 +22,7 @@ Releaseビルド・自動テスト・Qt DLL配置を行い、`build/Release/Agen
 配布先にはVisual C++ 2022ランタイムも必要です。
 
 手動ビルドや環境設定の詳細は[開発ガイド](spec/development.md)を参照してください。
+IFWインストーラは`scripts/package.ps1`で生成できます。前提ツール・ライセンス準備・手順は[配布ガイド](spec/packaging.md)を参照してください。
 
 ## ソース構成
 

@@ -57,6 +57,13 @@ target_link_libraries(agentnodeforms PRIVATE agentcore Qt6::Widgets)
 target_sources(agentui PRIVATE $<TARGET_OBJECTS:agentnodeforms>)
 target_link_libraries(agentui PUBLIC agentcore Qt6::Widgets QtNodes::QtNodes)
 add_executable(AgentNodify WIN32 src/app/main.cpp)
+if(APPLE)
+  set_target_properties(AgentNodify PROPERTIES
+    MACOSX_BUNDLE TRUE
+    MACOSX_BUNDLE_GUI_IDENTIFIER "org.agentnodify.AgentNodify"
+    MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}")
+endif()
 target_sources(AgentNodify PRIVATE src/app/instancelock.h)
 target_link_libraries(AgentNodify PRIVATE agentui)
 enable_testing()
@@ -144,4 +151,10 @@ target_link_libraries(agentnodify_layering_tests PRIVATE agentcore Qt6::Test)
 target_compile_definitions(agentnodify_layering_tests PRIVATE AGENTNODIFY_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 add_test(NAME layering COMMAND agentnodify_layering_tests -o -,txt)
 set_tests_properties(layering PROPERTIES TIMEOUT 20)
-install(TARGETS AgentNodify RUNTIME DESTINATION bin)
+install(TARGETS AgentNodify
+  RUNTIME DESTINATION bin COMPONENT AgentNodify
+  BUNDLE DESTINATION . COMPONENT AgentNodify)
+option(AGENTNODIFY_BUILD_INSTALLER "Enable CPack / Qt Installer Framework packaging" OFF)
+if(AGENTNODIFY_BUILD_INSTALLER)
+  include(cmake/Packaging.cmake)
+endif()

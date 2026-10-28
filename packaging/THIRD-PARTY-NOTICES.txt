@@ -1,0 +1,25 @@
+Third-party components
+======================
+
+AgentNodify includes:
+- Qt: license depends on the modules and distribution used to build the app.
+  https://www.qt.io/licensing/
+- QtNodes 3.0.12: BSD-3-Clause (see QtNodes/LICENSE.rst).
+  https://github.com/paceholder/nodeeditor
+- nlohmann/json 3.11.3: MIT (see nlohmann-json/LICENSE.MIT).
+  https://github.com/nlohmann/json
+- nlohmann/json-schema-validator 2.3.0: MIT
+  (see json-schema-validator/LICENSE).
+  https://github.com/pboettch/json-schema-validator
+
+The installer and MaintenanceTool use Qt Installer Framework, independently of
+the application's Qt runtime. Open-source IFW distributions use GPLv3 with
+the Qt Company GPL exception; commercial terms may also be available.
+https://github.com/qtproject/installer-framework
+
+Distribution-specific runtime license texts, copyright notices and applicable
+corresponding-source availability information belong in licenses/distribution/.
+This inventory is not a substitute for those texts or compliance obligations.
+
+Windows MSVC packages also include Microsoft redistributable runtime files.
+Their redistribution is subject to the applicable Microsoft license terms.

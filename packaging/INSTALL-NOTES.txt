@@ -1,0 +1,22 @@
+AgentNodify
+===========
+
+Close AgentNodify using File > Exit or the tray menu before updating or removing
+it. Closing the window alone leaves the application running in the tray.
+
+Use MaintenanceTool in the installation directory to uninstall the application.
+On Windows it is also registered in Settings > Apps.
+This initial installer is offline-only; no automatic updates or update server
+are configured.
+
+User settings, saved flows, execution history and external projects are not
+removed by the installer. Uninstalling does not remove separately installed
+agent CLIs, their credentials, Python or Node.js.
+
+Install and authenticate the agent CLIs separately. Python and Node.js are only
+required for the corresponding script nodes. See the application documentation
+and only execute trusted flows and scripts.
+
+Examples are installed under examples/. Copy examples to a writable working
+directory before editing them. For script.flow.json, use the directory containing
+the copied examples/ folder as the project directory.
