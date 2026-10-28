@@ -1,4 +1,4 @@
-#include "coordinator.h"
+#include "core/coordinator.h"
 #include <QtTest>
 #include <QSignalSpy>
 #include <QTemporaryDir>

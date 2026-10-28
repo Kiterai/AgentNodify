@@ -1,5 +1,5 @@
-#include "runner.h"
-#include "coordinator.h"
+#include "core/runner.h"
+#include "core/coordinator.h"
 #include <QtTest>
 #include <QSignalSpy>
 #include <QTemporaryDir>

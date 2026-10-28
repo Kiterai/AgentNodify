@@ -1,5 +1,5 @@
 // Opt-in replay of locally captured reports; no CLI invocation or inference.
-#include "progress.h"
+#include "core/progress.h"
 #include <QCoreApplication>
 #include <QFile>
 #include <QFileInfo>

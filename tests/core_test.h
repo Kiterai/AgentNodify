@@ -1,6 +1,6 @@
 #pragma once
-#include "flow.h"
-#include "runner.h"
+#include "core/flow.h"
+#include "core/runner.h"
 #include <QObject>
 class CoreTest : public QObject {
     Q_OBJECT

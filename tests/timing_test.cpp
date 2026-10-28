@@ -1,6 +1,6 @@
-#include "schedule.h"
-#include "runner.h"
-#include "coordinator.h"
+#include "core/schedule.h"
+#include "core/runner.h"
+#include "core/coordinator.h"
 #include <QtTest>
 #include <QTemporaryDir>
 #include <QSignalSpy>

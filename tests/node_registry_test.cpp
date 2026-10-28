@@ -1,9 +1,10 @@
-#include "nodedefinition.h"
-#include "nodeform.h"
-#include "nodeparameterform.h"
-#include "modelcatalog.h"
-#include "constants.h"
-#include "strings.h"
+#include "core/nodedefinition.h"
+#include "ui/nodeform.h"
+#include "ui/nodeparameterform.h"
+#include "ui/nodepresentation.h"
+#include "core/modelcatalog.h"
+#include "shared/constants.h"
+#include "shared/strings.h"
 #include <QDirIterator>
 #include <QFile>
 #include <QRegularExpression>
@@ -23,13 +24,18 @@ class NodeRegistryTest : public QObject {
     void definitionsAreComplete() {
         const auto &definitions = nodeDefinitions();
         QCOMPARE(definitions.size(), size_t(Kind::Schedule) + 1);
+        QCOMPARE(nodePresentations().size(), definitions.size());
         QSet<QString> keys;
         QSet<int> kinds;
         int sources = 0, terminals = 0;
         for (const auto &d : definitions) {
             QVERIFY(!d.key.isEmpty());
             QVERIFY(!d.name.isEmpty());
-            QVERIFY(!d.description.isEmpty());
+            const auto &presentation = nodePresentation(d.kind);
+            QVERIFY(!presentation.description.isEmpty());
+            QCOMPARE(presentation.kind, d.kind);
+            QVERIFY(presentation.portCaption);
+            QCOMPARE(bool(presentation.createForm), !d.source && !d.terminal);
             QVERIFY(!keys.contains(d.key));
             QVERIFY(!kinds.contains(int(d.kind)));
             keys.insert(d.key);
@@ -37,7 +43,6 @@ class NodeRegistryTest : public QObject {
             QCOMPARE(parseKind(d.key.toStdString()), d.kind);
             QCOMPARE(&nodeDefinition(d.kind), &d);
             QVERIFY(d.execute);
-            QVERIFY(d.portCaption);
             sources += d.source;
             terminals += d.terminal;
             if (d.prepare)
@@ -181,15 +186,15 @@ class NodeRegistryTest : public QObject {
             QFile file(path);
             QVERIFY(file.open(QIODevice::ReadOnly));
             const auto text = QString::fromUtf8(file.readAll());
-            if (relative == "nodeform.h") {
+            if (relative == "ui/nodeform.h") {
                 for (const auto *specific : {"agent_", "scriptLanguage_", "shellOutput_", "targetFlow_", "waitDuration_",
                                              "scheduleWeekdays_", "choices_", "rules_", "populateModels", "rebuildRules", "buildAgent"})
                     QVERIFY2(!text.contains(specific), specific);
             }
-            if (relative == "strings.h" || relative == "colors.h")
+            if (relative == "shared/strings.h" || relative == "shared/colors.h")
                 continue;
             // Only the single loader imports per-kind implementation fragments.
-            if (relative != "noderegistry.cpp")
+            if (relative != "nodes/registry.cpp")
                 QVERIFY2(!text.contains("#include \"nodes/"), qPrintable(relative));
             bool blockComment = false;
             for (const auto &line : text.split('\n')) {
@@ -223,7 +228,7 @@ class NodeRegistryTest : public QObject {
                     QVERIFY2(line[i] != '"', qPrintable(relative + ": inline string literal: " + line.trimmed()));
                     code += line[i];
                 }
-                if (relative != "constants.h") {
+                if (relative != "shared/constants.h") {
                     // Zero/one/two are syntax (indices, identity, halving, etc.).
                     // Domain limits, geometry, timings and defaults live in constants.h.
                     static const QRegularExpression number(R"(\b(0x[0-9a-fA-F]+|[0-9]+(?:\.[0-9]+)?)(?:[uUfF])?\b)");
@@ -234,14 +239,15 @@ class NodeRegistryTest : public QObject {
                     }
                 }
             }
-            if (relative.startsWith("nodes/")) {
+            if (relative.startsWith("nodes/") && relative != "nodes/registry.cpp") {
                 // No sibling node includes or dispatch to a different concrete kind.
                 QVERIFY2(!text.contains("#include"), qPrintable(relative));
                 const auto folder = relative.section('/', 1, 1);
                 if (relative.endsWith("definition.inc")) {
                     QVERIFY2(text.contains("NodeDefinition NodeRegistry::"), qPrintable(relative));
-                    QCOMPARE(text.count("Kind::"), relative.startsWith("nodes/start/") || relative.startsWith("nodes/end/") ? 2 : 1);
-                    QVERIFY2(source.exists("nodes/" + folder + "/definition.inc"), qPrintable(relative));
+                    QCOMPARE(text.count("Kind::"), 1);
+                    QVERIFY2(source.exists("nodes/" + folder + "/core/definition.inc"), qPrintable(relative));
+                    QVERIFY2(source.exists("nodes/" + folder + "/ui/presentation.inc"), qPrintable(relative));
                 }
             }
         }

@@ -1,11 +1,11 @@
 #include "gui_test.h"
-#include "window.h"
-#include "nodeform.h"
-#include "graphview.h"
+#include "ui/window.h"
+#include "ui/nodeform.h"
+#include "ui/graphview.h"
 #include <QSystemTrayIcon>
-#include "theme.h"
-#include "projectopener.h"
-#include "history.h"
+#include "ui/theme.h"
+#include "ui/projectopener.h"
+#include "core/history.h"
 #include <QTemporaryDir>
 #include <QtTest>
 #include <QComboBox>

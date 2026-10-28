@@ -1,5 +1,5 @@
 // Explicit catalog-only integration check: never submits a prompt.
-#include "modelcatalog.h"
+#include "core/modelcatalog.h"
 #include <QCoreApplication>
 #include <QCommandLineParser>
 #include <QSaveFile>

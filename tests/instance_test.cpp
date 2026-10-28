@@ -1,4 +1,4 @@
-#include "instancelock.h"
+#include "app/instancelock.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>

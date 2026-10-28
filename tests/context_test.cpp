@@ -1,5 +1,5 @@
-#include "runner.h"
-#include "history.h"
+#include "core/runner.h"
+#include "core/history.h"
 #include <QtTest>
 #include <QSignalSpy>
 #include <QTemporaryDir>

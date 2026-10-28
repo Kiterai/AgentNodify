@@ -1,7 +1,7 @@
 #include "shell_test.h"
-#include "runner.h"
-#include "cli.h"
-#include "history.h"
+#include "core/runner.h"
+#include "core/cli.h"
+#include "core/history.h"
 #include <QtTest>
 #include <QDir>
 #include <QFileInfo>

@@ -1,5 +1,5 @@
 // Opt-in integration runner: NOT registered with CTest; invokes paid services.
-#include "runner.h"
+#include "core/runner.h"
 #include <QCoreApplication>
 #include <QCommandLineParser>
 #include <QDateTime>

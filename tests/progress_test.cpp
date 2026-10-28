@@ -1,5 +1,5 @@
 #include "progress_test.h"
-#include "progressview.h"
+#include "ui/progressview.h"
 #include <QtTest>
 #include <QDir>
 #include <QLabel>

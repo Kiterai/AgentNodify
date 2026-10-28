@@ -1,7 +1,7 @@
-#include "flow.h"
+#include "core/flow.h"
 #include "core_test.h"
-#include "runner.h"
-#include "history.h"
+#include "core/runner.h"
+#include "core/history.h"
 #include <QUuid>
 #include <QtTest>
 #include <QSignalSpy>

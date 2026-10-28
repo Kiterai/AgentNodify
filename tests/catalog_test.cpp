@@ -1,6 +1,6 @@
 #include "catalog_test.h"
-#include "modelcatalog.h"
-#include "graph.h"
+#include "core/modelcatalog.h"
+#include "ui/graph.h"
 #include <QtTest>
 #include <QComboBox>
 #include <QLineEdit>

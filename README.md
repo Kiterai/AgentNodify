@@ -5,17 +5,19 @@ Qt 6 / QtNodesによるチャット型エージェントのワークフローエ
 
 ## ソースの構成
 
-- `src/nodedefinition.h`、`src/nodecommon.cpp`、`src/nodecommon/`: ノードの共通契約・ポート接続の維持・共通フォームなど。
-- `src/nodes/<種類>/`: 各ノードの定義（`definition.inc`）、フォーム（`form.inc`）、実行処理（`runtime.inc`、`process.inc`、`host.inc`）。他の種類のファイルには依存しません。
-- `src/noderegistry.cpp`: 全ノードを読み込む唯一のファイル。共通コードは種類別の分岐ではなく、登録された定義・コールバックを利用します。
-- `src/constants.h`: 設定上限、既定値、時間、共通レイアウト値。
-- `src/strings.h`: UI文言、説明、エラー、保存形式・CLIプロトコルの文字列。`src/colors.h`: 固定パレット。スタイルシートもこのパレットを参照します。
+- `src/core/`: フロー・ノードの内部モデル、検証、実行、CLI連携、スケジュール、履歴、進行イベントの解析。Qt Coreだけを使用し、UIには依存しません。
+- `src/ui/`: ウィンドウ、グラフ表示、フォーム、表示属性・ポートラベル、テーマ、進行状況の描画。内部モデルを参照して表示・編集します。
+- `src/app/`: アプリの起動と多重起動制御。
+- `src/shared/`: 設定値（`constants.h`）、文字列（`strings.h`）、固定色（`colors.h`）の集約先。従来どおり各値の定義先は一つで、共有部分にはウィジェットや描画処理を置きません。
+- `src/nodes/<種類>/core/`: 種類別の内部定義（`definition.inc`）、実行処理（`runtime.inc`、`process.inc`、`host.inc`）。
+- `src/nodes/<種類>/ui/`: 種類別の表示定義（`presentation.inc`）とフォーム（`form.inc`）。他の種類のファイルには依存しません。
+- `src/nodes/registry.cpp`: 全ノードを読み込む唯一の入口。コア用とUI用で読み込む実装を分けています。
 
-`.inc` は登録ファイルだけから読み込むC++実装断片です。登録ファイルをコア用・フォーム用に分けてコンパイルすることで、コアにQt Widgetsへの依存を持ち込みません。各種類の検証・出力スキーマ・ポート・表示属性・実行・フォーム同期を同じディレクトリで管理します。保存形式との互換性のため、`Node` は従来のフィールドを保持しています。
+依存方向は `app → ui → core → shared` です。`core` の `NodeDefinition` は検証・スキーマ・実行などを持ち、色・説明・フォーム生成などは `ui` の `NodePresentation` が持ちます。`.inc` は登録ファイルだけから読み込むC++実装断片です。登録ファイルをコア用・UI用に別々にコンパイルし、`agentcore` はQt GUI／WidgetsやQtNodesをリンクしません。保存形式との互換性のため、`Node` は従来のフィールドを保持しています。
 
-ノード追加時は、共通契約に沿った定義・処理を `src/nodes/` に追加し、登録ファイルと宣言に登録します。文言・色・設定値は上記の定数ファイルを使います。`node_registry` テストでは登録の完全性、設定上限の共有、ポートの再対応付け、実装ファイルの依存境界と文字列の集約を検査します。
+ノード追加時は、共通契約に沿った内部定義・表示定義を `src/nodes/` に追加し、登録ファイルに登録します。文言・色・設定値は上記の定数ファイルを使います。`node_registry` テストでは登録の完全性、設定上限の共有、ポートの再対応付け、実装ファイルの依存境界と文字列の集約を検査します。`layering` テストはUIをリンクせずにフローを実行し、内部モデル・共有部分からUIへの依存が増えていないことも検査します。
 
-`NodeForm` は名前欄・編集通知・入力制御・サイズ調整だけを持つ共通の外枠です。種類別のウィジェット状態と補助処理は、それぞれの `form.inc` に定義された `NodeParameterForm` 派生クラスが保持し、必要な種類のインスタンスだけを生成します。入力ポート数（All／Any）とフロー・パス指定（別フロー連携3種類）は `src/nodecommon/` の共通フォームを再利用します。フォームの生成は引き続き `src/noderegistry.cpp` に集約しています。
+`NodeForm` は名前欄・編集通知・入力制御・サイズ調整だけを持つ共通の外枠です。種類別のウィジェット状態と補助処理は、それぞれの `ui/form.inc` に定義された `NodeParameterForm` 派生クラスが保持し、必要な種類のインスタンスだけを生成します。入力ポート数（All／Any）とフロー・パス指定（別フロー連携3種類）は `src/ui/nodecommon/` の共通フォームを再利用します。
 
 ## ビルドと起動
 
@@ -300,14 +302,14 @@ JSON出力とスキーマ検証、2回のループ、ANDの2回の待ち合わ�
 
 ## 構成 / 依存ライブラリ
 
-- `src/flow.*`: データモデル・JSON保存・グラフ／スキーマ／変数検証
-- `src/runner.*`: 非同期実行・分岐と合流・CLIプロセス／プロトコル
-- `src/history.*`: ノード1実行ごとの履歴のアトミック保存・再起動時の復元
-- `src/progress.*` / `src/progressview.*`: CLIイベントの表示用解釈、Markdown・JSONツリー、ツール・ファイルアクセスのタイムライン
-- `src/modelcatalog.*`: 推論を行わないモデル一覧の非同期取得・キャッシュ
-- `src/cli.*`: 共通のCLI実行ファイルの解決
-- `src/graph.*`: QtNodesのAbstractGraphModel実装
-- `src/window.*`: Qt Widgetsの編集画面・プロジェクト画面
+- `src/core/flow.*`: データモデル・JSON保存・グラフ／スキーマ／変数検証
+- `src/core/runner.*`: 非同期実行・分岐と合流・CLIプロセス／プロトコル
+- `src/core/history.*`: ノード1実行ごとの履歴のアトミック保存・再起動時の復元
+- `src/core/progress.*` / `src/ui/progressview.*`: CLIイベントの解析と、Markdown・JSONツリー・タイムラインの描画
+- `src/core/modelcatalog.*`: 推論を行わないモデル一覧の非同期取得・キャッシュ
+- `src/core/cli.*`: 共通のCLI実行ファイルの解決
+- `src/ui/graph.*`: QtNodesのAbstractGraphModelアダプター
+- `src/ui/window.*`: Qt Widgetsの編集画面・プロジェクト画面
 - QtNodes 3.0.12（BSD-3-Clause）
 - nlohmann/json 3.11.3（MIT）
 - nlohmann/json-schema-validator 2.3.0（MIT）

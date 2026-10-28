@@ -29,23 +29,38 @@ FetchContent_Declare(qtnodes
   URL https://codeload.github.com/paceholder/nodeeditor/tar.gz/refs/tags/3.0.12
   URL_HASH SHA256=67268eccdd389732447f4dfcf04ba3345d91a8728d38582642eab84017208522)
 FetchContent_MakeAvailable(qtnodes)
-add_library(agentcore src/flow.cpp src/runner.cpp src/flow.h src/runner.h src/coordinator.cpp src/coordinator.h src/cli.cpp src/cli.h src/modelcatalog.cpp src/modelcatalog.h src/history.cpp src/history.h src/progress.cpp src/progress.h)
-target_sources(agentcore PRIVATE src/noderegistry.cpp src/nodecommon.cpp src/nodedefinition.h src/nodeprocess.h src/constants.h src/strings.h src/colors.h)
-target_include_directories(agentcore PUBLIC src)
-target_sources(agentcore PRIVATE src/schedule.cpp src/schedule.h)
-target_link_libraries(agentcore PUBLIC Qt6::Core nlohmann_json::nlohmann_json nlohmann_json_schema_validator)
-add_library(agentui src/window.cpp src/window.h src/graph.cpp src/graph.h src/nodeform.cpp src/nodeform.h src/theme.cpp src/theme.h src/graphview.cpp src/graphview.h src/projectopener.cpp src/projectopener.h src/progressview.cpp src/progressview.h)
-target_sources(agentui PRIVATE src/nodeparameterform.cpp src/nodeparameterform.h)
-add_library(agentnodeforms OBJECT src/noderegistry.cpp)
+# Shared literal catalogs contain data only and require no GUI libraries.
+add_library(agentshared INTERFACE)
+target_include_directories(agentshared INTERFACE src)
+target_link_libraries(agentshared INTERFACE Qt6::Core)
+
+# The domain/execution layer is usable without Qt GUI/Widgets or QtNodes.
+add_library(agentcore
+  src/core/flow.cpp src/core/flow.h src/core/runner.cpp src/core/runner.h
+  src/core/coordinator.cpp src/core/coordinator.h src/core/cli.cpp src/core/cli.h
+  src/core/modelcatalog.cpp src/core/modelcatalog.h src/core/history.cpp src/core/history.h
+  src/core/progress.cpp src/core/progress.h src/core/schedule.cpp src/core/schedule.h
+  src/core/nodecommon.cpp src/core/nodedefinition.h src/core/nodeprocess.h
+  src/shared/constants.h src/shared/strings.h src/shared/colors.h src/nodes/registry.cpp)
+target_link_libraries(agentcore PUBLIC agentshared nlohmann_json::nlohmann_json nlohmann_json_schema_validator)
+
+add_library(agentui
+  src/ui/window.cpp src/ui/window.h src/ui/graph.cpp src/ui/graph.h
+  src/ui/nodeform.cpp src/ui/nodeform.h src/ui/nodeparameterform.cpp src/ui/nodeparameterform.h
+  src/ui/nodepresentation.cpp src/ui/nodepresentation.h src/ui/theme.cpp src/ui/theme.h
+  src/ui/graphview.cpp src/ui/graphview.h src/ui/projectopener.cpp src/ui/projectopener.h
+  src/ui/progressview.cpp src/ui/progressview.h)
+# One composition root, compiled separately for each side of the dependency boundary.
+add_library(agentnodeforms OBJECT src/nodes/registry.cpp)
 target_compile_definitions(agentnodeforms PRIVATE AGENTNODIFY_NODE_UI)
 target_link_libraries(agentnodeforms PRIVATE agentcore Qt6::Widgets)
 target_sources(agentui PRIVATE $<TARGET_OBJECTS:agentnodeforms>)
 target_link_libraries(agentui PUBLIC agentcore Qt6::Widgets QtNodes::QtNodes)
-add_executable(AgentNodify WIN32 src/main.cpp)
-target_sources(AgentNodify PRIVATE src/instancelock.h)
+add_executable(AgentNodify WIN32 src/app/main.cpp)
+target_sources(AgentNodify PRIVATE src/app/instancelock.h)
 target_link_libraries(AgentNodify PRIVATE agentui)
 enable_testing()
-add_executable(agentnodify_instance_tests tests/instance_test.cpp src/instancelock.h)
+add_executable(agentnodify_instance_tests tests/instance_test.cpp src/app/instancelock.h)
 target_link_libraries(agentnodify_instance_tests PRIVATE agentcore Qt6::Test)
 add_test(NAME instance COMMAND agentnodify_instance_tests -o -,txt)
 set_tests_properties(instance PROPERTIES TIMEOUT 30)
@@ -124,4 +139,9 @@ target_link_libraries(agentnodify_registry_tests PRIVATE agentui Qt6::Test)
 target_compile_definitions(agentnodify_registry_tests PRIVATE AGENTNODIFY_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 add_test(NAME node_registry COMMAND agentnodify_registry_tests -o -,txt)
 set_tests_properties(node_registry PROPERTIES ENVIRONMENT "${_gui_test_env}" TIMEOUT 20)
+add_executable(agentnodify_layering_tests tests/layering_test.cpp tests/layering_test.h)
+target_link_libraries(agentnodify_layering_tests PRIVATE agentcore Qt6::Test)
+target_compile_definitions(agentnodify_layering_tests PRIVATE AGENTNODIFY_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+add_test(NAME layering COMMAND agentnodify_layering_tests -o -,txt)
+set_tests_properties(layering PROPERTIES TIMEOUT 20)
 install(TARGETS AgentNodify RUNTIME DESTINATION bin)
