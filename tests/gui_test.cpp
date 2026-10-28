@@ -61,6 +61,52 @@ void GuiTest::applicationIconAsset() {
         QCOMPARE(window.trayIcon_->icon().pixmap(size).toImage(), image);
     }
 }
+void GuiTest::licenseViewer() {
+    Window window(true);
+    auto *action = window.findChild<QAction *>(strings::ShowLicensesAction);
+    QVERIFY(action);
+    action->trigger();
+    auto *dialog = window.findChild<QDialog *>(strings::LicenseDialog);
+    QVERIFY(dialog);
+    QVERIFY(dialog->isVisible());
+    auto *list = dialog->findChild<QListWidget *>(strings::LicenseList);
+    auto *text = dialog->findChild<QPlainTextEdit *>(strings::LicenseText);
+    auto *versions = dialog->findChild<QLabel *>(strings::LicenseVersions);
+    QVERIFY(list && text && versions);
+    QVERIFY(text->isReadOnly());
+    QVERIFY(versions->text().contains(strings::ApplicationVersion));
+    QVERIFY(versions->text().contains(QT_VERSION_STR));
+    QVERIFY(versions->text().contains(qVersion()));
+    QVERIFY(text->toPlainText().startsWith("MIT License"));
+    QVERIFY(text->toPlainText().contains("AgentNodify contributors"));
+    const auto baseCount = int(sizeof(strings::LicenseDocuments) / sizeof(strings::LicenseDocuments[0]));
+    QCOMPARE(list->count(), baseCount + AGENTNODIFY_DISTRIBUTION_TEXT_COUNT);
+    bool foundDmitry = false, foundNiels = false, foundPatrick = false;
+    bool foundEvan = false, foundGene = false, foundException = false;
+    for (int row = 0; row < list->count(); ++row) {
+        list->setCurrentRow(row);
+        QFile file(list->item(row)->data(Qt::UserRole).toString());
+        QVERIFY2(file.open(QIODevice::ReadOnly), qPrintable(file.fileName()));
+        const auto expected = QString::fromUtf8(file.readAll()).replace("\r\n", "\n");
+        QVERIFY(!expected.isEmpty());
+        QCOMPARE(text->toPlainText(), expected);
+        foundDmitry |= expected.contains("Dmitry Pinaev");
+        foundNiels |= expected.contains("Niels Lohmann");
+        foundPatrick |= expected.contains("Patrick Boettcher");
+        foundEvan |= expected.contains("Evan Nemerson");
+        foundGene |= expected.contains("Gene Hightower");
+        foundException |= expected.contains("Exception 1:") && expected.contains("Exception 2:");
+    }
+    QVERIFY(foundDmitry && foundNiels && foundPatrick && foundEvan && foundGene && foundException);
+    action->trigger();
+    QCOMPARE(window.findChildren<QDialog *>(strings::LicenseDialog).size(), 1);
+    QPointer<QDialog> guard(dialog);
+    dialog->close();
+    QTRY_VERIFY(guard.isNull());
+    action->trigger();
+    QVERIFY(window.findChild<QDialog *>(strings::LicenseDialog));
+    window.findChild<QDialog *>(strings::LicenseDialog)->close();
+}
 void GuiTest::previewHeightAndClick() {
     TextPreview preview; preview.setFixedWidth(280); preview.show();
     preview.setPlainText("short"); QCOMPARE(preview.visibleLines(), 1);

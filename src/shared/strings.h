@@ -870,6 +870,31 @@ inline constexpr char F7[] = "F7";
 inline constexpr char CliSettingsAction[] = "CLI設定…";
 inline constexpr char RefreshModelsAction[] = "モデル一覧を更新";
 inline constexpr char HelpMenuLabel[] = "ヘルプ";
+inline constexpr char LicensesAction[] = "ライセンス・依存ソフトウェア…";
+inline constexpr char ShowLicensesAction[] = "showLicenses";
+inline constexpr char LicenseDialog[] = "licenseDialog";
+inline constexpr char LicenseList[] = "licenseList";
+inline constexpr char LicenseText[] = "licenseText";
+inline constexpr char LicenseVersions[] = "licenseVersions";
+inline constexpr char LicenseVersionSummary[] = "AgentNodify %1 / MIT\nQt ビルド時: %2 / 実行時: %3";
+inline constexpr char LicenseScopeHint[] = "依存ソフトウェアには各ライセンスが適用されます。IFWはインストーラ・Maintenance Toolの依存です。";
+inline constexpr char LicenseReadFailed[] = "ライセンス資料を読み込めませんでした。";
+inline constexpr char DistributionLicenseResourceDirectory[] = ":/legal/distribution";
+inline constexpr char DistributionLicenseLabel[] = "配布資料: %1";
+struct LicenseDocument { const char *title; const char *resource; };
+inline constexpr LicenseDocument LicenseDocuments[] = {
+    {"AgentNodify — MIT", ":/legal/LICENSE"},
+    {"依存ソフトウェア一覧", ":/legal/packaging/THIRD-PARTY-NOTICES.txt"},
+    {"QtNodes 3.0.12 — BSD-3-Clause", ":/legal/licenses/QtNodes/LICENSE.rst"},
+    {"nlohmann/json 3.11.3 — MIT", ":/legal/licenses/nlohmann-json/LICENSE.MIT"},
+    {"nlohmann/json — Hedleyの表示", ":/legal/licenses/nlohmann-json/HEDLEY-NOTICE.txt"},
+    {"JSON Schema Validator 2.3.0 — MIT", ":/legal/licenses/json-schema-validator/LICENSE"},
+    {"JSON Schema Validator — SMTPのMIT", ":/legal/licenses/json-schema-validator/SMTP-LICENSE.txt"},
+    {"Qt — LGPLv3", ":/legal/licenses/Qt/LGPL-3.0-only.txt"},
+    {"Qt — GPLv3（LGPLv3から参照）", ":/legal/licenses/Qt/GPL-3.0-only.txt"},
+    {"IFW — GPLv3 + Qt例外", ":/legal/licenses/IFW/LICENSE.GPL3-EXCEPT"},
+    {"ライセンスの適用範囲・ソース提供", ":/legal/licenses/README.md"}
+};
 inline constexpr char UsageAction[] = "操作方法";
 inline constexpr char UsageHelp[] = "左のボタンでノードを追加し、丸いポートをドラッグして接続します。\nパラメータはノード内のフォームで編集"
                                     "します。複数行欄をクリックすると右ペインで編集できます。\nノードや追加ボタンにカーソルを置くと機能説明"

@@ -12,7 +12,10 @@ if(NOT _result EQUAL 0)
   message(FATAL_ERROR "Installer staging failed: ${_result}")
 endif()
 set(_required
-  INSTALL-NOTES.txt licenses/THIRD-PARTY-NOTICES.txt
+  LICENSE INSTALL-NOTES.txt licenses/THIRD-PARTY-NOTICES.txt licenses/README.md
+  licenses/Qt/LGPL-3.0-only.txt licenses/Qt/GPL-3.0-only.txt
+  licenses/IFW/LICENSE.GPL3-EXCEPT
+  licenses/nlohmann-json/HEDLEY-NOTICE.txt licenses/json-schema-validator/SMTP-LICENSE.txt
   licenses/nlohmann-json/LICENSE.MIT licenses/json-schema-validator/LICENSE
   licenses/QtNodes/LICENSE.rst examples/script.flow.json)
 if(HOST_WINDOWS)
@@ -29,6 +32,10 @@ foreach(_file IN LISTS _required)
     message(FATAL_ERROR "Missing distribution file: ${_file}")
   endif()
 endforeach()
+file(READ "${_stage}/LICENSE" _mit)
+if(NOT _mit MATCHES "MIT License" OR NOT _mit MATCHES "AgentNodify contributors")
+  message(FATAL_ERROR "Application MIT license is missing or incorrect")
+endif()
 file(GLOB_RECURSE _files RELATIVE "${_stage}" "${_stage}/*")
 foreach(_file IN LISTS _files)
   if(_file MATCHES "(^|/)(fake_[^/]*|agentnodify_[^/]*|workspace\\.json|instance\\.lock)$"

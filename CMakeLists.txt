@@ -54,7 +54,8 @@ add_library(agentui
   src/ui/nodeform.cpp src/ui/nodeform.h src/ui/nodeparameterform.cpp src/ui/nodeparameterform.h
   src/ui/nodepresentation.cpp src/ui/nodepresentation.h src/ui/theme.cpp src/ui/theme.h
   src/ui/graphview.cpp src/ui/graphview.h src/ui/projectopener.cpp src/ui/projectopener.h
-  src/ui/progressview.cpp src/ui/progressview.h)
+  src/ui/progressview.cpp src/ui/progressview.h
+  src/ui/licensedialog.cpp src/ui/licensedialog.h)
 # One composition root, compiled separately for each side of the dependency boundary.
 add_library(agentnodeforms OBJECT src/nodes/registry.cpp)
 target_compile_definitions(agentnodeforms PRIVATE AGENTNODIFY_NODE_UI)
@@ -65,6 +66,7 @@ qt_add_resources(agentui application_icons
   PREFIX "/icons"
   BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets"
   FILES assets/agentnodify.ico)
+include(cmake/Licenses.cmake)
 add_executable(AgentNodify WIN32 src/app/main.cpp)
 if(WIN32)
   target_sources(AgentNodify PRIVATE assets/agentnodify.rc)
@@ -105,6 +107,8 @@ add_test(NAME shell COMMAND agentnodify_shell_tests -o -,txt)
 add_executable(agentnodify_gui_tests tests/gui_test.cpp tests/gui_test.h)
 target_link_libraries(agentnodify_gui_tests PRIVATE agentui Qt6::Test)
 target_compile_definitions(agentnodify_gui_tests PRIVATE AGENTNODIFY_TEST_OUTPUT_DIR="${CMAKE_BINARY_DIR}")
+target_compile_definitions(agentnodify_gui_tests PRIVATE
+  AGENTNODIFY_DISTRIBUTION_TEXT_COUNT=${AGENTNODIFY_DISTRIBUTION_TEXT_COUNT})
 add_test(NAME gui COMMAND agentnodify_gui_tests -o -,txt)
 add_executable(fake_catalog tests/fake_catalog.cpp)
 target_link_libraries(fake_catalog PRIVATE Qt6::Core nlohmann_json::nlohmann_json)

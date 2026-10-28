@@ -7,12 +7,6 @@ if(UNIX AND NOT APPLE AND Qt6_VERSION VERSION_LESS 6.7)
   message(FATAL_ERROR "Linux installer deployment requires Qt 6.7 or newer")
 endif()
 
-set(AGENTNODIFY_LEGAL_DIRECTORY "" CACHE PATH
-  "Additional distribution notices, runtime licenses and source availability information")
-if(AGENTNODIFY_LEGAL_DIRECTORY AND NOT IS_DIRECTORY "${AGENTNODIFY_LEGAL_DIRECTORY}")
-  message(FATAL_ERROR "AGENTNODIFY_LEGAL_DIRECTORY must be an existing directory")
-endif()
-
 # The app and its dependencies form one versioned component. Never copy build/Release.
 qt_generate_deploy_app_script(TARGET AgentNodify OUTPUT_SCRIPT _deploy_script
   NO_TRANSLATIONS NO_COMPILER_RUNTIME)
@@ -33,14 +27,6 @@ endif()
 
 install(DIRECTORY examples/ DESTINATION examples COMPONENT AgentNodify
   FILES_MATCHING PATTERN "*.json" PATTERN "*.py" PATTERN "*.js")
-install(FILES "${json_SOURCE_DIR}/LICENSE.MIT"
-  DESTINATION licenses/nlohmann-json COMPONENT AgentNodify)
-install(FILES "${json_validator_SOURCE_DIR}/LICENSE"
-  DESTINATION licenses/json-schema-validator COMPONENT AgentNodify)
-install(FILES "${qtnodes_SOURCE_DIR}/LICENSE.rst"
-  DESTINATION licenses/QtNodes COMPONENT AgentNodify)
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/THIRD-PARTY-NOTICES.txt"
-  DESTINATION licenses COMPONENT AgentNodify)
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/INSTALL-NOTES.txt"
   DESTINATION . COMPONENT AgentNodify)
 if(AGENTNODIFY_LEGAL_DIRECTORY)

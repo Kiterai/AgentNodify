@@ -1,0 +1,14 @@
+Hedley, as bundled with nlohmann/json 3.11.3
+=========================================
+
+The following notices appear in include/nlohmann/thirdparty/hedley/hedley.hpp:
+https://github.com/nlohmann/json/blob/v3.11.3/include/nlohmann/thirdparty/hedley/hedley.hpp
+
+SPDX-FileCopyrightText: 2013-2023 Niels Lohmann <https://nlohmann.me>
+SPDX-FileCopyrightText: 2016-2021 Evan Nemerson <evan@nemerson.com>
+SPDX-License-Identifier: MIT
+
+Hedley - https://nemequ.github.io/hedley
+Created by Evan Nemerson <evan@nemerson.com>
+
+The MIT license text is reproduced in LICENSE.MIT in this directory.

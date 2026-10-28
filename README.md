@@ -48,3 +48,7 @@ IFWインストーラは`scripts/package.ps1`で生成できます。前提ツ�
 | nlohmann/json-schema-validator | 2.3.0 | MIT |
 
 Qt以外はCMakeが固定バージョン・SHA-256検証付きで取得します。ライセンス本文は各ソースツリーに含まれます。
+
+## ライセンス
+
+AgentNodify本体は[MIT License](LICENSE)です。依存ソフトウェアにはそれぞれのライセンスが適用されます。[依存一覧](packaging/THIRD-PARTY-NOTICES.txt)・[ライセンス本文と適用範囲](licenses/README.md)、またはアプリの「ヘルプ → ライセンス・依存ソフトウェア…」で確認できます。
