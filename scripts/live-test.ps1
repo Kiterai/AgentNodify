@@ -4,7 +4,8 @@ param(
     [ValidateSet('text', 'json', 'loop', 'and', 'file', 'cwd')][string]$Case = 'text',
     [string]$ProjectDirectory,
     [string]$Program,
-    [string]$QtPath = 'C:/Qt/6.12.0/msvc2022_64',
+    [string]$QtPath = $env:Qt6_ROOT,
+    [string]$Model,
     [string]$CodexCaCertificate,
     [ValidateSet('Debug', 'Release')][string]$Configuration = 'Release',
     [switch]$Run,
@@ -17,13 +18,15 @@ $ErrorActionPreference = 'Stop'
 if (([int]$Run.IsPresent + [int]$Login.IsPresent + [int]$Models.IsPresent) -gt 1) { throw 'Choose only one of -Run, -Login, or -Models.' }
 $root = Split-Path $PSScriptRoot -Parent
 $profile = Join-Path $root 'build/live-profile'
-$homePath = [Environment]::GetEnvironmentVariable('USERPROFILE')
 if (!$Program) {
-    $Program = switch ($Agent) {
-        'Codex' { "$homePath/AppData/Local/Programs/OpenAI/Codex/bin/codex.exe" }
-        'Claude Code' { "$homePath/.local/bin/claude.exe" }
-        'OpenCode' { "$homePath/AppData/Local/Programs/@opencode-aidesktop/resources/opencode-cli.exe" }
+    $command = switch ($Agent) {
+        'Codex' { 'codex.exe' }
+        'Claude Code' { 'claude.exe' }
+        'OpenCode' { 'opencode-cli.exe' }
     }
+    $resolved = Get-Command $command -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (!$resolved) { throw 'CLI not found on PATH. Specify a native CLI .exe with -Program.' }
+    $Program = $resolved.Source
 }
 $Program = [IO.Path]::GetFullPath($Program)
 if ([IO.Path]::GetExtension($Program) -ne '.exe' -or !(Test-Path -LiteralPath $Program -PathType Leaf)) {
@@ -33,6 +36,11 @@ $runner = Join-Path $root "build/$Configuration/agentnodify_live_test.exe"
 if ($Run -and !(Test-Path -LiteralPath $runner -PathType Leaf)) { throw "Build first: $runner" }
 $catalogProbe = Join-Path $root "build/$Configuration/agentnodify_catalog_probe.exe"
 if ($Models -and !(Test-Path -LiteralPath $catalogProbe -PathType Leaf)) { throw "Build first: $catalogProbe" }
+if ($Run -and !$Model) { throw 'Specify an authorized model ID with -Model for paid tests.' }
+if ($QtPath) {
+    $QtPath = (Resolve-Path -LiteralPath $QtPath).Path
+    if (!(Test-Path -LiteralPath "$QtPath/bin" -PathType Container)) { throw 'QtPath must point to a Qt kit directory.' }
+}
 $variables = @{
     HOME = $profile
     USERPROFILE = $profile
@@ -44,19 +52,10 @@ $variables = @{
     XDG_DATA_HOME = "$profile/.local/share"
     XDG_CACHE_HOME = "$profile/.cache"
     XDG_STATE_HOME = "$profile/.local/state"
-    PATH = "$QtPath/bin;$env:PATH"
 }
+if ($QtPath) { $variables['PATH'] = "$QtPath/bin;$env:PATH" }
 if ($Agent -eq 'Codex') {
-    # A CA override makes Codex use rustls instead of Windows native TLS.
-    # Keep certificate verification enabled and respect existing CA overrides.
-    if (!$CodexCaCertificate -and !$env:CODEX_CA_CERTIFICATE -and !$env:SSL_CERT_FILE) {
-        foreach ($candidate in @(
-            "$homePath/AppData/Local/Programs/Git/mingw64/ssl/certs/ca-bundle.crt",
-            "$env:ProgramFiles/Git/mingw64/ssl/certs/ca-bundle.crt"
-        )) {
-            if (Test-Path -LiteralPath $candidate -PathType Leaf) { $CodexCaCertificate = $candidate; break }
-        }
-    }
+    # Only use an explicitly supplied CA bundle; never disable verification.
     if ($CodexCaCertificate) {
         if (!(Test-Path -LiteralPath $CodexCaCertificate -PathType Leaf)) { throw 'Codex CA bundle does not exist.' }
         $variables['CODEX_CA_CERTIFICATE'] = [IO.Path]::GetFullPath($CodexCaCertificate)
@@ -82,15 +81,10 @@ try {
         $slug = switch ($Agent) { 'Codex' { 'codex' }; 'Claude Code' { 'claude' }; 'OpenCode' { 'opencode' } }
         & $catalogProbe --agent $Agent --program $Program --report "$root/build/$slug-models-sandbox.json"
     } elseif ($Run) {
-        $model = switch ($Agent) {
-            'Codex' { 'gpt-6-luna' }
-            'Claude Code' { 'claude-haiku-5-5' }
-            'OpenCode' { 'openai/gpt-6-luna' }
-        }
         $slug = switch ($Agent) { 'Codex' { 'codex' }; 'Claude Code' { 'claude' }; 'OpenCode' { 'opencode' } }
         $extra = @(); if ($WorkspaceWrite) { $extra += '--workspace-write' }
         if ($ProjectDirectory) { $extra += @('--project', [IO.Path]::GetFullPath($ProjectDirectory)) }
-        & $runner --agent $Agent --program $Program --model $model --case $Case --report "$root/build/$slug-$Case-sandbox-live.json" @extra
+        & $runner --agent $Agent --program $Program --model $Model --case $Case --report "$root/build/$slug-$Case-sandbox-live.json" @extra
     } else {
         & $Program --version
     }

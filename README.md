@@ -1,7 +1,7 @@
 # AgentNodify
 
 Qt 6 / QtNodesによるチャット型エージェントのワークフローエディタです。
-仕様: [`spec/spec.md`](spec/spec.md)。Windows 11 / Qt 6.12.0 / MSVC 2022でビルド・自動テスト済み。
+仕様: [`spec/spec.md`](spec/spec.md)。以下はWindows / MSVC向けの開発手順です。
 
 ## ソースの構成
 
@@ -21,14 +21,26 @@ Qt 6 / QtNodesによるチャット型エージェントのワークフローエ
 
 ## ビルドと起動
 
-必要なもの: CMake 3.24以上、Visual Studio 2022の「C++によるデスクトップ開発」、Qt 6.5以上（MSVC x64版）。
+必要なもの:
+
+- Git、CMake 3.24以上、Windows PowerShell 5.1以上またはPowerShell 7。
+- Visual Studio 2022（またはBuild Tools）の「C++によるデスクトップ開発」とWindows SDK。C++20を使用します。
+- Qt 6.5以上のMSVC x64キット（Widgets / Testと`windeployqt`を含む）。コンパイラとQtのABI・アーキテクチャを一致させてください。
+
+リポジトリをcloneし、ルートディレクトリで実行します。`$qt`には実際に導入したQtキットの場所を設定してください（固定のインストール先はありません）。
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/build.ps1
+$qt = Read-Host 'Qtキットの絶対パス'
+.\scripts\build.ps1 -QtPath $qt
 .\build\Release\AgentNodify.exe
 ```
 
-Qtの場所が異なる場合は `-QtPath C:/Qt/<version>/msvc2022_64` を指定します。
+`-QtPath`の代わりに環境変数`Qt6_ROOT`でも指定できます。未指定ならエラーになります。
+スクリプトは構成・ビルド・CTest・Qt DLL配置を行い、終了時にはPATHを元に戻します。
+既定はVS2022 / x64 / Releaseです。`-Configuration Debug`、`-BuildDirectory build-debug`、
+`-Generator`、`-Architecture`で変更できます。Ninjaなどを選ぶ場合は対応コンパイラを利用できる開発者シェルで実行してください。
+Qt・生成器・アーキテクチャを変更するときは、新しいビルドディレクトリを指定してください。
+PowerShellの実行ポリシーで拒否された場合は、組織のポリシーに従うか、以下の手動手順を使います。
 初回構成時に固定バージョン・SHA-256検証付きで依存ライブラリを取得します。
 ネットワーク制限下ではCMakeの `FETCHCONTENT_SOURCE_DIR_JSON`、
 `FETCHCONTENT_SOURCE_DIR_JSON_VALIDATOR`、`FETCHCONTENT_SOURCE_DIR_QTNODES` に展開済みソースを指定できます。
@@ -36,14 +48,26 @@ Qtの場所が異なる場合は `-QtPath C:/Qt/<version>/msvc2022_64` を指定
 手動でビルドする場合:
 
 ```powershell
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH=C:/Qt/6.12.0/msvc2022_64
-cmake --build build --config Release --parallel 8
-$env:PATH = "C:/Qt/6.12.0/msvc2022_64/bin;$env:PATH"
+$qt = Read-Host 'Qtキットの絶対パス'
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_PREFIX_PATH=$qt"
+cmake --build build --config Release --parallel
+$env:PATH = "$qt/bin;$env:PATH"
 ctest --test-dir build -C Release --output-on-failure
-C:/Qt/6.12.0/msvc2022_64/bin/windeployqt.exe build/Release/AgentNodify.exe --no-translations --no-compiler-runtime
+& "$qt/bin/windeployqt.exe" build/Release/AgentNodify.exe --no-translations --no-compiler-runtime
 ```
 
 配布先にはVisual C++ 2022ランタイムも必要です。
+
+### 任意の実行環境とローカル設定
+
+通常のビルド・CTestにはエージェントCLI、アカウント、APIキーは不要です。
+Python／JavaScriptノードとその実行テストには、Python 3（`python`または`python3`）／Node.js（`node`）をPATHに追加してください。
+未導入のランタイムに対応するテストはスキップされます。Windowsのシェル実行にはPowerShellが必要です。
+実際のエージェントを使う場合だけ、利用するCLIを各提供元の手順で導入・認証し、アプリの「ツール → CLI設定」にネイティブ`.exe`を指定します。
+
+個人のQt／CLIパス、認証情報、サンドボックス権限はリポジトリで共有しません。
+`build/`、`build-*/`、`.agent-config/`はローカル用の無視対象です。
+外側のサンドボックスを使う場合の権限は各自の環境で最小限に設定してください。
 
 ## 使い方
 
@@ -267,37 +291,25 @@ GUIはCTestから `AgentNodify --smoke-test` によりオフスクリーンで�
 ノード追加・接続・プロンプト編集・検証・作業画面表示を確認します。
 `tests/gui_test.cpp`でノード内フォーム、右ペインとの同期、プレビューの8行上限、
 始端・終端の表示、フロー一覧、埋め込みウィジェットのライフサイクルを検証しています。
-GUI改修後のReleaseビルドでコア30件・GUI17件・起動スモークテストがすべて成功しました。
-スクリプトノード追加後はGUI19件、Python／Node.js実行テスト36件が成功しています（ランタイム未導入の環境では該当実行テストをスキップします）。
-進捗表示のQtTestは10件成功し、3つのCLI形式、ストリーミング更新、折りたたみ、JSONの省略規則、履歴再生と安全なMarkdown表示を検証しています。
+Python／Node.js実行テストは、ランタイム未導入の環境では該当ケースをスキップします。
+進捗表示のQtTestでは、3つのCLI形式、ストリーミング更新、折りたたみ、JSONの省略規則、履歴再生と安全なMarkdown表示を検証します。
 オフスクリーンの確認画像は`build/gui-editor.png`に出力されます。
 `tests/catalog_test.cpp`ではモデル一覧取得の3つのプロトコル、ページ送り、重複除去、非表示モデル、
 キャッシュ・再取得、異常応答、出力上限、タイムアウト、CLIパス変更、既存値を保持した候補更新を検証します。
-一覧取得テストは22件すべて成功しました。
-
-2026-10-26に **Codex / `gpt-6-luna`** でテキスト、JSON Schema出力、2回のループ、
-ANDの2回の待ち合わせを含むループを実サービスに接続して確認しました。
-**OpenCode CLI / `openai/gpt-6-luna`** でも、`opencode-cli`を使ってテキスト、
-JSON出力とスキーマ検証、2回のループ、ANDの2回の待ち合わせを含むループがすべて成功しました。
-アプリのCLI設定にはGUI版の`opencode`ではなく、`opencode-cli`またはその絶対パスを指定してください。
-その後、専用プロファイルを使った**サンドボックス内実行**で、Codex・Claude Code・OpenCodeの
-テキスト・JSON・ループ・ANDを含むループの全12ケースが成功しました。サンドボックス外実行は使用していません。
-詳細と再実行条件は [`spec/test-results.md`](spec/test-results.md) を参照してください。
 
 課金を伴うテストは通常のCTestには含めません。明示実行用に `agentnodify_live_test` を用意しています。
 
-サンドボックス内での実CLIテスト用に、分離プロファイルを使う `scripts/live-test.ps1` と
-[設定・認証手順](spec/sandbox-tests.md)を用意しています（必要な権限はsafe-shellで承認要求し、初回ログインは手動）。
+実CLIテスト用に、分離プロファイルを使う `scripts/live-test.ps1` と
+[設定・認証手順](spec/sandbox-tests.md)を用意しています。スクリプト自体はOSサンドボックスを作りません。
 `-Models`を付けると、推論を行わずに実CLIからモデル一覧だけを取得できます。
-サンドボックス内でCodex 7件・Claude Code 13件・OpenCode 25件の取得を確認しました（件数は環境・時期により変わります）。
 
 ```powershell
-.\build\Release\agentnodify_live_test.exe --agent Codex --program codex --model gpt-6-luna --case loop --report build/codex-loop-live.json
+.\scripts\live-test.ps1 -Agent Codex -Program (Read-Host 'CLI .exeの絶対パス') -QtPath $qt -Model gpt-6-luna -Case loop -Run
 ```
 
-`--case` は `text` / `json` / `loop` / `and`。実行ファイルは `--program` に絶対パスも指定できます。
+`-Case` は `text` / `json` / `loop` / `and` / `file` / `cwd`。`file`は実際にテストファイルを書き込み、`cwd`はマーカーファイルを読み取ります。
 モデルIDは必須で、仕様で許可されたLuna / Haiku以外はテスト用実行プログラムで拒否します。
-`gpt-6.0-luna` は実環境で拒否され、正式なID `gpt-6-luna` で成功したため候補とサンプルも修正しました。
+使用可能なモデルIDは契約・プロバイダに依存します。利用できない場合は別モデルに自動変更せず、設定・仕様を確認してください。
 `examples/loop.flow.json` は初期化→加算→分岐→戻り辺を持つ、2回で終了するサンプルです。
 
 ## 構成 / 依存ライブラリ
