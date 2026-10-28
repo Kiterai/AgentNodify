@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.24)
-project(AgentNodify VERSION 0.1.0 LANGUAGES CXX)
+set(AGENTNODIFY_VERSION "0.1.0" CACHE STRING "Application and installer version (major.minor.patch)")
+if(NOT AGENTNODIFY_VERSION MATCHES "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$")
+  message(FATAL_ERROR "AGENTNODIFY_VERSION must be a stable semantic version")
+endif()
+project(AgentNodify VERSION ${AGENTNODIFY_VERSION} LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
@@ -32,6 +36,7 @@ FetchContent_MakeAvailable(qtnodes)
 # Shared literal catalogs contain data only and require no GUI libraries.
 add_library(agentshared INTERFACE)
 target_include_directories(agentshared INTERFACE src)
+target_compile_definitions(agentshared INTERFACE AGENTNODIFY_APPLICATION_VERSION="${PROJECT_VERSION}")
 target_link_libraries(agentshared INTERFACE Qt6::Core)
 
 # The domain/execution layer is usable without Qt GUI/Widgets or QtNodes.
@@ -74,6 +79,13 @@ endif()
 target_sources(AgentNodify PRIVATE src/app/instancelock.h)
 target_link_libraries(AgentNodify PRIVATE agentui)
 enable_testing()
+find_program(AGENTNODIFY_NODE_EXECUTABLE NAMES node)
+if(AGENTNODIFY_NODE_EXECUTABLE)
+  add_test(NAME release_versioning COMMAND "${AGENTNODIFY_NODE_EXECUTABLE}"
+    --test "${CMAKE_CURRENT_SOURCE_DIR}/tests/release.test.mjs")
+  set_tests_properties(release_versioning PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
+endif()
 add_executable(agentnodify_instance_tests tests/instance_test.cpp src/app/instancelock.h)
 target_link_libraries(agentnodify_instance_tests PRIVATE agentcore Qt6::Test)
 add_test(NAME instance COMMAND agentnodify_instance_tests -o -,txt)
