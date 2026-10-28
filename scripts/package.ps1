@@ -4,7 +4,8 @@ param(
     [string]$BuildDirectory = 'build',
     [string]$Generator = 'Visual Studio 17 2022',
     [string]$Architecture = 'x64',
-    [string]$LegalDirectory
+    [string]$LegalDirectory,
+    [string]$Version
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -24,6 +25,7 @@ try {
     $configure = @('-S', '.', '-B', $BuildDirectory, '-G', $Generator,
         "-DCMAKE_PREFIX_PATH=$QtPath", '-DAGENTNODIFY_BUILD_INSTALLER=ON',
         "-DCPACK_IFW_ROOT=$IfwPath", "-DAGENTNODIFY_LEGAL_DIRECTORY=$LegalDirectory")
+    if ($Version) { $configure += "-DAGENTNODIFY_VERSION=$Version" }
     if ($Generator -like 'Visual Studio*') { $configure += @('-A', $Architecture) }
     else { $configure += '-DCMAKE_BUILD_TYPE=Release' }
     & cmake @configure

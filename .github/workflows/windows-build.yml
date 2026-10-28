@@ -1,0 +1,158 @@
+name: Windows build
+
+on:
+  push:
+    branches:
+      - master
+      - develop
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-build-${{ github.workflow }}-${{ github.ref }}
+  # Serialize each branch; retain pending merges rather than replacing them.
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  build:
+    name: Windows x64 Release
+    runs-on: windows-2022
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      QT_VERSION: '6.8.3'
+      QT_ARCH: win64_msvc2022_64
+      CMAKE_BUILD_PARALLEL_LEVEL: '2'
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Check build tools and test runtimes
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($tool in @('cmake', 'ctest', 'python', 'node', 'powershell')) {
+            Get-Command $tool -CommandType Application -ErrorAction Stop | Out-Null
+          }
+          cmake --version
+          python --version
+          node --version
+
+      - name: Test release versioning
+        run: node --test tests/release.test.mjs
+
+      - name: Install Qt
+        run: |
+          python -m pip install aqtinstall==3.3.0
+          if ($LASTEXITCODE) { throw 'aqtinstall installation failed' }
+          $qtDirectory = Join-Path $env:RUNNER_TEMP 'Qt'
+          python -m aqt install-qt windows desktop $env:QT_VERSION $env:QT_ARCH --outputdir $qtDirectory
+          if ($LASTEXITCODE) { throw 'Qt installation failed' }
+          $qtPath = Join-Path $qtDirectory "$env:QT_VERSION/msvc2022_64"
+          "Qt6_ROOT=$qtPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build, test and deploy Qt dependencies
+        run: ./scripts/build.ps1 -Configuration Release -BuildDirectory build-ci
+
+      - name: Save build and test diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-x64-release-diagnostics
+          path: |
+            build-ci/Testing/Temporary/*.log
+            build-ci/CMakeFiles/CMakeConfigureLog.yaml
+            build-ci/*.png
+          if-no-files-found: warn
+          retention-days: 7
+
+  release:
+    name: Version and publish Windows installer
+    needs: build
+    if: ${{ github.ref == 'refs/heads/master' }}
+    runs-on: windows-2022
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      QT_VERSION: '6.8.3'
+      QT_ARCH: win64_msvc2022_64
+      CMAKE_BUILD_PARALLEL_LEVEL: '2'
+    steps:
+      - name: Check out merged source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Determine next semantic version (or resume a draft)
+        id: version
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/release.mjs prepare
+
+      - name: Require reviewed distribution notices before publication
+        if: ${{ steps.version.outputs.published != 'true' }}
+        env:
+          LEGAL_APPROVED: ${{ vars.RELEASE_LEGAL_APPROVED }}
+        run: |
+          if ($env:LEGAL_APPROVED -ne 'true') {
+            throw 'Set RELEASE_LEGAL_APPROVED=true only after the public-distribution review in spec/packaging.md.'
+          }
+          foreach ($name in @('APPLICATION-LICENSE.txt', 'QT-NOTICES.txt', 'IFW-NOTICES.txt', 'SOURCE-OFFER.txt')) {
+            $file = Join-Path 'packaging/distribution' $name
+            if (!(Test-Path -LiteralPath $file -PathType Leaf) -or (Get-Item -LiteralPath $file).Length -eq 0) {
+              throw "Missing distribution notice: $file (see spec/packaging.md)"
+            }
+          }
+
+      - name: Install Qt and Qt Installer Framework
+        if: ${{ steps.version.outputs.published != 'true' }}
+        run: |
+          python -m pip install aqtinstall==3.3.0
+          if ($LASTEXITCODE) { throw 'aqtinstall installation failed' }
+          $qtDirectory = Join-Path $env:RUNNER_TEMP 'Qt'
+          python -m aqt install-qt windows desktop $env:QT_VERSION $env:QT_ARCH --outputdir $qtDirectory
+          if ($LASTEXITCODE) { throw 'Qt installation failed' }
+          python -m aqt install-tool windows desktop tools_ifw qt.tools.ifw.47 --outputdir $qtDirectory
+          if ($LASTEXITCODE) { throw 'IFW installation failed' }
+          $creators = @(Get-ChildItem -Path "$qtDirectory/Tools" -Filter binarycreator.exe -Recurse)
+          if ($creators.Count -ne 1) { throw 'Expected exactly one IFW installation' }
+          $ifwPath = $creators[0].Directory.Parent.FullName
+          $ifwVersion = & $creators[0].FullName --version 2>&1
+          if ($LASTEXITCODE -or "$ifwVersion" -notmatch '4\.7\.0') { throw 'Expected IFW 4.7.0' }
+          "Qt6_ROOT=$qtDirectory/$env:QT_VERSION/msvc2022_64" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          "QTIFWDIR=$ifwPath" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build versioned installer and run all tests
+        if: ${{ steps.version.outputs.published != 'true' }}
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: ./scripts/package.ps1 -BuildDirectory build-release -Version $env:RELEASE_VERSION -LegalDirectory packaging/distribution
+
+      - name: Publish installer and SHA-256 checksum
+        if: ${{ steps.version.outputs.published != 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          INSTALLER_DIRECTORY: build-release/installer
+        run: node scripts/release.mjs publish
+
+      - name: Save installer build diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-installer-diagnostics
+          path: |
+            build-release/Testing/Temporary/*.log
+            build-release/CMakeFiles/CMakeConfigureLog.yaml
+            build-release/*.png
+          if-no-files-found: ignore
+          retention-days: 7
