@@ -15,6 +15,9 @@ private slots:
     void editorUndoRedoParameters();
     void editorUndoRedoDeletion();
     void editorUndoIsolationAndPorts();
+    void optionalTerminalControls();
+    void timingNodeForms();
+    void endlessDelayInWindow();
     void widgetLifetime();
     void comboPopupColors();
     void workSelection();

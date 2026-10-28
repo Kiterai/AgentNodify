@@ -211,6 +211,10 @@ QVariant Graph::nodeData(Id id, NodeRole role) const {
             style.GradientColor0 = style.GradientColor1 = style.GradientColor2 = style.GradientColor3 = QColor("#f2a4a4");
             style.FontColor = style.FontColorFaded = QColor("#40242c");
         }
+        if (n.kind == Kind::Delay || n.kind == Kind::Schedule) {
+            style.GradientColor0 = style.GradientColor1 = style.GradientColor2 = style.GradientColor3 = QColor("#9ac9f2");
+            style.FontColor = style.FontColorFaded = QColor("#173b5b");
+        }
         if (n.kind == Kind::Start || n.kind == Kind::End) {
             style.GradientColor0 = style.GradientColor1 = style.GradientColor2 = style.GradientColor3 = QColor("#efc65e");
             style.FontColor = style.FontColorFaded = QColor("#30260e");
@@ -259,7 +263,7 @@ bool Graph::deleteConnection(ConnectionId c) {
     std::erase(flow.edges, edge(c)); emit connectionDeleted(c); emit edited(); return true;
 }
 bool Graph::deleteNode(Id id) {
-    if (!canEdit() || !nodeExists(id) || flow.nodes.at(id).kind == Kind::Start || flow.nodes.at(id).kind == Kind::End) return false;
+    if (!canEdit() || !nodeExists(id) || flow.nodes.at(id).kind == Kind::Start) return false;
     auto cs = allConnectionIds(id);
     std::erase_if(flow.edges, [id](const Edge &item) { return item.from == id || item.to == id; });
     for (auto c : cs) emit connectionDeleted(c);
@@ -277,7 +281,8 @@ void Graph::loadNode(const QJsonObject &obj) {
         auto f = Flow::fromJson(Json::parse(QJsonDocument(obj["payload"].toObject()).toJson().toStdString()));
         auto n = f.nodes.begin()->second; n.id = Id(obj["id"].toInt());
         if (nodeExists(n.id)) return;
-        if (n.kind == Kind::Start || n.kind == Kind::End) return;
+        if (n.kind == Kind::Start) return;
+        if (n.kind == Kind::End) for(const auto &[id,node]:flow.nodes) if(node.kind==Kind::End)return;
         flow.nodes[n.id] = n; flow.nextNodeId = qMax(flow.nextNodeId, quint64(n.id) + 1); emit nodeCreated(n.id); emit edited();
     } catch (...) {}
 }

@@ -37,6 +37,8 @@
 #include <QtNodes/internal/ConnectionGraphicsObject.hpp>
 #include <QUndoCommand>
 #include <QGraphicsProxyWidget>
+#include <QClipboard>
+#include <QMimeData>
 #include <QtNodes/internal/NodeGraphicsObject.hpp>
 
 namespace an {
@@ -67,7 +69,7 @@ QString textChangeKey(const Flow &before, const Flow &after) {
                     return false;
                 };
                 if (!visit(it.value(), node[it.key()], {}) || suffix.isEmpty()) return {};
-            } else if (!QStringList{"title","prompt","schema","scriptPath","scriptDirectory","shellDirectory","shellCommand","projectPath"}.contains(field)) return {};
+            } else if (!QStringList{"title","prompt","schema","scriptPath","scriptDirectory","shellDirectory","shellCommand","projectPath","scheduleMonth","scheduleDay","scheduleHour","scheduleMinute"}.contains(field)) return {};
             result = QString::number(old["id"].get<Id>()) + ":" + field + suffix;
         }
     }
@@ -358,6 +360,9 @@ void Window::updateExecutionUi() {
     stopButton_->setEnabled(running); stopButton_->setToolTip("選択中のプロジェクトの実行を停止します");
     if (currentFlowRunning()) { textPane_->hide(); field_.clear(); }
 }
+void Window::updateTerminalButton() {
+    if(auto *button=findChild<QPushButton *>("addNode_end")) button->setEnabled(std::none_of(editGraph_->flow.nodes.begin(),editGraph_->flow.nodes.end(),[](const auto &item){return item.second.kind==Kind::End;}));
+}
 void Window::syncCoordinatorRegistry() {
     coordinator_->flows.clear(); coordinator_->projects.clear(); coordinator_->config = config_;
     for (const auto &doc : documents_) coordinator_->flows[doc.path] = doc.flow;
@@ -430,7 +435,7 @@ void Window::buildUi() {
     editorSplit_ = new QSplitter;
     auto *left = new QWidget; auto *leftLayout = new QVBoxLayout(left);
     leftLayout->addWidget(new QLabel("ノードを追加"));
-    for (Kind k : {Kind::Agent, Kind::Script, Kind::Shell, Kind::All, Kind::Any, Kind::Branch, Kind::UserInput, Kind::ProjectCreate, Kind::FlowRun, Kind::FlowWait}) {
+    for (Kind k : {Kind::Agent, Kind::Script, Kind::Shell, Kind::All, Kind::Any, Kind::Branch, Kind::UserInput, Kind::Delay, Kind::Schedule, Kind::End, Kind::ProjectCreate, Kind::FlowRun, Kind::FlowWait}) {
         auto *add = button("＋ " + kindName(k), leftLayout, [this, k] {
             auto id = editGraph_->addNode(kindKey(k));
             if (id == QtNodes::InvalidNodeId) statusBar()->showMessage("ノードを追加できません", 5000);
@@ -453,7 +458,7 @@ void Window::buildUi() {
         } else if (action->shortcut() == QKeySequence(QKeySequence::Paste) || action->shortcut() == QKeySequence(Qt::CTRL | Qt::Key_D)) {
             const bool paste = action->shortcut() == QKeySequence(QKeySequence::Paste);
             QObject::disconnect(action, nullptr, editView_, nullptr);
-            connect(action, &QAction::triggered, this, [this, paste] { if (!editGraph_->canEdit()) return; editorOperation([this, paste] { if (paste) editView_->onPasteObjects(); else editView_->onDuplicateSelectedObjects(); }); });
+            connect(action, &QAction::triggered, this, [this, paste] { if (!editGraph_->canEdit() || !canPasteEditorObjects(paste)) return; editorOperation([this, paste] { if (paste) editView_->onPasteObjects(); else editView_->onDuplicateSelectedObjects(); }); });
         }
     }
     connect(&editScene_->undoStack(), &QUndoStack::indexChanged, this, [this] {
@@ -466,7 +471,7 @@ void Window::buildUi() {
         QMenu menu(this); menu.setObjectName("nodeContextMenu");
         auto *remove = menu.addAction("削除");
         const auto kind = editGraph_->flow.nodes.at(id).kind;
-        remove->setEnabled(kind != Kind::Start && kind != Kind::End);
+        remove->setEnabled(kind != Kind::Start);
         connect(remove, &QAction::triggered, this, [this, id] { deleteEditorObjects(id); });
         menu.exec(editView_->viewport()->mapToGlobal(editView_->mapFromScene(point)));
     });
@@ -615,6 +620,7 @@ void Window::changed() {
     if (loading_ || current_ < 0) return;
     auto &doc = documents_[size_t(current_)]; const auto before = doc.flow; doc.flow = editGraph_->flow; doc.dirty = true;
     if (!applyingHistory_ && !editBatch_) recordEdit(before, doc.flow);
+    updateTerminalButton();
     for (auto &p : projects_) if (p.flowPath == doc.path && !coordinator_->running(p.historyId)) { p.results.clear(); p.runFlow.reset(); }
     syncCoordinatorRegistry();
     setWindowTitle("AgentNodify — " + doc.flow.name + " *");
@@ -678,11 +684,24 @@ void Window::editorOperation(const std::function<void()> &operation) {
     { const QScopedValueRollback<int> batch(editBatch_, editBatch_ + 1); operation(); }
     recordEdit(before, editGraph_->flow);
 }
+bool Window::canPasteEditorObjects(bool fromClipboard) {
+    int ends=int(std::count_if(editGraph_->flow.nodes.begin(),editGraph_->flow.nodes.end(),[](const auto &item){return item.second.kind==Kind::End;}));
+    try {
+        auto accept=[&](Kind kind){if(kind==Kind::Start)throw std::runtime_error("始端は複製できません");if(kind==Kind::End && ++ends>1)throw std::runtime_error("終端は1個までです");};
+        if(fromClipboard) {
+            const auto *mime=QApplication::clipboard()->mimeData(); if(!mime || !mime->hasFormat("application/qt-nodes-graph"))return false;
+            const auto bytes=mime->data("application/qt-nodes-graph"); if(bytes.size()>32*1024*1024)return false;
+            const auto data=Json::parse(bytes.toStdString());
+            for(const auto &item:data.at("nodes")) {const auto flow=Flow::fromJson(item.at("payload"));if(flow.nodes.size()!=1)return false;accept(flow.nodes.begin()->second.kind);}
+        } else for(auto *item:editScene_->selectedItems())if(auto *node=dynamic_cast<QtNodes::NodeGraphicsObject *>(item))accept(editGraph_->flow.nodes.at(node->nodeId()).kind);
+        return true;
+    } catch(const std::exception &error) {statusBar()->showMessage(QString::fromUtf8(error.what()),5000);return false;}
+}
 void Window::deleteEditorObjects(std::optional<Id> node) {
     if (!editGraph_->canEdit()) return;
     std::vector<Id> nodes; std::vector<QtNodes::ConnectionId> connections;
     auto addNode = [this, &nodes](Id id) {
-        if (editGraph_->nodeExists(id) && editGraph_->flow.nodes.at(id).kind != Kind::Start && editGraph_->flow.nodes.at(id).kind != Kind::End) nodes.push_back(id);
+        if (editGraph_->nodeExists(id) && editGraph_->flow.nodes.at(id).kind != Kind::Start) nodes.push_back(id);
     };
     if (node) addNode(*node);
     else for (auto *item : editScene_->selectedItems()) {
@@ -741,6 +760,7 @@ void Window::selectFlow(int index) {
     setWindowTitle("AgentNodify — " + editGraph_->flow.name + (documents_[size_t(index)].dirty ? " *" : ""));
     refreshActivities(); refreshProjects();
     updateUndoActions();
+    updateTerminalButton();
 }
 void Window::selectNode(Id id) {
     selected_ = id; field_.clear(); textPane_->hide();
@@ -761,7 +781,7 @@ void Window::showText(const QString &field) {
     });
 }
 void Window::newFlow() {
-    Document doc; doc.flow = Flow::initial(); doc.flow.name = QString("フロー %1").arg(documents_.size() + 1); doc.path = uniquePath(dataDir_ + "/flows"); doc.dirty = true;
+    Document doc; doc.flow = Flow::initial(false); doc.flow.name = QString("フロー %1").arg(documents_.size() + 1); doc.path = uniquePath(dataDir_ + "/flows"); doc.dirty = true;
     documents_.push_back(doc); selectFlow(int(documents_.size()) - 1);
 }
 void Window::removeFlow(int index) {
@@ -1170,8 +1190,9 @@ void Window::closeEvent(QCloseEvent *event) {
 }
 bool Window::smokeTest() {
     auto id = editGraph_->addNode("agent"); if (id == QtNodes::InvalidNodeId) return false;
+    const auto end = editGraph_->addNode("end"); if (end == QtNodes::InvalidNodeId) return false;
     selectNode(id); showText("prompt"); text_->setPlainText("Say hello");
-    editGraph_->addConnection({1, 0, id, 0}); editGraph_->addConnection({id, 0, 2, 0});
+    editGraph_->addConnection({1, 0, id, 0}); editGraph_->addConnection({id, 0, end, 0});
     editGraph_->addConnection({id, 0, id, 0});
     if (!editGraph_->connectionExists({id, 0, id, 0})) return false;
     editGraph_->deleteConnection({id, 0, id, 0});

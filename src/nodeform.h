@@ -13,6 +13,7 @@ class QLabel;
 class QPushButton;
 class QCheckBox;
 class QFormLayout;
+class QDoubleSpinBox;
 
 namespace an {
 QString nodeDescription(Kind kind);
@@ -74,6 +75,12 @@ private:
     QFormLayout *parameterForm_ = nullptr;
     QPushButton *refreshModels_ = nullptr;
     QSpinBox *inputs_ = nullptr;
+    QDoubleSpinBox *waitDuration_ = nullptr;
+    QComboBox *waitUnit_ = nullptr;
+    QLineEdit *scheduleMonth_ = nullptr, *scheduleDay_ = nullptr, *scheduleHour_ = nullptr, *scheduleMinute_ = nullptr;
+    std::vector<QCheckBox *> scheduleWeekdays_;
+    std::vector<QLabel *> weekdayLabels_;
+    void updateWeekdayLabels();
     TextPreview *prompt_ = nullptr, *schema_ = nullptr;
     TextPreview *shellCommand_ = nullptr;
     QWidget *rules_ = nullptr;

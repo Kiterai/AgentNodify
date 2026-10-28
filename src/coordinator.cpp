@@ -101,15 +101,16 @@ bool Coordinator::start(const Project &project, Runner *runner) {
     });
     connect(runner, &Runner::finished, this, [this, runner, session](bool ok, const QString &message) {
         session->active = false; session->success = ok; session->error = "target_failed";
-        bool terminal = false, failed = false;
+        bool terminal = false, hasEnd = false, failed = false;
         for (const auto &[id, node] : session->flow.nodes) {
+            hasEnd = hasEnd || node.kind == Kind::End;
             auto result = runner->results().find(id);
             if (result != runner->results().end() && result->second.state == State::Cancelled) session->error = "target_cancelled";
             if (result != runner->results().end() && result->second.state == State::Failed) failed = true;
             if (node.kind == Kind::End && result != runner->results().end() && result->second.state == State::Succeeded) { session->output = result->second.output; terminal = true; }
         }
         if (failed) session->error = "target_failed";
-        if (ok && !terminal) { session->success = false; session->error = "terminal_not_reached"; }
+        if (ok && hasEnd && !terminal) { session->success = false; session->error = "terminal_not_reached"; }
         auto waiters = std::move(session->waiters); session->waiters.clear(); detach(runner); callers_.erase(runner);
         for (const auto &waiter : waiters) if (waiter.caller) waiter.complete(session->output, session->success ? QString() : session->error);
         runner->disconnect(this);

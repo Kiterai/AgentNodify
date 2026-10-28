@@ -1,4 +1,6 @@
 #include "flow.h"
+#include "schedule.h"
+#include <QTimeZone>
 #include <nlohmann/json-schema.hpp>
 #include <QFile>
 #include <QFileInfo>
@@ -75,6 +77,8 @@ QString kindName(Kind k) {
     switch (k) {
     case Kind::Start: return QStringLiteral("始端");
     case Kind::End: return QStringLiteral("終端");
+    case Kind::Delay: return QStringLiteral("待機");
+    case Kind::Schedule: return QStringLiteral("スケジュール");
     case Kind::All: return QStringLiteral("All");
     case Kind::Any: return QStringLiteral("Any");
     case Kind::UserInput: return QStringLiteral("ユーザ入力");
@@ -88,13 +92,15 @@ QString kindName(Kind k) {
     }
 }
 QString kindKey(Kind k) {
-    switch(k) { case Kind::Start: return "start"; case Kind::End: return "end";
+    switch(k) { case Kind::Start: return "start"; case Kind::End: return "end"; case Kind::Delay: return "delay"; case Kind::Schedule: return "schedule";
     case Kind::All: return "all"; case Kind::Any: return "any"; case Kind::UserInput: return "user_input"; case Kind::Branch: return "branch"; case Kind::Script: return "script"; case Kind::Shell: return "shell";
     case Kind::ProjectCreate: return "project_create"; case Kind::FlowRun: return "flow_run"; case Kind::FlowWait: return "flow_wait"; default: return "agent"; }
 }
 Kind parseKind(const std::string &k) {
     if (k == "start") return Kind::Start;
     if (k == "end") return Kind::End;
+    if (k == "delay") return Kind::Delay;
+    if (k == "schedule") return Kind::Schedule;
     if (k == "and" || k == "all") return Kind::All;
     if (k == "any") return Kind::Any;
     if (k == "user_input") return Kind::UserInput;
@@ -119,7 +125,8 @@ Json Flow::toJson() const {
             {"x", n.position.x()}, {"y", n.position.y()}, {"agent", s(n.agent)}, {"model", s(n.model)}, {"effort", s(n.effort)},
             {"prompt", s(n.prompt)}, {"schema", s(n.schema)}, {"retainContext", n.retainContext}, {"inputs", n.inputs}, {"rules", rules},
             {"scriptLanguage", s(n.scriptLanguage)}, {"scriptPath", s(n.scriptPath)}, {"scriptDirectory", s(n.scriptDirectory)},
-            {"shellCommand", s(n.shellCommand)}, {"shellDirectory", s(n.shellDirectory)}, {"shellOutput", s(n.shellOutput)}, {"targetFlow", s(n.targetFlow)}, {"projectPath", s(n.projectPath)}, {"userChoices", choices}});
+            {"shellCommand", s(n.shellCommand)}, {"shellDirectory", s(n.shellDirectory)}, {"shellOutput", s(n.shellOutput)}, {"targetFlow", s(n.targetFlow)}, {"projectPath", s(n.projectPath)}, {"userChoices", choices},
+            {"waitDuration", n.waitDuration}, {"waitUnit", s(n.waitUnit)}, {"scheduleMonth", s(n.scheduleMonth)}, {"scheduleDay", s(n.scheduleDay)}, {"scheduleHour", s(n.scheduleHour)}, {"scheduleMinute", s(n.scheduleMinute)}, {"scheduleWeekdays", n.scheduleWeekdays}});
     }
     for (auto &e : edges) es.push_back({{"from", e.from}, {"to", e.to}, {"output", e.output}, {"input", e.input}});
     const auto next = qMax(nextNodeId, nodes.empty() ? quint64(1) : quint64(nodes.rbegin()->first) + 1);
@@ -140,6 +147,9 @@ Flow Flow::fromJson(const Json &j) {
         n.scriptLanguage = q(v.value("scriptLanguage", "python")); n.scriptPath = q(v.value("scriptPath", "")); n.scriptDirectory = q(v.value("scriptDirectory", ""));
         n.shellCommand = q(v.value("shellCommand", "")); n.shellDirectory = q(v.value("shellDirectory", ""));
         n.shellOutput = q(v.value("shellOutput", "json"));
+        n.waitDuration = v.value("waitDuration", 1.0); n.waitUnit = q(v.value("waitUnit", "seconds"));
+        n.scheduleMonth = q(v.value("scheduleMonth", "*")); n.scheduleDay = q(v.value("scheduleDay", "*")); n.scheduleHour = q(v.value("scheduleHour", "*")); n.scheduleMinute = q(v.value("scheduleMinute", "*"));
+        n.scheduleWeekdays = v.value("scheduleWeekdays", std::vector<int>{});
         n.targetFlow = q(v.value("targetFlow", "")); n.projectPath = q(v.value("projectPath", ""));
         if (v.contains("userChoices")) {
             if (!v.at("userChoices").is_array()) error("ユーザー選択肢は配列で指定してください");
@@ -153,11 +163,11 @@ Flow Flow::fromJson(const Json &j) {
     for (auto &e : j.at("edges")) f.edges.push_back({e.at("from"), e.at("to"), e.at("output"), e.at("input")});
     return f;
 }
-Flow Flow::initial() {
+Flow Flow::initial(bool withEnd) {
     Flow f;
     Node a; a.id = 1; a.kind = Kind::Start; a.title = kindName(a.kind); a.position = {0, 120};
     Node b; b.id = 2; b.kind = Kind::End; b.title = kindName(b.kind); b.position = {600, 120};
-    f.nodes.emplace(a.id, a); f.nodes.emplace(b.id, b); return f;
+    f.nodes.emplace(a.id, a); if (withEnd) f.nodes.emplace(b.id, b); return f;
 }
 void Flow::save(const QString &path) const {
     QSaveFile file(path);
@@ -254,7 +264,8 @@ Json schemaAt(const Json &schema, const QString &path) {
 QStringList Flow::validate() const {
     QStringList errors; int starts = 0, ends = 0;
     for (auto &[id, n] : nodes) { starts += n.kind == Kind::Start; ends += n.kind == Kind::End; }
-    if (starts != 1 || ends != 1) errors << "始端・終端ノードはそれぞれ1つ必要です";
+    if (starts != 1) errors << "始端ノードは1つ必要です";
+    if (ends > 1) errors << "終端ノードは0個または1個にしてください";
     std::map<std::pair<Id, unsigned>, unsigned> incoming;
     for (auto &e : edges) {
         if (!nodes.contains(e.from) || !nodes.contains(e.to)) { errors << "接続先ノードが存在しません"; continue; }
@@ -273,7 +284,7 @@ QStringList Flow::validate() const {
     for (auto &[id, n] : nodes) {
         const auto label = QString("[%1] ").arg(n.title.isEmpty() ? kindName(n.kind) : n.title);
         if (!reachable.contains(id)) errors << label + "始端から到達できません";
-        if (!terminal.contains(id)) errors << label + "終端に到達できません";
+        if (ends && !terminal.contains(id)) errors << label + "終端に到達できません";
         for (unsigned p = 0; p < inputCount(n); ++p) if (!incoming.contains({id, p})) errors << label + QString("入力%1が未接続です").arg(p);
         if ((n.kind == Kind::All || n.kind == Kind::Any) && (n.inputs == 0 || n.inputs > 256)) errors << label + "入力数は1〜256にしてください";
         if (n.kind == Kind::UserInput) {
@@ -290,6 +301,12 @@ QStringList Flow::validate() const {
         }
         if (n.kind == Kind::Shell && n.shellCommand.trimmed().isEmpty()) errors << label + "シェルコマンドが空です";
         if (n.kind == Kind::Shell && n.shellOutput != "json" && n.shellOutput != "text") errors << label + "シェルの出力形式が不正です";
+        if (n.kind == Kind::Delay || n.kind == Kind::Schedule) {
+            try {
+                if (n.kind == Kind::Delay) waitMilliseconds(n);
+                else Schedule(n).next(QDateTime(QDate(2000,1,1),QTime(0,0),QTimeZone::UTC));
+            } catch (const std::exception &error) { errors << label + QString::fromUtf8(error.what()); }
+        }
         if (n.kind == Kind::Script) {
             if (n.scriptLanguage != "python" && n.scriptLanguage != "javascript") errors << label + "スクリプト言語はPythonまたはJavaScriptを指定してください";
             if (n.scriptPath.trimmed().isEmpty()) errors << label + "スクリプトファイルのパスが空です";

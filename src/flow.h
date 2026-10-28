@@ -9,7 +9,7 @@
 namespace an {
 using Json = nlohmann::json;
 using Id = unsigned int;
-enum class Kind { Start, End, Agent, All, Branch, Script, Shell, ProjectCreate, FlowRun, FlowWait, Any, UserInput };
+enum class Kind { Start, End, Agent, All, Branch, Script, Shell, ProjectCreate, FlowRun, FlowWait, Any, UserInput, Delay, Schedule };
 bool isHostOperation(Kind kind);
 bool hasNodeName(Kind kind);
 QString kindName(Kind kind);
@@ -39,6 +39,10 @@ struct Node {
     QString shellOutput = "json";
     QString targetFlow, projectPath;
     QStringList userChoices = {QStringLiteral("OK")};
+    double waitDuration = 1;
+    QString waitUnit = "seconds";
+    QString scheduleMonth = "*", scheduleDay = "*", scheduleHour = "*", scheduleMinute = "*";
+    std::vector<int> scheduleWeekdays; // Qt weekday numbering: Monday=1, Sunday=7.
 };
 struct Edge {
     Id from, to;
@@ -55,7 +59,7 @@ struct Flow {
     unsigned outputCount(const Node &n) const;
     Json toJson() const;
     static Flow fromJson(const Json &json);
-    static Flow initial();
+    static Flow initial(bool withEnd = true);
     void save(const QString &path) const;
     static Flow load(const QString &path);
     QStringList validate() const;

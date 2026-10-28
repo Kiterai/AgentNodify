@@ -68,6 +68,7 @@ private:
     Coordinator *coordinator_;
     bool busy() const;
     void updateExecutionUi();
+    void updateTerminalButton();
     void syncCoordinatorRegistry();
     bool confirmStopProjects(const QStringList &ids);
     bool suppressRunWarnings_ = false;
@@ -145,6 +146,7 @@ private:
     bool confirmNodeDeletion(int count);
     void deleteEditorObjects(std::optional<Id> node = {});
     void editorOperation(const std::function<void()> &operation);
+    bool canPasteEditorObjects(bool fromClipboard);
     bool editorTarget(QWidget *widget) const;
     void reportError(const QString &message);
 };

@@ -1,5 +1,6 @@
 #pragma once
 #include "flow.h"
+#include <QElapsedTimer>
 #include <QObject>
 #include <QProcess>
 #include <QTemporaryDir>
@@ -58,7 +59,7 @@ struct UserInputRequest {
 class Runner : public QObject {
     Q_OBJECT
 public:
-    explicit Runner(QObject *parent = nullptr);
+    explicit Runner(QObject *parent = nullptr, std::function<QDateTime()> clock = {});
     ~Runner() override;
     bool start(const Flow &flow, const QString &directory, const AgentConfig &config, const QString &flowPath = {});
     void cancel();
@@ -99,15 +100,21 @@ private:
     std::set<Id> pendingHost_;
     struct PendingInput { UserInputRequest request; bool submitted = false; };
     std::map<Id, PendingInput> pendingInput_;
+    struct PendingWait { QTimer *timer = nullptr; Json input; QElapsedTimer elapsed; qint64 duration = 0; QDateTime target; };
+    std::map<Id, PendingWait> pendingWait_;
     bool active_ = false;
     bool pumping_ = false;
     bool pumpScheduled_ = false;
     bool startPending_ = false;
     quint64 generation_ = 0;
+    std::function<QDateTime()> clock_;
+    QDateTime now() const;
     void pump();
     void schedulePump();
     void complete(Id id, const Json &output, int selected = -1);
     void launch(Id id, const Json &input);
+    void launchWait(Id id, const Json &input);
+    void checkWait(Id id, quint64 generation);
     void processFinished(Id id, int code, QProcess::ExitStatus status);
     void fail(Id id, const QString &message);
     void stopJobs();

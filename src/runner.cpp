@@ -1,4 +1,5 @@
 #include "runner.h"
+#include "schedule.h"
 #include <QPointer>
 #include "cli.h"
 #include <QDir>
@@ -65,7 +66,8 @@ QString decodeAgentSessionId(const QString &agent, const QByteArray &data) {
     }
     return session;
 }
-Runner::Runner(QObject *parent) : QObject(parent) {}
+Runner::Runner(QObject *parent, std::function<QDateTime()> clock) : QObject(parent), clock_(std::move(clock)) {}
+QDateTime Runner::now() const { return clock_ ? clock_() : QDateTime::currentDateTime(); }
 Runner::~Runner() { active_ = false; stopJobs(); }
 bool Runner::start(const Flow &flow, const QString &directory, const AgentConfig &config, const QString &flowPath) {
     if (active_) return false;
@@ -126,6 +128,8 @@ void Runner::finishExecution(Id id) {
     execution.finishedAt = QDateTime::currentDateTimeUtc(); emit executionChanged(execution);
 }
 void Runner::stopJobs() {
+    for (auto &[id, wait] : pendingWait_) { wait.timer->stop(); wait.timer->disconnect(this); wait.timer->deleteLater(); }
+    pendingWait_.clear();
     auto pending = std::move(pendingInput_); pendingInput_.clear();
     for (const auto &[id, input] : pending) emit userInputClosed(input.request.id);
     agentSessions_.clear();
@@ -200,7 +204,7 @@ void Runner::pump() {
         progress = false;
         for (auto &[id, n] : flow_.nodes) {
             if (!active_ || budget == 0) break;
-            if (jobs_.contains(id) || pendingHost_.contains(id) || pendingInput_.contains(id)) continue; // Serial per node, FIFO while busy.
+            if (jobs_.contains(id) || pendingHost_.contains(id) || pendingInput_.contains(id) || pendingWait_.contains(id)) continue; // Serial per node, FIFO while busy.
             auto &inputs = tokens_.at(id);
             bool ready = n.kind == Kind::Start ? startPending_ : true;
             if (n.kind == Kind::Any) {
@@ -228,6 +232,7 @@ void Runner::pump() {
                 if (n.kind == Kind::Agent || n.kind == Kind::Script || n.kind == Kind::Shell) {
                     if (active_) launch(id, input);
                 }
+                else if (n.kind == Kind::Delay || n.kind == Kind::Schedule) launchWait(id, input);
                 else if (n.kind == Kind::UserInput) {
                     UserInputRequest request{QUuid::createUuid().toString(QUuid::WithoutBraces), id, input, n.userChoices};
                     pendingInput_[id] = {request, false}; emit userInputRequested(request);
@@ -261,7 +266,7 @@ void Runner::pump() {
     if (!active_) return;
     // Even a synchronous infinite loop must yield to cancellation / GUI events.
     if (budget == 0) { schedulePump(); return; }
-    if (!jobs_.empty() || !pendingHost_.empty() || !pendingInput_.empty()) return;
+    if (!jobs_.empty() || !pendingHost_.empty() || !pendingInput_.empty() || !pendingWait_.empty()) return;
     for (auto &[id, inputs] : tokens_) for (auto &queue : inputs) if (!queue.empty()) {
         fail(id, "実行が停止しました（Allの全入力が揃わず、発火可能なノードがありません）"); return;
     }
@@ -273,6 +278,34 @@ void Runner::pump() {
     for (auto &[id, r] : results_) if (r.executions == 0) { r.state = State::Skipped; emit changed(id); }
     active_ = false; agentSessions_.clear();
     emit finished(true, "フローの実行が完了しました（タスクの達成・ファイル作成結果は各ノードの出力を確認してください）");
+}
+void Runner::launchWait(Id id, const Json &input) {
+    const auto &node=flow_.nodes.at(id); PendingWait wait; wait.input=input;
+    QString message;
+    if(node.kind==Kind::Delay) {
+        wait.duration=waitMilliseconds(node); wait.elapsed.start();
+        message=QString("待機: %1 %2\n").arg(node.waitDuration).arg(node.waitUnit);
+    } else {
+        wait.target=Schedule(node).next(now());
+        message="次の予定: "+wait.target.toString(Qt::ISODateWithMs)+"\n";
+    }
+    wait.timer=new QTimer(this); wait.timer->setSingleShot(true); wait.timer->setTimerType(Qt::PreciseTimer);
+    const auto generation=generation_;
+    connect(wait.timer,&QTimer::timeout,this,[this,id,generation]{checkWait(id,generation);});
+    pendingWait_[id]=std::move(wait); appendLog(id,message.toUtf8());
+    if(active_ && pendingWait_.contains(id)) {
+        const auto &pending=pendingWait_.at(id);
+        const qint64 remaining=pending.target.isValid()?now().msecsTo(pending.target):pending.duration-pending.elapsed.elapsed();
+        pending.timer->start(int(qBound(qint64(0),remaining,qint64(60000))));
+    }
+}
+void Runner::checkWait(Id id, quint64 generation) {
+    if(!active_ || generation_!=generation || !pendingWait_.contains(id)) return;
+    auto &wait=pendingWait_.at(id);
+    const qint64 remaining=wait.target.isValid()?now().msecsTo(wait.target):wait.duration-wait.elapsed.elapsed();
+    if(remaining>0) { wait.timer->start(int(qMin(remaining,qint64(60000)))); return; }
+    const auto input=std::move(wait.input); wait.timer->deleteLater(); pendingWait_.erase(id);
+    complete(id,input); schedulePump();
 }
 void Runner::launch(Id id, const Json &input) {
     const auto &n = flow_.nodes.at(id);

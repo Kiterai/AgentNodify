@@ -20,6 +20,9 @@
 #include <QScrollBar>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QDoubleSpinBox>
+#include <QGridLayout>
+#include <algorithm>
 #include <QTextBlock>
 #include <QTextLayout>
 #include <QTimer>
@@ -66,6 +69,8 @@ QString nodeDescription(Kind kind) {
     switch (kind) {
     case Kind::Start: return "フローの処理を開始します。開始時に空のオブジェクト {} を1回出力します。";
     case Kind::End: return "フローの処理の終わりを表します。前段から受け取ったデータを最終出力にします。";
+    case Kind::Delay: return "指定した日・時間・分・秒だけ非同期で待機し、受け取ったデータをそのまま出力します。待機中も他ノードと画面操作は継続します。";
+    case Kind::Schedule: return "ローカル時刻で次に月・日・時・分・曜日の全条件が一致する分境界まで待機します。空欄／*は任意、カンマ区切りは複数値、*/nはnの倍数です。曜日のチェックなしは任意の曜日です。データはそのまま出力します。";
     case Kind::ProjectCreate: return "指定フローにプロジェクトを登録し、必要なディレクトリを作成します。出力はresult: success / failedとpathまたはreasonです。同じフロー・パスの重複は失敗します。相対パスは実行元プロジェクト基準で、${name}等を使用できます。";
     case Kind::FlowRun: return "指定フロー・プロジェクトを非同期に開始します。出力はresult: started / already / failedです。相対パスは実行元プロジェクト基準で、${name}等を使用できます。";
     case Kind::FlowWait: return "指定フロー・プロジェクトの実行終了を待ち、終端の入力を出力します。完了済みなら直ちに返します。未開始・失敗・中止・循環待機はエラーになります。相対パスは実行元プロジェクト基準で、${name}等を使用できます。";
@@ -135,12 +140,13 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
         QWidget#nodeForm QLabel { background: transparent; color:#b8c8df; }
         QWidget#nodeForm QCheckBox, QWidget#nodeForm QCheckBox:disabled { color:#e6edf8; spacing:6px; }
         QWidget#nodeForm QCheckBox::indicator { width:16px; height:16px; }
-        QWidget#nodeForm QLineEdit, QWidget#nodeForm QComboBox, QWidget#nodeForm QSpinBox,
+        QWidget#nodeForm QLineEdit, QWidget#nodeForm QComboBox, QWidget#nodeForm QSpinBox, QWidget#nodeForm QDoubleSpinBox,
         QWidget#nodeForm QPlainTextEdit { background:#17202e; color:#e6edf8; border:1px solid #46566e; border-radius:4px; padding:5px; selection-background-color:#3b5680; }
         QWidget#nodeForm QPushButton { background:#314159; color:#dce5f3; border:1px solid #4b5d79; border-radius:4px; padding:4px 8px; }
         QWidget#nodeForm QPushButton:hover { background:#455d7f; }
     )");
     if (node.kind == Kind::UserInput) setStyleSheet(styleSheet() + "QWidget#nodeForm, QWidget#nodeForm QLabel { color:#40242c; }");
+    if (node.kind == Kind::Delay || node.kind == Kind::Schedule) setStyleSheet(styleSheet() + "QWidget#nodeForm, QWidget#nodeForm QLabel { color:#173b5b; }");
     auto *layout = new QVBoxLayout(this); layout->setContentsMargins(8, 8, 8, 8); layout->setSpacing(6);
     auto *form = new QFormLayout; form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     parameterForm_ = form;
@@ -268,6 +274,33 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
         form->addRow("フロー", targetFlow_); form->addRow("プロジェクトパス", projectPath_); setFlowChoices({});
         connect(targetFlow_, &QComboBox::currentIndexChanged, this, [this] { if (!updating_) { node_.targetFlow = targetFlow_->currentData().toString(); publish(); } });
         connect(projectPath_, &QLineEdit::textEdited, this, [this](const QString &text) { node_.projectPath = text; publish(); });
+    } else if (node.kind == Kind::Delay) {
+        waitDuration_=new QDoubleSpinBox; waitDuration_->setObjectName("waitDuration"); waitDuration_->setRange(0,1000000); waitDuration_->setDecimals(3); waitDuration_->setValue(node.waitDuration);
+        waitUnit_=new QComboBox; waitUnit_->setObjectName("waitUnit"); styleComboBoxPopup(waitUnit_);
+        for (const auto &[label,value] : std::vector<std::pair<QString,QString>>{{"日","days"},{"時間","hours"},{"分","minutes"},{"秒","seconds"}}) waitUnit_->addItem(label,value);
+        if(waitUnit_->findData(node.waitUnit)<0) waitUnit_->addItem(node.waitUnit+"（未対応）",node.waitUnit);
+        waitUnit_->setCurrentIndex(waitUnit_->findData(node.waitUnit)); form->addRow("待機時間",waitDuration_); form->addRow("単位",waitUnit_);
+        connect(waitDuration_,&QDoubleSpinBox::valueChanged,this,[this](double value){if(!updating_ && !readOnly_) {node_.waitDuration=value;publish();}});
+        connect(waitUnit_,&QComboBox::currentIndexChanged,this,[this]{if(!updating_ && !readOnly_) {node_.waitUnit=waitUnit_->currentData().toString();publish();}});
+    } else if (node.kind == Kind::Schedule) {
+        auto addField=[this,form](const QString &label,const QString &name,const QString &value,int low,int high,QString Node::*field) {
+            auto *edit=new QLineEdit(value); edit->setObjectName(name); edit->setMinimumWidth(0); edit->setPlaceholderText("*（任意）");
+            edit->setToolTip(QString("%1〜%2。カンマ区切り、*／空欄、*/n（nの倍数）を指定できます。").arg(low).arg(high)); form->addRow(label,edit);
+            connect(edit,&QLineEdit::textEdited,this,[this,field](const QString &text){if(!updating_ && !readOnly_) {node_.*field=text;publish();}}); return edit;
+        };
+        scheduleMonth_=addField("月","scheduleMonth",node.scheduleMonth,1,12,&Node::scheduleMonth);
+        scheduleDay_=addField("日","scheduleDay",node.scheduleDay,1,31,&Node::scheduleDay);
+        scheduleHour_=addField("時","scheduleHour",node.scheduleHour,0,23,&Node::scheduleHour);
+        scheduleMinute_=addField("分","scheduleMinute",node.scheduleMinute,0,59,&Node::scheduleMinute);
+        auto *weekdays=new QWidget; weekdays->setObjectName("scheduleWeekdays"); auto *grid=new QGridLayout(weekdays); grid->setContentsMargins(0,0,0,0); grid->setSpacing(4);
+        const QStringList names={"月","火","水","木","金","土","日"};
+        for(int i=0;i<7;++i) {
+            auto *check=new NodeCheckBox(""); check->setObjectName(QString("scheduleWeekday%1").arg(i+1)); check->setAccessibleName(names[i]+"曜日"); check->setChecked(std::find(node.scheduleWeekdays.begin(),node.scheduleWeekdays.end(),i+1)!=node.scheduleWeekdays.end());
+            auto *label=new QLabel(names[i]); label->setObjectName(QString("scheduleWeekdayLabel%1").arg(i+1)); label->setAlignment(Qt::AlignCenter);
+            grid->addWidget(check,0,i,Qt::AlignCenter); grid->addWidget(label,1,i); scheduleWeekdays_.push_back(check); weekdayLabels_.push_back(label);
+            connect(check,&QCheckBox::toggled,this,[this]{if(updating_ || readOnly_)return;node_.scheduleWeekdays.clear();for(size_t day=0;day<scheduleWeekdays_.size();++day)if(scheduleWeekdays_[day]->isChecked())node_.scheduleWeekdays.push_back(int(day+1));updateWeekdayLabels();publish();});
+        }
+        form->addRow("曜日",weekdays); updateWeekdayLabels();
     } else if (node.kind == Kind::UserInput) {
         layout->addWidget(new QLabel("ユーザー選択肢"));
         choices_ = new QWidget; choices_->setObjectName("userChoices"); choicesLayout_ = new QVBoxLayout(choices_);
@@ -304,9 +337,9 @@ bool NodeForm::eventFilter(QObject *object, QEvent *event) {
     if (event->type() == QEvent::LayoutRequest || event->type() == QEvent::StyleChange || event->type() == QEvent::FontChange || event->type() == QEvent::Polish) scheduleResize();
     if (event->type() == QEvent::FocusIn || event->type() == QEvent::MouseButtonPress) emit activated();
     const bool preview = qobject_cast<TextPreview *>(object) || (prompt_ && object == prompt_->viewport()) || (schema_ && object == schema_->viewport()) || (shellCommand_ && object == shellCommand_->viewport());
-    const bool control = preview || qobject_cast<QLineEdit *>(object) || qobject_cast<QComboBox *>(object) || qobject_cast<QSpinBox *>(object) || qobject_cast<QAbstractButton *>(object);
+    const bool control = preview || qobject_cast<QLineEdit *>(object) || qobject_cast<QComboBox *>(object) || qobject_cast<QAbstractSpinBox *>(object) || qobject_cast<QAbstractButton *>(object);
     const bool editEvent = event->type() == QEvent::MouseButtonPress || event->type() == QEvent::KeyPress || event->type() == QEvent::InputMethod ||
-        (event->type() == QEvent::Wheel && (qobject_cast<QComboBox *>(object) || qobject_cast<QSpinBox *>(object)));
+        (event->type() == QEvent::Wheel && (qobject_cast<QComboBox *>(object) || qobject_cast<QAbstractSpinBox *>(object)));
     if (!readOnly_ && control && editEvent && beforeEdit && !beforeEdit()) return true;
     if (readOnly_ && !preview &&
         (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease ||
@@ -316,6 +349,7 @@ bool NodeForm::eventFilter(QObject *object, QEvent *event) {
 void NodeForm::setReadOnly(bool readOnly) {
     readOnly_ = readOnly;
     if (retainContext_) retainContext_->setEnabled(!readOnly);
+    for(auto *check:scheduleWeekdays_) check->setEnabled(!readOnly);
     if (addChoice_) addChoice_->setEnabled(!readOnly);
     if (choices_) for (auto *remove : choices_->findChildren<QPushButton *>("removeChoice")) remove->setEnabled(!readOnly && node_.userChoices.size() > 1);
     if (scriptFileBrowse_) scriptFileBrowse_->setEnabled(!readOnly);
@@ -374,6 +408,9 @@ void NodeForm::populateEfforts() {
     effort_->setCurrentIndex(effort_->findData(node_.effort));
 }
 void NodeForm::publish() { if (!updating_) { emit edited(); scheduleResize(); } }
+void NodeForm::updateWeekdayLabels() {
+    for(size_t i=0;i<weekdayLabels_.size();++i) weekdayLabels_[i]->setStyleSheet(scheduleWeekdays_[i]->isChecked()?"color:#173b5b;":"color:#75899c;");
+}
 void NodeForm::setNode(const Node &node) {
     const bool choicesChanged = node_.userChoices != node.userChoices;
     const bool modelChanged = node_.agent != node.agent || node_.model != node.model;
@@ -390,6 +427,11 @@ void NodeForm::setNode(const Node &node) {
     if (prompt_ && prompt_->toPlainText() != node.prompt) prompt_->setPlainText(node.prompt);
     if (schema_ && schema_->toPlainText() != node.schema) schema_->setPlainText(node.schema);
     if (inputs_) inputs_->setValue(int(node.inputs));
+    if(waitDuration_) waitDuration_->setValue(node.waitDuration);
+    if(waitUnit_) {if(waitUnit_->findData(node.waitUnit)<0)waitUnit_->addItem(node.waitUnit+"（未対応）",node.waitUnit);waitUnit_->setCurrentIndex(waitUnit_->findData(node.waitUnit));}
+    for(const auto &[edit,value]:std::vector<std::pair<QLineEdit *,QString>>{{scheduleMonth_,node.scheduleMonth},{scheduleDay_,node.scheduleDay},{scheduleHour_,node.scheduleHour},{scheduleMinute_,node.scheduleMinute}}) if(edit && edit->text()!=value)edit->setText(value);
+    for(size_t i=0;i<scheduleWeekdays_.size();++i)scheduleWeekdays_[i]->setChecked(std::find(node.scheduleWeekdays.begin(),node.scheduleWeekdays.end(),int(i+1))!=node.scheduleWeekdays.end());
+    updateWeekdayLabels();
     if (scriptLanguage_) {
         if (scriptLanguage_->findData(node.scriptLanguage) < 0) scriptLanguage_->addItem(node.scriptLanguage + "（未対応）", node.scriptLanguage);
         scriptLanguage_->setCurrentIndex(scriptLanguage_->findData(node.scriptLanguage));

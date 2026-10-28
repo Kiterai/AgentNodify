@@ -22,6 +22,7 @@
 #include <QSignalSpy>
 #include <QScrollBar>
 #include <QSpinBox>
+#include <QDoubleSpinBox>
 #include <QStandardPaths>
 #include <QToolButton>
 #include <QTextBlock>
@@ -227,8 +228,8 @@ void GuiTest::editorAndFlowRail() {
     auto *palette = window.findChild<QWidget *>("nodePalette"); QVERIFY(palette);
     QVERIFY(palette->findChildren<QLineEdit *>().isEmpty());
     for (auto *button : palette->findChildren<QPushButton *>()) QVERIFY(!button->text().contains("接続"));
-    QVERIFY(!palette->findChild<QPushButton *>("addNode_start")); QVERIFY(!palette->findChild<QPushButton *>("addNode_end"));
-    QCOMPARE(window.editGraph_->flow.nodes.size(), size_t(2)); QVERIFY(window.editGraph_->flow.nodes.at(1).kind == Kind::Start); QVERIFY(window.editGraph_->flow.nodes.at(2).kind == Kind::End);
+    QVERIFY(!palette->findChild<QPushButton *>("addNode_start")); QVERIFY(palette->findChild<QPushButton *>("addNode_end")); QVERIFY(palette->findChild<QPushButton *>("addNode_end")->isEnabled());
+    QCOMPARE(window.editGraph_->flow.nodes.size(), size_t(1)); QVERIFY(window.editGraph_->flow.nodes.at(1).kind == Kind::Start);
     for (auto kind : {Kind::Agent, Kind::Script, Kind::Shell, Kind::All, Kind::Any, Kind::Branch}) {
         auto *button = palette->findChild<QPushButton *>("addNode_" + kindKey(kind)); QVERIFY(button); QVERIFY(button->toolTip().contains(nodeDescription(kind))); QVERIFY(button->toolTip().contains(button->text()));
     }
@@ -309,7 +310,7 @@ void GuiTest::comboPopupColors() {
     connection.hidePopup();
 }
 void GuiTest::workSelection() {
-    Window window(true); window.show();
+    Window window(true); window.editGraph_->replace(Flow::initial()); window.changed(); window.show();
     auto id = window.editGraph_->addNode("agent");
     auto node = window.editGraph_->flow.nodes.at(id); node.title = "Work node"; node.effort = "medium";
     node.prompt = "line one\nline two"; window.editGraph_->updateNode(node);
@@ -368,6 +369,39 @@ void GuiTest::paletteWidthAndElision() {
     const auto before=window.editGraph_->flow.nodes.size(); QTest::mouseClick(button,Qt::LeftButton); QCOMPARE(window.editGraph_->flow.nodes.size(),before+1);
     QVERIFY(palette->grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-palette-elided.png")));
 }
+void GuiTest::optionalTerminalControls() {
+    Window window(true); window.show(); auto *add=window.findChild<QPushButton *>("addNode_end"); QVERIFY(add); QVERIFY(add->isEnabled()); QCOMPARE(window.editGraph_->flow.nodes.size(),size_t(1)); QVERIFY(window.editGraph_->flow.validate().isEmpty());
+    QTest::mouseClick(add,Qt::LeftButton); const auto id=window.selected_; QVERIFY(window.editGraph_->flow.nodes.at(id).kind==Kind::End); QVERIFY(!add->isEnabled()); QCOMPARE(window.editGraph_->addNode("end"),InvalidNodeId);
+    window.editScene_->clearSelection();window.editScene_->nodeGraphicsObject(id)->setSelected(true);for(auto *action:window.editView_->actions())if(action->shortcut()==QKeySequence(Qt::CTRL|Qt::Key_D))action->trigger();QCOMPARE(window.editGraph_->flow.nodes.size(),size_t(2));
+    auto answer=[&](QMessageBox::StandardButton button){QTimer::singleShot(0,&window,[button]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget());QVERIFY(box);box->button(button)->click();});};
+    window.editScene_->clearSelection(); window.editScene_->nodeGraphicsObject(id)->setSelected(true);
+    answer(QMessageBox::Cancel); window.editView_->deleteSelectionAction()->trigger(); QVERIFY(window.editGraph_->nodeExists(id)); QVERIFY(!add->isEnabled());
+    answer(QMessageBox::Ok); window.editView_->deleteSelectionAction()->trigger(); QVERIFY(!window.editGraph_->nodeExists(id)); QVERIFY(add->isEnabled());
+    window.stepHistory(false); QVERIFY(window.editGraph_->nodeExists(id)); QVERIFY(!add->isEnabled());
+    answer(QMessageBox::Ok); window.stepHistory(true); QVERIFY(add->isEnabled());
+    window.newFlow(); QCOMPARE(window.editGraph_->flow.nodes.size(),size_t(1)); QVERIFY(add->isEnabled());
+    window.editScene_->nodeGraphicsObject(1)->setSelected(true); window.editView_->deleteSelectionAction()->trigger(); QVERIFY(window.editGraph_->nodeExists(1));
+}
+void GuiTest::timingNodeForms() {
+    Window window(true); window.show(); QTest::mouseClick(window.findChild<QPushButton *>("addNode_delay"),Qt::LeftButton); const auto delay=window.selected_;
+    auto *form=window.editGraph_->form(delay); auto *duration=form->findChild<QDoubleSpinBox *>("waitDuration"); auto *unit=form->findChild<QComboBox *>("waitUnit"); QVERIFY(duration); QVERIFY(unit); QCOMPARE(unit->count(),4); QCOMPARE(unit->currentData().toString(),QString("seconds"));
+    duration->setValue(0.5); unit->setCurrentIndex(unit->findData("hours")); QCOMPARE(window.editGraph_->flow.nodes.at(delay).waitUnit,QString("hours")); window.stepHistory(false); QCOMPARE(unit->currentData().toString(),QString("seconds")); window.stepHistory(true); QCOMPARE(unit->currentData().toString(),QString("hours"));
+    QTest::mouseClick(window.findChild<QPushButton *>("addNode_schedule"),Qt::LeftButton); const auto schedule=window.selected_; auto *scheduled=window.editGraph_->form(schedule);
+    for(QString field:{"scheduleMonth","scheduleDay","scheduleHour","scheduleMinute"}){auto *edit=scheduled->findChild<QLineEdit *>(field); QVERIFY(edit); QCOMPARE(edit->text(),QString("*"));}
+    auto *month=scheduled->findChild<QLineEdit *>("scheduleMonth");month->setFocus();month->selectAll();QTest::keyClicks(month,"1,2"); QCOMPARE(window.editGraph_->flow.nodes.at(schedule).scheduleMonth,QString("1,2"));window.stepHistory(false);QCOMPARE(month->text(),QString("*"));window.stepHistory(true);
+    for(int day=1;day<=7;++day){auto *check=scheduled->findChild<QCheckBox *>(QString("scheduleWeekday%1").arg(day));auto *label=scheduled->findChild<QLabel *>(QString("scheduleWeekdayLabel%1").arg(day));QVERIFY(check);QVERIFY(label);QVERIFY(!check->isChecked());QVERIFY(label->styleSheet().contains("#75899c"));}
+    auto *monday=scheduled->findChild<QCheckBox *>("scheduleWeekday1");QTest::mouseClick(monday,Qt::LeftButton);QVERIFY(window.editGraph_->flow.nodes.at(schedule).scheduleWeekdays==std::vector<int>{1});QVERIFY(scheduled->findChild<QLabel *>("scheduleWeekdayLabel1")->styleSheet().contains("#173b5b"));
+    window.stepHistory(false);QVERIFY(!monday->isChecked());window.stepHistory(true);QVERIFY(monday->isChecked());
+    for(Id id:{delay,schedule}){NodeStyle style(QJsonObject::fromVariantMap(window.editGraph_->nodeData(id,NodeRole::Style).toMap()));QCOMPARE(style.GradientColor0,QColor("#9ac9f2"));}
+    window.workGraph_->replace(window.editGraph_->flow);auto *readonly=window.workGraph_->form(schedule)->findChild<QCheckBox *>("scheduleWeekday1");QVERIFY(readonly->isChecked());QVERIFY(!readonly->isEnabled());QTest::mouseClick(readonly,Qt::LeftButton);QVERIFY(readonly->isChecked());
+    window.editGraph_->setNodeData(1,NodeRole::Position,QPointF(-200,100));window.editGraph_->setNodeData(delay,NodeRole::Position,QPointF(0,0));window.editGraph_->setNodeData(schedule,NodeRole::Position,QPointF(500,0));
+    QCoreApplication::processEvents();QVERIFY(scheduled->findChild<QLabel *>("scheduleWeekdayLabel1")->y()>monday->y());static_cast<GraphView *>(window.editView_)->zoomToFit();QVERIFY(window.grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-timing-nodes.png")));
+}
+void GuiTest::endlessDelayInWindow() {
+    QTemporaryDir directory;Window window(true);window.show();auto flow=Flow::initial(false);Node delay;delay.id=3;delay.kind=Kind::Delay;delay.waitDuration=0.02;flow.nodes[3]=delay;flow.edges={{1,3},{3,3}};window.editGraph_->replace(flow);window.changed();
+    window.projects_.push_back({"Endless",directory.path(),window.documents_[0].path,{}});window.refreshProjects();window.tabs_->setCurrentIndex(1);QSignalSpy done(window.runner_,&Runner::finished);window.executeFlow();QTRY_VERIFY(window.runner_->results().at(3).executions>=2);QVERIFY(done.isEmpty());QVERIFY(window.stopButton_->isEnabled());
+    QTimer::singleShot(0,&window,[]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget());QVERIFY(box);box->button(QMessageBox::Ok)->click();});QTest::mouseClick(window.stopButton_,Qt::LeftButton);QTRY_COMPARE(done.count(),1);QVERIFY(!window.busy());
+}
 void GuiTest::editorUndoRedoParameters() {
     Window window(true); window.show(); QCoreApplication::processEvents();
     QTest::mouseClick(window.findChild<QPushButton *>("addNode_agent"),Qt::LeftButton); const auto id=window.selected_; const auto position=window.editGraph_->flow.nodes.at(id).position;
@@ -424,8 +458,8 @@ void GuiTest::editorUndoIsolationAndPorts() {
     window.stepHistory(false); QVERIFY(!window.editGraph_->connectionExists({1,0,4,0})); QCoreApplication::processEvents(); QCOMPARE(window.editScene_->undoStack().count(),0);
     window.newFlow(); auto other=window.documents_[1].undo; QTest::mouseClick(window.findChild<QPushButton *>("addNode_agent"),Qt::LeftButton); QCOMPARE(other->count(),1); window.selectFlow(0); QCOMPARE(window.documents_[0].undo,stack);
     window.stepHistory(false); QCOMPARE(window.editGraph_->flow.nodes.at(3).position,before); window.selectFlow(1); QCOMPARE(other->index(),1);
-    QTimer::singleShot(0,&window,[]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); box->button(QMessageBox::Ok)->click();}); window.stepHistory(false); QCOMPARE(window.editGraph_->flow.nodes.size(),size_t(2));
-    const auto next=window.editGraph_->addNode("agent"); QVERIFY(next>3); QVERIFY(!other->canRedo());
+    QTimer::singleShot(0,&window,[]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); box->button(QMessageBox::Ok)->click();}); window.stepHistory(false); QCOMPARE(window.editGraph_->flow.nodes.size(),size_t(1));
+    const auto next=window.editGraph_->addNode("agent"); QVERIFY(next>2); QVERIFY(!other->canRedo());
 }
 void GuiTest::flowRemoval() {
     Window window(true);
@@ -552,6 +586,7 @@ void GuiTest::comboPopupWheel() {
 }
 void GuiTest::nodeExecutionHistory() {
     QTemporaryDir directory; QVERIFY(directory.isValid()); Window window(true); window.show();
+    window.editGraph_->replace(Flow::initial()); window.changed();
     const auto agent = window.editGraph_->addNode("agent"), branch = window.editGraph_->addNode("branch");
     auto node = window.editGraph_->flow.nodes.at(agent); node.model = "fixture"; node.effort = "high"; node.prompt = "COUNT_TO_3";
     node.title = "ループの実行履歴"; node.retainContext = true; node.schema = R"({"type":"object","properties":{"count":{"type":"integer"}},"required":["count"]})";
@@ -700,6 +735,7 @@ void GuiTest::shellNodeForm() {
     auto restore = qScopeGuard([&] { QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, native); });
     QTemporaryDir directory; for (const auto &name : {"flows", "project", "chosen"}) QVERIFY(QDir(directory.path()).mkpath(name));
     Window window(true); window.resize(1400, 950); window.show();
+    window.editGraph_->replace(Flow::initial()); window.changed();
     auto *add = window.findChild<QPushButton *>("addNode_shell"); QVERIFY(add); QTest::mouseClick(add, Qt::LeftButton);
     const auto id = window.selected_; QVERIFY(window.editGraph_->flow.nodes.at(id).kind == Kind::Shell);
     auto *form = window.editGraph_->form(id); QVERIFY(form); auto *preview = form->findChild<TextPreview *>("shellCommandPreview"); QVERIFY(preview);
@@ -886,7 +922,7 @@ void GuiTest::nodePlacementFromLastInteraction() {
     view->zoomToNode(first); QCoreApplication::processEvents(); point=view->mapFromScene(item->mapToScene(QPointF(item->boundingRect().width()/2,12)));
     QTest::mousePress(view->viewport(),Qt::LeftButton,Qt::NoModifier,point); QTest::mouseMove(view->viewport(),point+QPoint(70,55),20); QTest::mouseRelease(view->viewport(),Qt::LeftButton,Qt::NoModifier,point+QPoint(70,55));
     const auto moved=window.editGraph_->flow.nodes.at(first).position; QVERIFY(moved!=firstPosition); const auto sixth=add(); QCOMPARE(window.editGraph_->flow.nodes.at(sixth).position,moved+QPointF(step,step));
-    const auto remembered=window.documents_[0].creationAnchor; window.newFlow(); const auto other=add(); QVERIFY(window.editGraph_->flow.nodes.at(other).position.x()>600); window.selectFlow(0);
+    const auto remembered=window.documents_[0].creationAnchor; window.newFlow(); const auto startRight=window.editScene_->nodeGraphicsObject(1)->sceneBoundingRect().right(); const auto other=add(); QVERIFY(window.editGraph_->flow.nodes.at(other).position.x()>startRight); window.selectFlow(0);
     const auto seventh=add(); QCOMPARE(window.editGraph_->flow.nodes.at(seventh).position,*remembered+QPointF(step,step));
 }
 void GuiTest::userInputControlEnter() {
@@ -1002,7 +1038,7 @@ void GuiTest::createdProjectStatusIcons() {
     window.coordinator_->cancelAll(); QVERIFY(!window.busy());
 }
 void GuiTest::userInputNodeForm() {
-    Window window(true); window.show(); auto *button = window.findChild<QPushButton *>("addNode_user_input"); QVERIFY(button); QTest::mouseClick(button,Qt::LeftButton);
+    Window window(true); window.editGraph_->replace(Flow::initial()); window.changed(); window.show(); auto *button = window.findChild<QPushButton *>("addNode_user_input"); QVERIFY(button); QTest::mouseClick(button,Qt::LeftButton);
     const auto id = window.selected_; auto *form = window.editGraph_->form(id); QVERIFY(window.editGraph_->flow.nodes.at(id).kind == Kind::UserInput);
     auto names = form->findChildren<QLineEdit *>("choiceName"); QCOMPARE(names.size(),1); QVERIFY(!form->findChild<QPushButton *>("removeChoice")->isEnabled());
     window.editGraph_->addConnection({1,0,id,0}); window.editGraph_->addConnection({id,0,2,0});
@@ -1132,6 +1168,7 @@ void GuiTest::agentContextSetting() {
 }
 void GuiTest::allAndAnyForms() {
     QTemporaryDir directory; Window window(true); window.show();
+    window.editGraph_->replace(Flow::initial()); window.changed();
     auto *all = window.findChild<QPushButton *>("addNode_all"), *any = window.findChild<QPushButton *>("addNode_any");
     QVERIFY(all); QVERIFY(any); QVERIFY(all->text().contains("All")); QVERIFY(any->text().contains("Any")); QVERIFY(!window.findChild<QPushButton *>("addNode_and"));
     QTest::mouseClick(any, Qt::LeftButton); const auto id = window.selected_; auto *form = window.editGraph_->form(id);
