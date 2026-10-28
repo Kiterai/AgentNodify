@@ -1,4 +1,6 @@
 #pragma once
+#include "strings.h"
+#include "nodeprocess.h"
 #include "flow.h"
 #include <QElapsedTimer>
 #include <QObject>
@@ -38,12 +40,12 @@ struct NodeExecution {
     bool retainContext = false, contextResumed = false;
 };
 struct AgentConfig {
-    QString codex = "codex";
-    QString claude = "claude";
+    QString codex = strings::CodexExecutable;
+    QString claude = strings::ClaudeExecutable;
 #ifdef Q_OS_WIN
-    QString opencode = "opencode-cli";
+    QString opencode = strings::OpenCodeWindowsExecutable;
 #else
-    QString opencode = "opencode";
+    QString opencode = strings::OpenCodeExecutable;
 #endif
     bool opencodeStandalone = false;
 };
@@ -78,15 +80,8 @@ signals:
     void userInputRequested(const an::UserInputRequest &request);
     void userInputClosed(QString requestId);
 private:
-    struct Job {
-        QProcess *process = nullptr;
-        QByteArray stdoutData, stderrData;
-        bool script = false;
-        bool shell = false;
-        QStringDecoder stdoutDecoder{QStringDecoder::Utf8}, stderrDecoder{QStringDecoder::Utf8};
-        QString finalPath;
-        std::unique_ptr<QTemporaryDir> temp;
-    };
+    friend struct NodeRegistry;
+    using Job = ProcessJob;
     Flow flow_;
     AgentConfig config_;
     QString directory_, flowDirectory_;
@@ -100,7 +95,6 @@ private:
     std::set<Id> pendingHost_;
     struct PendingInput { UserInputRequest request; bool submitted = false; };
     std::map<Id, PendingInput> pendingInput_;
-    struct PendingWait { QTimer *timer = nullptr; Json input; QElapsedTimer elapsed; qint64 duration = 0; QDateTime target; };
     std::map<Id, PendingWait> pendingWait_;
     bool active_ = false;
     bool pumping_ = false;
@@ -109,6 +103,18 @@ private:
     quint64 generation_ = 0;
     std::function<QDateTime()> clock_;
     QDateTime now() const;
+    void prepareAgent(Id, const Json &, ProcessJob &, ProcessLaunch &);
+    Json decodeAgent(Id, ProcessJob &, int);
+    void prepareScript(Id, const Json &, ProcessJob &, ProcessLaunch &);
+    Json decodeScript(Id, ProcessJob &, int);
+    void prepareShell(Id, const Json &, ProcessJob &, ProcessLaunch &);
+    Json decodeShell(Id, ProcessJob &, int);
+    void executeImmediate(Id, const Json &);
+    void executeUserInput(Id, const Json &);
+    void executeHost(Id, const Json &);
+    void executeBranch(Id, const Json &);
+    void planDelay(const Node &, PendingWait &, QString &);
+    void planSchedule(const Node &, PendingWait &, QString &);
     void pump();
     void schedulePump();
     void complete(Id id, const Json &output, int selected = -1);

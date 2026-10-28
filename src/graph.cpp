@@ -1,3 +1,6 @@
+#include "constants.h"
+#include "strings.h"
+#include "nodedefinition.h"
 #include "graph.h"
 #include "theme.h"
 #include <QtNodes/NodeStyle>
@@ -65,33 +68,7 @@ void Graph::updateNode(const Node &node, std::optional<unsigned> removedOutput) 
         return;
     }
     const auto &old = flow.nodes.at(node.id);
-    const auto oldOutputs = flow.outputCount(old), newOutputs = flow.outputCount(node);
-    std::vector<int> ports(oldOutputs, -1);
-    for (unsigned i = 0; i < qMin(oldOutputs, newOutputs); ++i) ports[i] = int(i);
-    if (old.kind == node.kind && (node.kind == Kind::Branch || node.kind == Kind::UserInput)) {
-        const unsigned oldCount = node.kind == Kind::Branch ? unsigned(old.rules.size()) : unsigned(old.userChoices.size());
-        const unsigned newCount = node.kind == Kind::Branch ? unsigned(node.rules.size()) : unsigned(node.userChoices.size());
-        for (unsigned i = 0; i < oldCount; ++i) ports[i] = i < newCount ? int(i) : -1;
-        if (newCount < oldCount) {
-            if (removedOutput && oldCount == newCount + 1 && *removedOutput < oldCount) {
-                // UI removals carry their exact index: duplicate names/rules
-                // must not make us disconnect a different, surviving choice.
-                for (unsigned i = 0; i < oldCount; ++i) ports[i] = i == *removedOutput ? -1 : int(i > *removedOutput ? i - 1 : i);
-            } else {
-                // Model updates may remove multiple entries in one operation.
-                // Match the surviving subsequence; fall back to index semantics
-                // when entries were also renamed/edited at the same time.
-                std::vector<int> matched(oldCount, -1); unsigned next = 0;
-                for (unsigned i = 0; i < oldCount && next < newCount; ++i) {
-                    const bool equal = node.kind == Kind::UserInput ? old.userChoices[i] == node.userChoices[next] :
-                        old.rules[i].variable == node.rules[next].variable && old.rules[i].value == node.rules[next].value && old.rules[i].equals == node.rules[next].equals;
-                    if (equal) matched[i] = int(next++);
-                }
-                if (next == newCount) for (unsigned i = 0; i < oldCount; ++i) ports[i] = matched[i];
-            }
-        }
-        if (node.kind == Kind::Branch) ports[oldCount] = int(newCount); // Else always stays else.
-    }
+    auto ports = remapNodeOutputs(old, node, removedOutput);
     std::vector<Edge> kept; std::vector<ConnectionId> removed, moved;
     for (const auto &edge : flow.edges) {
         auto updated = edge; bool drop = edge.to == node.id && edge.input >= flow.inputCount(node);
@@ -123,7 +100,7 @@ void Graph::setFlowChoices(const std::vector<std::pair<QString, QString>> &choic
 NodeForm *Graph::form(Id id) const {
     if (!nodeExists(id)) return nullptr;
     const auto &node = flow.nodes.at(id);
-    if (node.kind == Kind::Start || node.kind == Kind::End) return nullptr;
+    if (nodeDefinition(node.kind).source || nodeDefinition(node.kind).terminal) return nullptr;
     if (forms_[id]) return forms_[id];
     auto *self = const_cast<Graph *>(this);
     auto *widget = new NodeForm(node, nullptr, modelCatalog); forms_[id] = widget;
@@ -160,12 +137,12 @@ Id Graph::addNode(QString type) {
     if (!canEdit()) return InvalidNodeId;
     Kind kind;
     try { kind = parseKind(type.toStdString()); } catch (...) { return InvalidNodeId; }
-    if (kind == Kind::Start || kind == Kind::End)
+    if (nodeDefinition(kind).source || nodeDefinition(kind).terminal)
         for (auto &[id, n] : flow.nodes) if (n.kind == kind) return InvalidNodeId;
     Node n; n.id = newNodeId(); n.kind = kind; if (hasNodeName(kind)) n.title = kindName(kind);
     if (n.id == InvalidNodeId) return InvalidNodeId;
-    n.position = newNodePosition ? newNodePosition() : QPointF(double((n.id % 4) * 220), double((n.id / 4) * 160));
-    if (kind == Kind::Branch) n.rules.push_back({"result", "ok", true});
+    n.position = newNodePosition ? newNodePosition() : QPointF(double((n.id % metrics::NodeColumns) * metrics::NodeColumnStep), double((n.id / metrics::NodeColumns) * metrics::NodeRowStep));
+    nodeDefinition(kind).initialize(n);
     flow.nodes[n.id] = n; emit nodeCreated(n.id); emit edited(); return n.id;
 }
 bool Graph::connectionPossible(ConnectionId c) const {
@@ -183,14 +160,14 @@ QVariant Graph::nodeData(Id id, NodeRole role) const {
     switch(role) {
     case NodeRole::Type: return kindKey(n.kind);
     case NodeRole::Position: return n.position;
-    case NodeRole::Size: return sizes_.contains(id) ? sizes_.at(id) : QSize(180, 80);
-    case NodeRole::CaptionVisible: return n.kind != Kind::Start && n.kind != Kind::End;
+    case NodeRole::Size: return sizes_.contains(id) ? sizes_.at(id) : QSize(metrics::FallbackNodeWidth, metrics::FallbackNodeHeight);
+    case NodeRole::CaptionVisible: return !nodeDefinition(n.kind).source && !nodeDefinition(n.kind).terminal;
     case NodeRole::Caption: {
         QString title = kindName(n.kind);
         if (states.contains(id)) {
             auto state = states.at(id);
-            QString icon = state == State::Running ? QStringList{"◐", "◓", "◑", "◒"}.at(frame % 4) : state == State::Succeeded ? "✓" : state == State::Failed ? "!" : "·";
-            title = icon + " " + title + " [" + stateName(state) + "]";
+            QString icon = state == State::Running ? QStringList{strings::RunningFrameFirst, strings::RunningFrameSecond, strings::RunningFrameThird, strings::RunningFrameFourth}.at(frame % metrics::RunningAnimationFrames) : state == State::Succeeded ? strings::SuccessSymbol : state == State::Failed ? strings::WarningSymbol : strings::IdleSymbol;
+            title = icon + strings::Space + title + strings::StateOpeningBracket + stateName(state) + strings::ClosingBracket;
         }
         return title;
     }
@@ -201,14 +178,14 @@ QVariant Graph::nodeData(Id id, NodeRole role) const {
         NodeStyle style;
         QColor accent = nodeAccent(n.kind);
         if (states.contains(id)) {
-            if (states.at(id) == State::Running) accent = QColor("#e5bb68");
-            if (states.at(id) == State::Failed) accent = QColor("#ff7c85");
-            if (states.at(id) == State::Succeeded) accent = QColor("#72ddaa");
+            if (states.at(id) == State::Running) accent = QColor(colors::RunningBoundary);
+            if (states.at(id) == State::Failed) accent = QColor(colors::FailedBoundary);
+            if (states.at(id) == State::Succeeded) accent = QColor(colors::SucceededBoundary);
         }
-        style.NormalBoundaryColor = accent; style.SelectedBoundaryColor = QColor("#ffffff");
+        style.NormalBoundaryColor = accent; style.SelectedBoundaryColor = QColor(colors::White);
         style.GradientColor0 = style.GradientColor1 = style.GradientColor2 = style.GradientColor3 = nodeBackground(n.kind);
-        style.FontColor = nodeForeground(n.kind); style.FontColorFaded = hasSpecialNodeBackground(n.kind) ? nodeForeground(n.kind) : QColor("#9caec7");
-        if (n.kind == Kind::Start || n.kind == Kind::End) {
+        style.FontColor = nodeForeground(n.kind); style.FontColorFaded = hasSpecialNodeBackground(n.kind) ? nodeForeground(n.kind) : QColor(colors::MutedText);
+        if (nodeDefinition(n.kind).source || nodeDefinition(n.kind).terminal) {
             accent = nodeAccent(n.kind); style.NormalBoundaryColor = accent;
         }
         style.ConnectionPointColor = accent; style.FilledConnectionPointColor = accent;
@@ -217,8 +194,8 @@ QVariant Graph::nodeData(Id id, NodeRole role) const {
             // Native scene selection may disappear on a background/focus click.
             style.SelectedBoundaryColor = style.NormalBoundaryColor;
             if (id == highlightedNode_) {
-                style.NormalBoundaryColor = style.SelectedBoundaryColor = QColor("#ffffff");
-                style.PenWidth = style.HoveredPenWidth = 4.0f;
+                style.NormalBoundaryColor = style.SelectedBoundaryColor = QColor(colors::White);
+                style.PenWidth = style.HoveredPenWidth = metrics::HighlightBoundaryWidth;
             }
         }
         return style.toJson().toVariantMap();
@@ -236,16 +213,12 @@ bool Graph::setNodeData(Id id, NodeRole role, QVariant value) {
     return false;
 }
 QVariant Graph::portData(Id id, PortType type, unsigned index, PortRole role) const {
-    if (role == PortRole::DataType) return QVariant::fromValue(NodeDataType{"json", "JSON / text"});
+    if (role == PortRole::DataType) return QVariant::fromValue(NodeDataType{strings::JsonFormat, strings::JSONText});
     if (role == PortRole::ConnectionPolicyRole) return QVariant::fromValue(ConnectionPolicy::Many);
     if (role == PortRole::CaptionVisible) return true;
     if (role == PortRole::Caption) {
         auto &n = flow.nodes.at(id);
-        if (n.kind == Kind::Start || n.kind == Kind::End) return kindName(n.kind);
-        if (type == PortType::In) return (n.kind == Kind::All || n.kind == Kind::Any) ? QString("入力 %1").arg(index) : QString("入力");
-        if (n.kind == Kind::Branch) return index == n.rules.size() ? QString("それ以外") : QString("条件%1").arg(index + 1);
-        if (n.kind == Kind::UserInput) return n.userChoices.value(qsizetype(index));
-        return QString("出力");
+        return nodeDefinition(n.kind).portCaption(n, type == PortType::In, index);
     }
     return {};
 }
@@ -254,7 +227,7 @@ bool Graph::deleteConnection(ConnectionId c) {
     std::erase(flow.edges, edge(c)); emit connectionDeleted(c); emit edited(); return true;
 }
 bool Graph::deleteNode(Id id) {
-    if (!canEdit() || !nodeExists(id) || flow.nodes.at(id).kind == Kind::Start) return false;
+    if (!canEdit() || !nodeExists(id) || nodeDefinition(flow.nodes.at(id).kind).source) return false;
     auto cs = allConnectionIds(id);
     std::erase_if(flow.edges, [id](const Edge &item) { return item.from == id || item.to == id; });
     for (auto c : cs) emit connectionDeleted(c);
@@ -264,16 +237,16 @@ bool Graph::deleteNode(Id id) {
 QJsonObject Graph::saveNode(Id id) const {
     Flow f; f.nodes[id] = flow.nodes.at(id);
     auto obj = QJsonDocument::fromJson(QByteArray::fromStdString(f.toJson().dump())).object();
-    return {{"id", int(id)}, {"payload", obj}};
+    return {{strings::Id, int(id)}, {strings::Payload, obj}};
 }
 void Graph::loadNode(const QJsonObject &obj) {
-    if (!canEdit() || !obj.contains("payload")) return;
+    if (!canEdit() || !obj.contains(strings::Payload)) return;
     try {
-        auto f = Flow::fromJson(Json::parse(QJsonDocument(obj["payload"].toObject()).toJson().toStdString()));
-        auto n = f.nodes.begin()->second; n.id = Id(obj["id"].toInt());
+        auto f = Flow::fromJson(Json::parse(QJsonDocument(obj[strings::Payload].toObject()).toJson().toStdString()));
+        auto n = f.nodes.begin()->second; n.id = Id(obj[strings::Id].toInt());
         if (nodeExists(n.id)) return;
-        if (n.kind == Kind::Start) return;
-        if (n.kind == Kind::End) for(const auto &[id,node]:flow.nodes) if(node.kind==Kind::End)return;
+        if (nodeDefinition(n.kind).source) return;
+        if (nodeDefinition(n.kind).terminal) for(const auto &[id,node]:flow.nodes) if(nodeDefinition(node.kind).terminal)return;
         flow.nodes[n.id] = n; flow.nextNodeId = qMax(flow.nextNodeId, quint64(n.id) + 1); emit nodeCreated(n.id); emit edited();
     } catch (...) {}
 }

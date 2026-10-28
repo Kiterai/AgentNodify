@@ -1,3 +1,5 @@
+#include "constants.h"
+#include "strings.h"
 #include "progressview.h"
 #include <QAbstractTextDocumentLayout>
 #include <QHeaderView>
@@ -19,39 +21,39 @@
 
 namespace an {
 namespace {
-const QColor codeBackground("#273449");
+const QColor codeBackground(colors::CodeBackground);
 QString shortString(const QString &text) {
     qsizetype characters = 0, end = 0;
     for (qsizetype i = 0; i < text.size(); ++i) {
         if (text[i].isHighSurrogate() && i + 1 < text.size() && text[i + 1].isLowSurrogate()) ++i;
-        if (++characters == 500) end = i + 1;
+        if (++characters == limits::JsonStringCharacters) end = i + 1;
     }
-    if (characters <= 500) return text;
-    return text.left(end) + QString("...以下 %1文字").arg(characters - 500);
+    if (characters <= limits::JsonStringCharacters) return text;
+    return text.left(end) + QString(strings::TruncatedStringSuffix).arg(characters - limits::JsonStringCharacters);
 }
 QString summary(const Json &value) {
-    if (value.is_object()) return QString("{%1項目}").arg(value.size());
-    if (value.is_array()) return QString("[%1件]").arg(value.size());
+    if (value.is_object()) return QString(strings::ObjectSummary).arg(value.size());
+    if (value.is_array()) return QString(strings::ArraySummary).arg(value.size());
     if (value.is_string()) return QString::fromStdString(Json(shortString(QString::fromStdString(value.get<std::string>())).toStdString()).dump());
     return QString::fromStdString(value.dump());
 }
 void addTree(QTreeWidgetItem *parent, const QString &name, const Json &value, const QString &path, int depth, int &remaining) {
     if (remaining-- <= 0) return;
-    auto *item = new QTreeWidgetItem(parent, {name.isEmpty() ? summary(value) : name + ": " + summary(value)}); item->setData(0, Qt::UserRole, path);
+    auto *item = new QTreeWidgetItem(parent, {name.isEmpty() ? summary(value) : name + strings::ColonSpace + summary(value)}); item->setData(0, Qt::UserRole, path);
     if (!value.is_structured()) return;
-    if (depth >= 32 || remaining <= 0) { new QTreeWidgetItem(item, {"...表示上限"}); return; }
+    if (depth >= limits::JsonTreeDepth || remaining <= 0) { new QTreeWidgetItem(item, {strings::DisplayLimitNotice}); return; }
     if (value.is_array()) {
-        const auto count = qMin(size_t(8), value.size());
+        const auto count = qMin(size_t(limits::JsonArrayItems), value.size());
         size_t shown = 0;
-        for (; shown < count && remaining > 0; ++shown) addTree(item, QString("[%1]").arg(shown), value[shown], path + "/" + QString::number(shown), depth + 1, remaining);
-        if (shown < count) new QTreeWidgetItem(item, {"...表示上限"});
-        if (value.size() > count) new QTreeWidgetItem(item, {QString("...他 %1件の項目").arg(value.size() - count)});
+        for (; shown < count && remaining > 0; ++shown) addTree(item, QString(strings::ArrayIndexLabel).arg(shown), value[shown], path + strings::Slash + QString::number(shown), depth + 1, remaining);
+        if (shown < count) new QTreeWidgetItem(item, {strings::DisplayLimitNotice});
+        if (value.size() > count) new QTreeWidgetItem(item, {QString(strings::TruncatedItemsSuffix).arg(value.size() - count)});
     } else {
         for (auto it = value.begin(); it != value.end() && remaining > 0; ++it) {
-            const auto key = QString::fromStdString(it.key()); auto escaped = key; escaped.replace("~", "~0").replace("/", "~1");
-            addTree(item, key, it.value(), path + "/" + escaped, depth + 1, remaining);
+            const auto key = QString::fromStdString(it.key()); auto escaped = key; escaped.replace(strings::JsonPointerEscape, strings::JsonPointerEscapedTilde).replace(strings::Slash, strings::JsonPointerEscapedSlash);
+            addTree(item, key, it.value(), path + strings::Slash + escaped, depth + 1, remaining);
         }
-        if (remaining <= 0) new QTreeWidgetItem(item, {"...表示上限"});
+        if (remaining <= 0) new QTreeWidgetItem(item, {strings::DisplayLimitNotice});
     }
 }
 class Browser : public QTextBrowser {
@@ -66,14 +68,14 @@ public:
         QScopedValueRollback<bool> guard(resizing_, true);
         if (lineLimit_ > 0) {
             const int wanted = qMax(1, int(std::ceil(document()->documentLayout()->documentSize().height())) + 2 * frameWidth());
-            const int cap = int(std::ceil(fontMetrics().lineSpacing() * 1.15)) * lineLimit_;
+            const int cap = int(std::ceil(fontMetrics().lineSpacing() * metrics::MarkdownLineHeight)) * lineLimit_;
             setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
             if (height() != qMin(wanted, cap)) setFixedHeight(qMin(wanted, cap));
             return;
         }
-        const int wanted = int(std::ceil(document()->documentLayout()->documentSize().height())) + 2 * frameWidth() + 12;
-        setVerticalScrollBarPolicy(!markdown_ && wanted > 420 ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);
-        const auto height = markdown_ ? qMax(32, wanted) : qBound(32, wanted, 420);
+        const int wanted = int(std::ceil(document()->documentLayout()->documentSize().height())) + 2 * frameWidth() + metrics::ContentBottomPadding;
+        setVerticalScrollBarPolicy(!markdown_ && wanted > metrics::ContentMaximumHeight ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);
+        const auto height = markdown_ ? qMax(metrics::ContentMinimumHeight, wanted) : qBound(metrics::ContentMinimumHeight, wanted, metrics::ContentMaximumHeight);
         if (this->height() != height) setFixedHeight(height);
     }
     void setLineLimit(int lines) { lineLimit_ = qMax(1, lines); document()->setDocumentMargin(0); resizeContent(); }
@@ -81,12 +83,12 @@ public:
         markdown_ = true;
         for (auto block = document()->begin(); block.isValid(); block = block.next()) {
             auto format = block.blockFormat();
-            format.setLineHeight(115, QTextBlockFormat::ProportionalHeight);
+            format.setLineHeight(metrics::MarkdownLineHeightPercent, QTextBlockFormat::ProportionalHeight);
             if (isCode(block)) {
                 format.setBackground(Qt::NoBrush);
-                format.setLeftMargin(6); format.setRightMargin(6);
-                format.setTopMargin(isCode(block.previous()) ? 0 : 14);
-                format.setBottomMargin(isCode(block.next()) ? 0 : 14);
+                format.setLeftMargin(metrics::CodeBlockHorizontalMargin); format.setRightMargin(metrics::CodeBlockHorizontalMargin);
+                format.setTopMargin(isCode(block.previous()) ? 0 : metrics::CodeBlockVerticalMargin);
+                format.setBottomMargin(isCode(block.next()) ? 0 : metrics::CodeBlockVerticalMargin);
             }
             QTextCursor cursor(block); cursor.setBlockFormat(format);
         }
@@ -106,8 +108,8 @@ protected:
                 while (isCode(block.next())) { block = block.next(); rect = rect.united(document()->documentLayout()->blockBoundingRect(block)); }
                 const qreal margin = document()->documentMargin();
                 rect.setLeft(margin); rect.setRight(document()->size().width() - margin);
-                rect.adjust(0, -10, 0, 10); rect.translate(offset);
-                if (rect.intersects(viewport()->rect())) painter.drawRoundedRect(rect, 6, 6);
+                rect.adjust(0, -metrics::CodeBlockBackgroundPadding, 0, metrics::CodeBlockBackgroundPadding); rect.translate(offset);
+                if (rect.intersects(viewport()->rect())) painter.drawRoundedRect(rect, metrics::CodeBlockRadius, metrics::CodeBlockRadius);
             }
         }
         QTextBrowser::paintEvent(event);
@@ -131,8 +133,8 @@ private:
                 if (from >= to) continue;
                 const auto left = line.cursorToX(from), right = line.cursorToX(to);
                 QRectF rect(origin.x() + qMin(left, right), origin.y() + line.y(), qAbs(right - left), line.height());
-                rect.adjust(-3, -2, 3, 2);
-                painter.drawRoundedRect(rect, 3, 3);
+                rect.adjust(-metrics::InlineCodeHorizontalPadding, -metrics::InlineCodeVerticalPadding, metrics::InlineCodeHorizontalPadding, metrics::InlineCodeVerticalPadding);
+                painter.drawRoundedRect(rect, metrics::InlineCodeRadius, metrics::InlineCodeRadius);
             }
         }
     }
@@ -146,7 +148,7 @@ class Tree : public QTreeWidget {
 public:
     explicit Tree(QWidget *parent) : QTreeWidget(parent) {
         setHeaderHidden(true); setColumnCount(1); setUniformRowHeights(true); setTextElideMode(Qt::ElideNone);
-        setIndentation(12);
+        setIndentation(metrics::TreeIndentation);
         header()->setSectionResizeMode(QHeaderView::ResizeToContents); header()->setStretchLastSection(false);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         connect(this, &QTreeWidget::itemExpanded, this, [this] { resizeContent(); });
@@ -163,7 +165,7 @@ public:
         const int rowHeight = qMax(1, sizeHintForRow(0));
         const int scrollbar = horizontalScrollBar()->maximum() > 0 ? horizontalScrollBar()->sizeHint().height() : 0;
         const int wanted = qMax(1, rows) * rowHeight + 2 * frameWidth() + scrollbar;
-        const int cap = lineLimit_ > 0 ? rowHeight * lineLimit_ + 2 * frameWidth() + scrollbar : 360;
+        const int cap = lineLimit_ > 0 ? rowHeight * lineLimit_ + 2 * frameWidth() + scrollbar : metrics::TreeMaximumHeight;
         if (height() != qMin(wanted, cap)) setFixedHeight(qMin(wanted, cap));
     }
     void setLineLimit(int lines) { lineLimit_ = qMax(1, lines); resizeContent(); }
@@ -178,25 +180,25 @@ private:
 class DisclosureButton : public QToolButton {
 public:
     DisclosureButton() { setAttribute(Qt::WA_Hover); }
-    QSize sizeHint() const override { return {fontMetrics().horizontalAdvance(text()) + 24, qMax(16, fontMetrics().height()) + 4}; }
+    QSize sizeHint() const override { return {fontMetrics().horizontalAdvance(text()) + metrics::DisclosureTextPadding, qMax(metrics::DisclosureMinimumHeight, fontMetrics().height()) + metrics::DisclosureVerticalPadding}; }
     QSize minimumSizeHint() const override { return sizeHint(); }
 protected:
     void paintEvent(QPaintEvent *) override {
         QPainter painter(this); QStyleOptionToolButton option; initStyleOption(&option);
-        if (isEnabled() && ((option.state & QStyle::State_MouseOver) || property("rowHovered").toBool())) {
-            option.palette.setColor(QPalette::ButtonText, QColor("#ffffff"));
-            option.palette.setColor(QPalette::WindowText, QColor("#ffffff"));
+        if (isEnabled() && ((option.state & QStyle::State_MouseOver) || property(strings::RowHovered).toBool())) {
+            option.palette.setColor(QPalette::ButtonText, QColor(colors::White));
+            option.palette.setColor(QPalette::WindowText, QColor(colors::White));
         }
-        const QRect textRect(2, 0, width() - 24, height());
+        const QRect textRect(2, 0, width() - metrics::DisclosureTextPadding, height());
         style()->drawItemText(&painter, textRect, Qt::AlignLeft | Qt::AlignVCenter, option.palette, isEnabled(), text(), QPalette::ButtonText);
-        option.rect = QRect(width() - 20, (height() - 10) / 2, 12, 12);
+        option.rect = QRect(width() - metrics::DisclosureIconOffset, (height() - metrics::DisclosureIconCenteringHeight) / 2, metrics::DisclosureIconExtent, metrics::DisclosureIconExtent);
         style()->drawPrimitive(arrowType() == Qt::DownArrow ? QStyle::PE_IndicatorArrowDown : QStyle::PE_IndicatorArrowRight, &option, &painter, this);
     }
 };
 class ToggleRow : public QWidget {
 public:
     void setToggle(QToolButton *toggle) {
-        if (toggle_ && toggle_ != toggle) { toggle_->setProperty("rowHovered", false); toggle_->update(); }
+        if (toggle_ && toggle_ != toggle) { toggle_->setProperty(strings::RowHovered, false); toggle_->update(); }
         toggle_ = toggle; setCursor(toggle ? Qt::PointingHandCursor : Qt::ArrowCursor); updateHover();
     }
 protected:
@@ -219,23 +221,23 @@ private:
     bool pressed_ = false;
     bool hovered_ = false;
     void updateHover() {
-        if (toggle_) { toggle_->setProperty("rowHovered", hovered_); toggle_->update(); }
+        if (toggle_) { toggle_->setProperty(strings::RowHovered, hovered_); toggle_->update(); }
     }
 };
 void setProgressStatus(QLabel *label, const QString &status) {
     label->setText(progressStatus(status));
-    label->setStyleSheet("color:" + QString(status == "succeeded" ? "#79d99b" : status == "failed" ? "#ff8585" : "#dce5f3") + ";");
+    label->setStyleSheet(strings::Color + QString(status == strings::SucceededValue ? colors::SuccessText : status == strings::Failed ? colors::FailureText : colors::Text) + strings::CssTerminator);
 }
 class CommandPreview : public QLabel {
 public:
     CommandPreview() {
-        setObjectName("commandPreview"); setTextFormat(Qt::PlainText);
+        setObjectName(strings::CommandPreview); setTextFormat(Qt::PlainText);
         setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred); setMinimumWidth(0);
-        setStyleSheet("color:#aeb7c4;");
+        setStyleSheet(strings::SecondaryTextStyle);
     }
     void setCommand(const QString &command) {
         line_ = command;
-        for (const auto ch : {QChar('\n'), QChar('\r'), QChar('\t'), QChar(0x2028), QChar(0x2029)}) line_.replace(ch, ' ');
+        for (const auto ch : {QChar('\n'), QChar('\r'), QChar('\t'), QChar(strings::LineSeparator), QChar(strings::ParagraphSeparator)}) line_.replace(ch, ' ');
         setMaximumWidth(fontMetrics().horizontalAdvance(line_));
         updateText();
     }
@@ -246,7 +248,7 @@ private:
     void updateText() {
         const auto fm = fontMetrics();
         if (fm.horizontalAdvance(line_) <= width()) { setText(line_); return; }
-        const QString dots = "...";
+        const QString dots = strings::Ellipsis;
         const int available = qMax(0, width() - fm.horizontalAdvance(dots));
         qsizetype low = 0, high = line_.size();
         while (low < high) {
@@ -261,9 +263,9 @@ class Detail : public QWidget {
 public:
     Detail(const QString &title, const QString &name, QWidget *parent, QLabel *heading = nullptr) : QWidget(parent) {
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
-        auto *layout = new QVBoxLayout(this); layout->setContentsMargins(0, 0, 0, 0); layout->setSpacing(4);
-        if (heading) { headerRow_ = new ToggleRow; headerRow_->setObjectName("fallbackHeader"); }
-        auto *header = new QHBoxLayout(headerRow_); header->setContentsMargins(0, 0, 0, 0); header->setSpacing(8);
+        auto *layout = new QVBoxLayout(this); layout->setContentsMargins(0, 0, 0, 0); layout->setSpacing(metrics::SpaceSmall);
+        if (heading) { headerRow_ = new ToggleRow; headerRow_->setObjectName(strings::FallbackHeader); }
+        auto *header = new QHBoxLayout(headerRow_); header->setContentsMargins(0, 0, 0, 0); header->setSpacing(limits::JsonArrayItems);
         if (heading) { heading->setWordWrap(false); header->addWidget(heading); }
         toggle_ = new DisclosureButton; toggle_->setText(title); toggle_->setObjectName(name);
         toggle_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon); toggle_->setArrowType(Qt::RightArrow);
@@ -273,13 +275,13 @@ public:
         connect(toggle_, &QToolButton::toggled, this, [this](bool expanded) {
             toggle_->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
             if (expanded && !content_) { content_ = new ContentView(this); this->layout()->addWidget(content_); }
-            if (content_) { if (expanded) content_->setValue(available_ ? value_ : Json("未取得"), false); content_->setVisible(expanded); }
+            if (content_) { if (expanded) content_->setValue(available_ ? value_ : Json(strings::CatalogNotLoaded), false); content_->setVisible(expanded); }
         });
     }
     void setValue(const Json &value, bool available) {
         value_ = value; available_ = available;
         if (headerRow_) headerRow_->setToggle(available ? toggle_ : nullptr);
-        if (content_ && toggle_->isChecked()) content_->setValue(available ? value : Json("未取得"), false);
+        if (content_ && toggle_->isChecked()) content_->setValue(available ? value : Json(strings::CatalogNotLoaded), false);
     }
 private:
     QToolButton *toggle_;
@@ -290,17 +292,17 @@ private:
 };
 }
 ContentView::ContentView(QWidget *parent) : QWidget(parent) {
-    setObjectName("contentView");
-    setStyleSheet("QWidget#contentView { background:transparent; color:#dce5f3; } QTextBrowser, QTreeWidget { background:#121925; color:#dce5f3; border:1px solid #354259; padding:4px; selection-background-color:#3b5680; selection-color:white; } QWidget#progressCard QTextBrowser, QWidget#progressCard QTreeWidget { background:transparent; border:0; padding:0; } QTreeWidget::item:selected { background:#3b5680; color:white; }");
+    setObjectName(strings::ContentView);
+    setStyleSheet(strings::ContentViewStyle);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed); setMinimumWidth(0);
     auto *layout = new QVBoxLayout(this); layout->setContentsMargins(0, 0, 0, 0);
-    browser_ = new Browser(this); browser_->setObjectName("markdownContent"); layout->addWidget(browser_);
-    tree_ = new Tree(this); tree_->setObjectName("jsonContent"); layout->addWidget(tree_); tree_->hide();
+    browser_ = new Browser(this); browser_->setObjectName(strings::MarkdownContent); layout->addWidget(browser_);
+    tree_ = new Tree(this); tree_->setObjectName(strings::JsonContent); layout->addWidget(tree_); tree_->hide();
     setFocusProxy(browser_);
 }
 void ContentView::setPlainText(const QString &text) { setValue(Json(text.toStdString())); }
 void ContentView::setCompactMessage(int maxLines) {
-    setStyleSheet("QWidget#userInputMessage, QTextBrowser, QTreeWidget { background:transparent; color:#dce5f3; border:0; padding:0; } QTreeWidget::item:selected { background:#3b5680; color:white; }");
+    setStyleSheet(strings::UserInputMessageStyle);
     browser_->setFrameShape(QFrame::NoFrame); tree_->setFrameShape(QFrame::NoFrame);
     static_cast<Browser *>(browser_)->setLineLimit(maxLines); static_cast<Tree *>(tree_)->setLineLimit(maxLines);
 }
@@ -317,8 +319,8 @@ void ContentView::setValue(const Json &value, bool markdown, bool forceJson) {
         };
         for (int i = 0; i < tree_->topLevelItemCount(); ++i) visit(tree_->topLevelItem(i));
         const bool empty = tree_->topLevelItemCount() == 0;
-        tree_->clear(); int remaining = 4096;
-        addTree(tree_->invisibleRootItem(), {}, parsed, "", 0, remaining);
+        tree_->clear(); int remaining = limits::JsonTreeItems;
+        addTree(tree_->invisibleRootItem(), {}, parsed, strings::Empty, 0, remaining);
         if (parsed.is_structured() && !parsed.empty()) {
             auto *root = tree_->takeTopLevelItem(0);
             tree_->addTopLevelItems(root->takeChildren()); delete root;
@@ -342,53 +344,53 @@ void ContentView::setValue(const Json &value, bool markdown, bool forceJson) {
 class ProgressView::Card : public QWidget {
 public:
     Card(ProgressKind kind, QWidget *parent) : QWidget(parent), kind_(kind) {
-        setObjectName("progressCard"); setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
-        setStyleSheet("QWidget#progressCard { background:transparent; border:0; } QLabel { color:#dce5f3; background:transparent; border:none; } QToolButton { color:#aebed5; background:transparent; border:0; padding:0; } QToolButton:hover { color:#ffffff; } QToolButton:focus { color:#9bc7ff; }");
-        auto *layout = new QVBoxLayout(this); layout->setContentsMargins(4, 2, 4, 2); layout->setSpacing(2);
+        setObjectName(strings::ProgressCard); setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
+        setStyleSheet(strings::ProgressCardStyle);
+        auto *layout = new QVBoxLayout(this); layout->setContentsMargins(metrics::SpaceSmall, metrics::SpaceTiny, metrics::SpaceSmall, metrics::SpaceTiny); layout->setSpacing(metrics::SpaceTiny);
         if (kind != ProgressKind::Message) {
-            heading_ = new QLabel; heading_->setObjectName("progressHeading"); heading_->setTextFormat(Qt::PlainText); heading_->setWordWrap(true);
+            heading_ = new QLabel; heading_->setObjectName(strings::ProgressHeading); heading_->setTextFormat(Qt::PlainText); heading_->setWordWrap(true);
             auto font = heading_->font(); font.setBold(true); heading_->setFont(font);
             if (kind != ProgressKind::Simple && kind != ProgressKind::Tool && kind != ProgressKind::FileAccess) layout->addWidget(heading_);
         }
         if (kind == ProgressKind::Message) { content_ = new ContentView(this); layout->addWidget(content_); }
         else if (kind == ProgressKind::Prompt) {
-            prompt_ = new QLabel; prompt_->setObjectName("agentInputPrompt"); prompt_->setTextFormat(Qt::PlainText); prompt_->setWordWrap(true);
+            prompt_ = new QLabel; prompt_->setObjectName(strings::AgentInputPrompt); prompt_->setTextFormat(Qt::PlainText); prompt_->setWordWrap(true);
             prompt_->setMinimumWidth(0); prompt_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
             prompt_->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard); layout->addWidget(prompt_);
-            auto *separator = new QFrame; separator->setObjectName("inputPromptSeparator"); separator->setFixedHeight(1);
-            separator->setStyleSheet("background:#46566e; border:0;");
-            layout->addSpacing(6); layout->addWidget(separator); layout->addSpacing(4);
+            auto *separator = new QFrame; separator->setObjectName(strings::InputPromptSeparator); separator->setFixedHeight(1);
+            separator->setStyleSheet(strings::PromptSeparatorStyle);
+            layout->addSpacing(metrics::SpaceNormal); layout->addWidget(separator); layout->addSpacing(metrics::SpaceSmall);
         }
         else if (kind == ProgressKind::Tool) {
-            commandHeader_ = new ToggleRow; commandHeader_->setObjectName("commandHeader");
-            auto *row = new QHBoxLayout(commandHeader_); row->setContentsMargins(0, 0, 0, 0); row->setSpacing(4);
+            commandHeader_ = new ToggleRow; commandHeader_->setObjectName(strings::CommandHeader);
+            auto *row = new QHBoxLayout(commandHeader_); row->setContentsMargins(0, 0, 0, 0); row->setSpacing(metrics::SpaceSmall);
             heading_->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
             row->addWidget(heading_);
             commandPreview_ = new CommandPreview; row->addWidget(commandPreview_, 1);
-            status_ = new QLabel; status_->setObjectName("toolStatus"); status_->setTextFormat(Qt::PlainText); status_->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred); row->addWidget(status_);
-            commandToggle_ = new DisclosureButton; commandToggle_->setObjectName("commandToggle"); commandToggle_->setAutoRaise(true);
+            status_ = new QLabel; status_->setObjectName(strings::ToolStatus); status_->setTextFormat(Qt::PlainText); status_->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred); row->addWidget(status_);
+            commandToggle_ = new DisclosureButton; commandToggle_->setObjectName(strings::CommandToggle); commandToggle_->setAutoRaise(true);
             commandToggle_->setCursor(Qt::PointingHandCursor); commandToggle_->setCheckable(true); commandToggle_->setArrowType(Qt::RightArrow);
-            commandToggle_->setAccessibleName("コマンド全体を表示"); row->addWidget(commandToggle_);
+            commandToggle_->setAccessibleName(strings::ExpandCommandTooltip); row->addWidget(commandToggle_);
             row->addStretch();
             layout->addWidget(commandHeader_);
-            commandFull_ = new QLabel; commandFull_->setObjectName("commandFull"); commandFull_->setTextFormat(Qt::PlainText);
+            commandFull_ = new QLabel; commandFull_->setObjectName(strings::CommandFull); commandFull_->setTextFormat(Qt::PlainText);
             commandFull_->setMinimumWidth(0); commandFull_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
             commandFull_->setWordWrap(true); commandFull_->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
-            commandFull_->setStyleSheet("color:#aeb7c4; margin-left:12px;"); commandFull_->hide(); layout->addWidget(commandFull_);
+            commandFull_->setStyleSheet(strings::CommandDetailStyle); commandFull_->hide(); layout->addWidget(commandFull_);
             connect(commandToggle_, &QToolButton::toggled, this, [this](bool expanded) {
                 commandToggle_->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow); commandFull_->setVisible(expanded);
             });
-            input_ = new Detail("入力", "toolInputToggle", this); output_ = new Detail("出力", "toolOutputToggle", this); layout->addWidget(input_); layout->addWidget(output_);
-            input_->layout()->setContentsMargins(12, 0, 0, 0); output_->layout()->setContentsMargins(12, 0, 0, 0);
+            input_ = new Detail(strings::InputLabel, strings::ToolInputToggle, this); output_ = new Detail(strings::OutputLabel, strings::ToolOutputToggle, this); layout->addWidget(input_); layout->addWidget(output_);
+            input_->layout()->setContentsMargins(metrics::DetailIndentation, 0, 0, 0); output_->layout()->setContentsMargins(metrics::DetailIndentation, 0, 0, 0);
         } else if (kind == ProgressKind::FileAccess) {
-            auto *row = new QHBoxLayout; row->setContentsMargins(0, 0, 0, 0); row->setSpacing(4);
+            auto *row = new QHBoxLayout; row->setContentsMargins(0, 0, 0, 0); row->setSpacing(metrics::SpaceSmall);
             row->addWidget(heading_);
-            status_ = new QLabel; status_->setObjectName("fileStatus"); status_->setTextFormat(Qt::PlainText);
+            status_ = new QLabel; status_->setObjectName(strings::FileStatus); status_->setTextFormat(Qt::PlainText);
             row->addWidget(status_); row->addStretch(); layout->addLayout(row);
-        } else if (kind == ProgressKind::Simple) { details_ = new Detail("詳細", "eventDetailToggle", this, heading_); layout->addWidget(details_); }
+        } else if (kind == ProgressKind::Simple) { details_ = new Detail(strings::DetailsLabel, strings::EventDetailToggle, this, heading_); layout->addWidget(details_); }
     }
     void update(const ProgressItem &item) {
-        layout()->setContentsMargins(4, item.spaceBefore ? 12 : 2, 4, 2);
+        layout()->setContentsMargins(metrics::SpaceSmall, item.spaceBefore ? metrics::CardSpacing : metrics::SpaceTiny, metrics::SpaceSmall, metrics::SpaceTiny);
         if (kind_ == ProgressKind::Message) { content_->setValue(item.content, true, item.jsonContent); }
         else if (kind_ == ProgressKind::Prompt) { heading_->setText(item.name); prompt_->setText(item.text); }
         else if (kind_ == ProgressKind::Tool) {
@@ -397,17 +399,17 @@ public:
             commandPreview_->setVisible(command); commandPreview_->setCommand(item.command);
             commandToggle_->setVisible(command); commandFull_->setText(item.command); commandFull_->setVisible(command && commandToggle_->isChecked());
             commandHeader_->setToggle(command ? commandToggle_ : nullptr);
-            commandToggle_->setAccessibleName(item.commandLabel == "glob" ? "パターン全体を表示" : "コマンド全体を表示");
+            commandToggle_->setAccessibleName(item.commandLabel == strings::Glob ? strings::ExpandPatternTooltip : strings::ExpandCommandTooltip);
             setProgressStatus(status_, item.status);
             input_->setVisible(!command);
             input_->setValue(item.input, item.hasInput); output_->setValue(item.output, item.hasOutput);
         } else if (kind_ == ProgressKind::FileAccess) {
-            const auto name = item.path.section('/', -1); heading_->setText(item.name + " · " + (name.isEmpty() ? item.path : name)); heading_->setToolTip("<qt>" + item.path.toHtmlEscaped() + "</qt>");
+            const auto name = item.path.section('/', -1); heading_->setText(item.name + strings::ItemStatusSeparator + (name.isEmpty() ? item.path : name)); heading_->setToolTip(strings::QtRichTextStart + item.path.toHtmlEscaped() + strings::QtRichTextEnd);
             setProgressStatus(status_, item.status);
-        } else if (kind_ == ProgressKind::Thinking) { heading_->setText("思考中"); }
+        } else if (kind_ == ProgressKind::Thinking) { heading_->setText(strings::ThinkingLabel); }
         else {
-            heading_->setText(item.name + (item.name.isEmpty() || item.text.isEmpty() ? "" : " · ") + shortString(item.text));
-            details_->findChild<QToolButton *>("eventDetailToggle")->setVisible(!item.content.is_null()); details_->setValue(item.content, !item.content.is_null());
+            heading_->setText(item.name + (item.name.isEmpty() || item.text.isEmpty() ? strings::Empty : strings::ItemStatusSeparator) + shortString(item.text));
+            details_->findChild<QToolButton *>(strings::EventDetailToggle)->setVisible(!item.content.is_null()); details_->setValue(item.content, !item.content.is_null());
         }
     }
 private:
@@ -422,10 +424,10 @@ private:
     Detail *input_ = nullptr, *output_ = nullptr, *details_ = nullptr;
 };
 ProgressView::ProgressView(QWidget *parent) : QScrollArea(parent) {
-    setObjectName("progressTimeline"); setWidgetResizable(true); setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    setStyleSheet("QScrollArea#progressTimeline, QWidget#progressItems { background:#191f2a; color:#dce5f3; }");
+    setObjectName(strings::ProgressTimeline); setWidgetResizable(true); setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    setStyleSheet(strings::ProgressTimelineStyle);
     setFocusPolicy(Qt::StrongFocus);
-    auto *content = new QWidget; content->setObjectName("progressItems"); layout_ = new QVBoxLayout(content); layout_->setContentsMargins(2, 2, 2, 2); layout_->setSpacing(3); layout_->addStretch(); setWidget(content);
+    auto *content = new QWidget; content->setObjectName(strings::ProgressItems); layout_ = new QVBoxLayout(content); layout_->setContentsMargins(metrics::SpaceTiny, metrics::SpaceTiny, metrics::SpaceTiny, metrics::SpaceTiny); layout_->setSpacing(metrics::TimelineSpacing); layout_->addStretch(); setWidget(content);
     connect(verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int value) { if (!adjustingScroll_) followBottom_ = value == verticalScrollBar()->maximum(); });
     connect(verticalScrollBar(), &QScrollBar::rangeChanged, this, [this](int, int maximum) {
         if (followBottom_) { QScopedValueRollback<bool> guard(adjustingScroll_, true); verticalScrollBar()->setValue(maximum); }
@@ -437,7 +439,7 @@ void ProgressView::reset() {
 }
 bool ProgressView::finalIsJson() const {
     for (auto it = parser_.items().rbegin(); it != parser_.items().rend(); ++it)
-        if (it->kind == ProgressKind::Message && it->name == "最終応答") return it->jsonContent;
+        if (it->kind == ProgressKind::Message && it->name == strings::FinalResponseLabel) return it->jsonContent;
     return false;
 }
 void ProgressView::setProgress(const QString &log, const QString &executionKey, State state, const Json *finalOutput, bool structuredOutput, const QString &directory, bool plainLog) {

@@ -1,3 +1,4 @@
+#include "strings.h"
 #include "projectopener.h"
 #include "cli.h"
 #include <QDir>
@@ -14,78 +15,78 @@ QStringList ProjectOpener::arguments(const QString &directory) const {
     const auto path = QDir::toNativeSeparators(QFileInfo(directory).absoluteFilePath());
     switch (app) {
     case ProjectApp::Explorer: return {path};
-    case ProjectApp::CommandPrompt: return {"/D", "/K"};
-    case ProjectApp::PowerShell: return {"-NoLogo", "-NoProfile", "-NoExit"};
-    case ProjectApp::GitBash: return {"--cd=" + path};
-    default: return {"--new-window", path};
+    case ProjectApp::CommandPrompt: return {strings::CmdDisableAutoRunArgument, strings::CmdKeepOpenArgument};
+    case ProjectApp::PowerShell: return {strings::NoLogoArgument, strings::NoProfileArgument, strings::PowerShellKeepOpenArgument};
+    case ProjectApp::GitBash: return {strings::BashDirectoryArgument + path};
+    default: return {strings::EditorNewWindowArgument, path};
     }
 }
 std::vector<ProjectOpener> detectProjectOpeners() {
     std::vector<ProjectOpener> result;
 #ifdef Q_OS_WIN
-    const auto local = qEnvironmentVariable("LOCALAPPDATA");
-    const auto windows = qEnvironmentVariable("WINDIR");
-    const QStringList roots{qEnvironmentVariable("ProgramW6432"), qEnvironmentVariable("ProgramFiles"), qEnvironmentVariable("ProgramFiles(x86)"), local + "/Programs"};
+    const auto local = qEnvironmentVariable(strings::LOCALAPPDATA);
+    const auto windows = qEnvironmentVariable(strings::WINDIR);
+    const QStringList roots{qEnvironmentVariable(strings::ProgramW6432), qEnvironmentVariable(strings::ProgramFiles), qEnvironmentVariable(strings::ProgramFilesX86Environment), local + strings::LocalProgramsSuffix};
     auto add = [&](ProjectApp app, const QString &label, const QStringList &names, QStringList candidates) {
         for (const auto &name : names) {
             candidates << resolveExecutable(name);
-            for (const auto &hive : {"HKEY_CURRENT_USER", "HKEY_LOCAL_MACHINE"}) {
-                QSettings key(QString(hive) + "\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\" + name, QSettings::NativeFormat);
-                candidates << key.value(".").toString();
+            for (const auto &hive : {strings::HKEYCURRENTUSER, strings::HKEYLOCALMACHINE}) {
+                QSettings key(QString(hive) + strings::ApplicationPathsRegistry + name, QSettings::NativeFormat);
+                candidates << key.value(strings::Dot).toString();
             }
         }
         for (auto path : candidates) {
             if (path.startsWith('"') && path.endsWith('"')) path = path.mid(1, path.size() - 2);
             QFileInfo info(path);
-            if (info.isAbsolute() && info.isFile() && info.suffix().compare("exe", Qt::CaseInsensitive) == 0) {
+            if (info.isAbsolute() && info.isFile() && info.suffix().compare(strings::Exe, Qt::CaseInsensitive) == 0) {
                 result.push_back({app, label, info.canonicalFilePath()}); return;
             }
         }
     };
-    add(ProjectApp::Explorer, "エクスプローラーで開く", {"explorer.exe"}, {windows + "/explorer.exe"});
-    add(ProjectApp::CommandPrompt, "コマンドプロンプトで開く", {"cmd.exe"}, {windows + "/System32/cmd.exe"});
+    add(ProjectApp::Explorer, strings::ExplorerAction, {strings::ExplorerExe}, {windows + strings::ExplorerExecutableSuffix});
+    add(ProjectApp::CommandPrompt, strings::CommandPromptAction, {strings::CmdExe}, {windows + strings::CmdExecutableSuffix});
     QStringList powershell, git, code, insiders;
     for (const auto &root : roots) if (!root.isEmpty()) {
-        powershell << root + "/PowerShell/7/pwsh.exe";
-        git << root + "/Git/git-bash.exe";
-        code << root + "/Microsoft VS Code/Code.exe";
-        insiders << root + "/Microsoft VS Code Insiders/Code - Insiders.exe";
+        powershell << root + strings::PowerShellCoreSuffix;
+        git << root + strings::GitBashSuffix;
+        code << root + strings::VsCodeSuffix;
+        insiders << root + strings::VsCodeInsidersSuffix;
     }
     // Prefer modern PowerShell, with Windows PowerShell as a fallback.
-    powershell.prepend(resolveExecutable("pwsh.exe"));
-    powershell << windows + "/System32/WindowsPowerShell/v1.0/powershell.exe";
-    for (const auto &hive : {"HKEY_CURRENT_USER", "HKEY_LOCAL_MACHINE"}) {
-        QSettings key(QString(hive) + "\\Software\\GitForWindows", QSettings::NativeFormat);
-        const auto install = key.value("InstallPath").toString();
-        if (!install.isEmpty()) git << install + "/git-bash.exe";
+    powershell.prepend(resolveExecutable(strings::PwshExe));
+    powershell << windows + strings::WindowsPowerShellSuffix;
+    for (const auto &hive : {strings::HKEYCURRENTUSER, strings::HKEYLOCALMACHINE}) {
+        QSettings key(QString(hive) + strings::GitRegistry, QSettings::NativeFormat);
+        const auto install = key.value(strings::InstallPath).toString();
+        if (!install.isEmpty()) git << install + strings::GitBashRootSuffix;
     }
-    const auto gitExe = resolveExecutable("git.exe");
-    if (!gitExe.isEmpty()) git << QFileInfo(gitExe).dir().filePath("../git-bash.exe") << QFileInfo(gitExe).dir().filePath("../../git-bash.exe");
+    const auto gitExe = resolveExecutable(strings::GitExe);
+    if (!gitExe.isEmpty()) git << QFileInfo(gitExe).dir().filePath(strings::GitBashParentPath) << QFileInfo(gitExe).dir().filePath(strings::GitBashAncestorPath);
     // VS Code normally puts only its bin/code*.cmd launchers on PATH.
     // Resolve their native sibling rather than executing a shell wrapper.
-    for (const auto &alias : {"code.cmd", "code"}) {
+    for (const auto &alias : {strings::CodeCmd, strings::Code}) {
         const auto command = resolveExecutable(alias);
-        if (!command.isEmpty()) code << QFileInfo(command).dir().filePath("../Code.exe");
+        if (!command.isEmpty()) code << QFileInfo(command).dir().filePath(strings::VsCodeParentPath);
     }
-    for (const auto &alias : {"code-insiders.cmd", "code-insiders"}) {
+    for (const auto &alias : {strings::CodeInsidersCmd, strings::CodeInsiders}) {
         const auto command = resolveExecutable(alias);
-        if (!command.isEmpty()) insiders << QFileInfo(command).dir().filePath("../Code - Insiders.exe");
+        if (!command.isEmpty()) insiders << QFileInfo(command).dir().filePath(strings::VsCodeInsidersParentPath);
     }
-    add(ProjectApp::PowerShell, "PowerShellで開く", {"pwsh.exe", "powershell.exe"}, powershell);
-    add(ProjectApp::GitBash, "Git Bashで開く", {"git-bash.exe"}, git);
-    add(ProjectApp::Code, "VS Codeで開く", {"Code.exe"}, code);
-    add(ProjectApp::CodeInsiders, "VS Code Insidersで開く", {"Code - Insiders.exe"}, insiders);
+    add(ProjectApp::PowerShell, strings::PowerShellAction, {strings::PwshExe, strings::PowershellExe}, powershell);
+    add(ProjectApp::GitBash, strings::GitBashAction, {strings::GitBashExe}, git);
+    add(ProjectApp::Code, strings::VsCodeAction, {strings::CodeExe}, code);
+    add(ProjectApp::CodeInsiders, strings::VsCodeInsidersAction, {strings::CodeInsidersExe}, insiders);
 #endif
     return result;
 }
 bool openProjectDirectory(const ProjectOpener &opener, const QString &directory, QString *error) {
     if (!QFileInfo(directory).isDir() || !QFileInfo(opener.program).isFile()) {
-        if (error) *error = "ディレクトリまたはアプリが見つかりません。"; return false;
+        if (error) *error = strings::ProjectApplicationNotFound; return false;
     }
     QProcess process;
     process.setProgram(opener.program); process.setArguments(opener.arguments(directory));
     const auto path = QFileInfo(directory).canonicalFilePath(); process.setWorkingDirectory(path);
-    auto environment = QProcessEnvironment::systemEnvironment(); environment.insert("PWD", path); process.setProcessEnvironment(environment);
+    auto environment = QProcessEnvironment::systemEnvironment(); environment.insert(strings::PWD, path); process.setProcessEnvironment(environment);
 #ifdef Q_OS_WIN
     if (opener.app == ProjectApp::CommandPrompt || opener.app == ProjectApp::PowerShell) {
         process.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *args) {

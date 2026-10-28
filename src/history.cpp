@@ -1,3 +1,4 @@
+#include "strings.h"
 #include "history.h"
 #include <QDir>
 #include <QFile>
@@ -12,66 +13,66 @@ std::string text(const QString &value) { return value.toUtf8().toStdString(); }
 QString string(const Json &value, const char *key) { return QString::fromStdString(value.at(key).get<std::string>()); }
 QString stateKey(State state) {
     switch (state) {
-    case State::Running: return "running"; case State::Succeeded: return "succeeded";
-    case State::Failed: return "failed"; case State::Cancelled: return "cancelled";
-    default: throw std::runtime_error("実行されていないノードは履歴に保存できません");
+    case State::Running: return strings::RunningValue; case State::Succeeded: return strings::SucceededValue;
+    case State::Failed: return strings::Failed; case State::Cancelled: return strings::CancelledValue;
+    default: throw std::runtime_error(strings::UnexecutedNodeHistory);
     }
 }
 State parseState(const QString &value) {
-    if (value == "running") return State::Running;
-    if (value == "succeeded") return State::Succeeded;
-    if (value == "failed") return State::Failed;
-    if (value == "cancelled") return State::Cancelled;
-    throw std::runtime_error("不明な実行履歴の状態です");
+    if (value == strings::RunningValue) return State::Running;
+    if (value == strings::SucceededValue) return State::Succeeded;
+    if (value == strings::Failed) return State::Failed;
+    if (value == strings::CancelledValue) return State::Cancelled;
+    throw std::runtime_error(strings::UnknownHistoryState);
 }
 }
 void saveNodeExecution(const QString &directory, const NodeExecution &execution) {
     const auto uuid = QUuid(execution.id);
-    if (uuid.isNull() || !execution.startedAt.isValid()) throw std::runtime_error("実行履歴のIDまたは日時が不正です");
-    if (!QDir().mkpath(directory)) throw std::runtime_error("実行履歴の保存先を作成できません");
-    Json value = {{"version", 2}, {"id", text(execution.id)}, {"node", execution.node}, {"title", text(execution.title)},
-        {"executionNumber", execution.executionNumber}, {"agent", text(execution.agent)}, {"directory", text(execution.directory)},
-        {"model", text(execution.model)}, {"effort", text(execution.effort)},
-        {"startedAt", text(execution.startedAt.toUTC().toString(Qt::ISODateWithMs))},
-        {"finishedAt", text(execution.finishedAt.toUTC().toString(Qt::ISODateWithMs))},
-        {"state", text(stateKey(execution.state))}, {"log", text(execution.log)}, {"output", execution.output}, {"sequence", execution.sequence}, {"structuredOutput", execution.structuredOutput},
-        {"retainContext", execution.retainContext}, {"contextResumed", execution.contextResumed}};
-    QSaveFile file(QDir(directory).filePath(uuid.toString(QUuid::WithoutBraces) + ".json"));
+    if (uuid.isNull() || !execution.startedAt.isValid()) throw std::runtime_error(strings::InvalidHistoryIdentity);
+    if (!QDir().mkpath(directory)) throw std::runtime_error(strings::CreateHistoryDirectoryFailed);
+    Json value = {{strings::Version, 2}, {strings::Id, text(execution.id)}, {strings::Node, execution.node}, {strings::Title, text(execution.title)},
+        {strings::ExecutionNumber, execution.executionNumber}, {strings::Agent, text(execution.agent)}, {strings::Directory, text(execution.directory)},
+        {strings::Model, text(execution.model)}, {strings::Effort, text(execution.effort)},
+        {strings::StartedAt, text(execution.startedAt.toUTC().toString(Qt::ISODateWithMs))},
+        {strings::FinishedAt, text(execution.finishedAt.toUTC().toString(Qt::ISODateWithMs))},
+        {strings::State, text(stateKey(execution.state))}, {strings::Log, text(execution.log)}, {strings::Output, execution.output}, {strings::Sequence, execution.sequence}, {strings::StructuredOutput, execution.structuredOutput},
+        {strings::RetainContext, execution.retainContext}, {strings::ContextResumed, execution.contextResumed}};
+    QSaveFile file(QDir(directory).filePath(uuid.toString(QUuid::WithoutBraces) + strings::JsonFileExtension));
     const auto bytes = QByteArray::fromStdString(value.dump());
     if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit())
-        throw std::runtime_error(text("実行履歴を保存できません: " + file.errorString()));
+        throw std::runtime_error(text(strings::SaveHistoryFailed + file.errorString()));
 }
 std::vector<NodeExecution> loadNodeExecutions(const QString &directory, QStringList *errors) {
     std::vector<NodeExecution> result;
-    for (const auto &name : QDir(directory).entryList({"*.json"}, QDir::Files)) {
+    for (const auto &name : QDir(directory).entryList({strings::JsonFilePattern}, QDir::Files)) {
         try {
             QFile file(QDir(directory).filePath(name)); if (!file.open(QIODevice::ReadOnly)) throw std::runtime_error(text(file.errorString()));
             const auto value = Json::parse(file.readAll().toStdString());
-            if (value.at("version") == 1) continue;
-            if (value.at("version") != 2) throw std::runtime_error("未対応の実行履歴の形式です");
-            NodeExecution execution; execution.id = string(value, "id");
-            if (QUuid(execution.id).isNull() || QUuid(execution.id).toString(QUuid::WithoutBraces) + ".json" != name)
-                throw std::runtime_error("実行履歴のIDが不正です");
-            execution.node = value.at("node").get<Id>(); execution.title = string(value, "title");
-            execution.executionNumber = value.at("executionNumber").get<quint64>();
-            execution.agent = string(value, "agent"); execution.directory = string(value, "directory");
-            execution.model = QString::fromStdString(value.value("model", std::string()));
-            execution.effort = QString::fromStdString(value.value("effort", std::string()));
-            execution.startedAt = QDateTime::fromString(string(value, "startedAt"), Qt::ISODateWithMs);
-            execution.finishedAt = QDateTime::fromString(string(value, "finishedAt"), Qt::ISODateWithMs);
-            if (!execution.startedAt.isValid()) throw std::runtime_error("実行履歴の日時が不正です");
-            execution.state = parseState(string(value, "state")); execution.log = string(value, "log");
-            execution.output = value.at("output"); execution.sequence = value.value("sequence", quint64(0));
-            execution.structuredOutput = value.value("structuredOutput", false);
-            execution.retainContext = value.value("retainContext", false);
-            execution.contextResumed = value.value("contextResumed", false);
+            if (value.at(strings::Version) == 1) continue;
+            if (value.at(strings::Version) != 2) throw std::runtime_error(strings::UnsupportedHistoryVersion);
+            NodeExecution execution; execution.id = string(value, strings::Id);
+            if (QUuid(execution.id).isNull() || QUuid(execution.id).toString(QUuid::WithoutBraces) + strings::JsonFileExtension != name)
+                throw std::runtime_error(strings::InvalidHistoryId);
+            execution.node = value.at(strings::Node).get<Id>(); execution.title = string(value, strings::Title);
+            execution.executionNumber = value.at(strings::ExecutionNumber).get<quint64>();
+            execution.agent = string(value, strings::Agent); execution.directory = string(value, strings::Directory);
+            execution.model = QString::fromStdString(value.value(strings::Model, std::string()));
+            execution.effort = QString::fromStdString(value.value(strings::Effort, std::string()));
+            execution.startedAt = QDateTime::fromString(string(value, strings::StartedAt), Qt::ISODateWithMs);
+            execution.finishedAt = QDateTime::fromString(string(value, strings::FinishedAt), Qt::ISODateWithMs);
+            if (!execution.startedAt.isValid()) throw std::runtime_error(strings::InvalidHistoryTime);
+            execution.state = parseState(string(value, strings::State)); execution.log = string(value, strings::Log);
+            execution.output = value.at(strings::Output); execution.sequence = value.value(strings::Sequence, quint64(0));
+            execution.structuredOutput = value.value(strings::StructuredOutput, false);
+            execution.retainContext = value.value(strings::RetainContext, false);
+            execution.contextResumed = value.value(strings::ContextResumed, false);
             if (execution.state == State::Running) {
                 execution.state = State::Cancelled;
-                execution.log += "\n[前回の実行は終了を確認できなかったため、中断として表示します]\n";
+                execution.log += strings::InterruptedHistoryNotice;
             }
             result.push_back(std::move(execution));
         } catch (const std::exception &error) {
-            if (errors) errors->append(name + ": " + QString::fromUtf8(error.what()));
+            if (errors) errors->append(name + strings::ColonSpace + QString::fromUtf8(error.what()));
         }
     }
     std::sort(result.begin(), result.end(), [](const auto &a, const auto &b) {

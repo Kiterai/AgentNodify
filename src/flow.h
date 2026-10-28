@@ -1,4 +1,6 @@
 #pragma once
+#include "constants.h"
+#include "strings.h"
 #include <nlohmann/json.hpp>
 #include <QString>
 #include <QStringList>
@@ -25,23 +27,23 @@ struct Node {
     Kind kind = Kind::Agent;
     QString title;
     QPointF position;
-    QString agent = "Codex";
+    QString agent = strings::Codex;
     QString model;
     QString effort;
     QString prompt;
     QString schema;
     bool retainContext = false;
-    unsigned inputs = 2;
+    unsigned inputs = defaults::InputPorts;
     std::vector<Rule> rules;
-    QString scriptLanguage = "python";
+    QString scriptLanguage = strings::PythonLanguage;
     QString scriptPath, scriptDirectory;
     QString shellCommand, shellDirectory;
-    QString shellOutput = "json";
+    QString shellOutput = strings::JsonFormat;
     QString targetFlow, projectPath;
-    QStringList userChoices = {QStringLiteral("OK")};
-    int waitDuration = 1;
-    QString waitUnit = "seconds";
-    QString scheduleMonth = "*", scheduleDay = "*", scheduleHour = "*", scheduleMinute = "*";
+    QStringList userChoices = {QString::fromUtf8(strings::Ok)};
+    int waitDuration = defaults::WaitDuration;
+    QString waitUnit = strings::Seconds;
+    QString scheduleMonth = strings::Wildcard, scheduleDay = strings::Wildcard, scheduleHour = strings::Wildcard, scheduleMinute = strings::Wildcard;
     std::vector<int> scheduleWeekdays; // Qt weekday numbering: Monday=1, Sunday=7.
 };
 struct Edge {
@@ -51,7 +53,7 @@ struct Edge {
 };
 struct Flow {
     quint64 nextNodeId = 1;
-    QString name = QStringLiteral("新しいフロー");
+    QString name = QString::fromUtf8(strings::NewFlowName);
     std::map<Id, Node> nodes;
     std::vector<Edge> edges;
     QString sourcePath; // Runtime context only; not serialized into portable flows.

@@ -54,6 +54,21 @@ protected:
     bool eventFilter(QObject *object, QEvent *event) override;
     bool event(QEvent *event) override;
 private:
+    friend struct NodeRegistry;
+    TextPreview *addPreview(QVBoxLayout *, const QString &label, const QString &field, const QString &text, const QString &placeholder);
+    void buildAgent(QVBoxLayout *, QFormLayout *);
+    void buildScript(QVBoxLayout *, QFormLayout *);
+    void buildShell(QVBoxLayout *, QFormLayout *);
+    void buildHost(QVBoxLayout *, QFormLayout *);
+    void buildDelay(QVBoxLayout *, QFormLayout *);
+    void buildSchedule(QVBoxLayout *, QFormLayout *);
+    void buildUserInput(QVBoxLayout *, QFormLayout *);
+    void buildInputs(QVBoxLayout *, QFormLayout *);
+    void buildBranch(QVBoxLayout *, QFormLayout *);
+    std::function<void(const Node &)> syncParameters_;
+    std::function<void(bool)> readOnlyParameters_;
+    std::function<void()> refreshFlowChoices_;
+    void refreshTargetFlows();
     bool readOnly_ = false;
     Node node_;
     bool updating_ = false, resizeScheduled_ = false;

@@ -1,4 +1,5 @@
 #pragma once
+#include "constants.h"
 #include "runner.h"
 #include <QDateTime>
 #include <QPointer>
@@ -22,7 +23,7 @@ struct CatalogEntry {
 class ModelCatalog : public QObject {
     Q_OBJECT
 public:
-    explicit ModelCatalog(QObject *parent = nullptr, int timeoutMs = 30000);
+    explicit ModelCatalog(QObject *parent = nullptr, int timeoutMs = limits::CatalogTimeoutMilliseconds);
     ~ModelCatalog() override;
     void setConfig(const AgentConfig &config);
     CatalogEntry entry(const QString &agent) const;

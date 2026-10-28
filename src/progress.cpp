@@ -1,3 +1,5 @@
+#include "constants.h"
+#include "strings.h"
 #include "progress.h"
 #include <QDir>
 #include <algorithm>
@@ -11,16 +13,16 @@ QString str(const Json &j, const char *key) {
 }
 QString stringValue(const Json &j) { return j.is_string() ? QString::fromStdString(j.get<std::string>()) : QString(); }
 QString statusOf(const QString &status) {
-    if (status == "completed" || status == "success" || status == "succeeded") return "succeeded";
-    if (status == "failed" || status == "error") return "failed";
-    if (status == "cancelled" || status == "canceled") return "cancelled";
-    return "running";
+    if (status == strings::Completed || status == strings::Success || status == strings::SucceededValue) return strings::SucceededValue;
+    if (status == strings::Failed || status == strings::ErrorValue) return strings::Failed;
+    if (status == strings::CancelledValue || status == strings::Canceled) return strings::CancelledValue;
+    return strings::RunningValue;
 }
 QString accessOf(const QString &kind) {
-    if (kind == "add" || kind == "added" || kind == "create") return "作成";
-    if (kind == "delete" || kind == "deleted" || kind == "remove") return "削除";
-    if (kind == "rename" || kind == "renamed" || kind == "move") return "移動";
-    return "変更";
+    if (kind == strings::Add || kind == strings::Added || kind == strings::Create) return strings::FileCreatedLabel;
+    if (kind == strings::Delete || kind == strings::Deleted || kind == strings::Remove) return strings::FileDeletedLabel;
+    if (kind == strings::Rename || kind == strings::Renamed || kind == strings::Move) return strings::FileMovedLabel;
+    return strings::FileChangedLabel;
 }
 Json expandedInput(const Json &value) {
     if (!value.is_string()) return value;
@@ -33,16 +35,16 @@ bool equivalent(const Json &a, const Json &b) {
 Json displayJson(const QString &text) {
     try {
         return Json::parse(text.toUtf8().toStdString(), [](int depth, Json::parse_event_t, Json &) {
-            if (depth > 128) throw std::runtime_error("display depth limit"); return true;
+            if (depth > limits::JsonComparisonDepth) throw std::runtime_error(strings::DisplayDepthLimit); return true;
         }, false);
     } catch (...) { return Json(Json::value_t::discarded); }
 }
 QString progressStatus(const QString &status) {
-    if (status == "succeeded") return "完了";
-    if (status == "failed") return "失敗";
-    if (status == "cancelled") return "中止";
-    if (status == "unknown") return "結果不明";
-    return "実行中";
+    if (status == strings::SucceededValue) return strings::Succeeded;
+    if (status == strings::Failed) return strings::FailedLabel;
+    if (status == strings::CancelledValue) return strings::Cancelled;
+    if (status == strings::Unknown) return strings::UnknownResultLabel;
+    return strings::Running;
 }
 ProgressItem &ProgressParser::item(const QString &key, ProgressKind kind) {
     auto it = indexes_.find(key);
@@ -58,93 +60,93 @@ void ProgressParser::append(const QString &chunk) {
 }
 void ProgressParser::finish(State state) {
     if (!pending_.isEmpty()) { const auto rest = std::move(pending_); pending_.clear(); line(rest); }
-    for (auto &entry : items_) if ((entry.kind == ProgressKind::Tool || entry.kind == ProgressKind::FileAccess) && entry.status == "running")
-        entry.status = state == State::Cancelled ? "cancelled" : state == State::Failed ? "failed" : "unknown";
+    for (auto &entry : items_) if ((entry.kind == ProgressKind::Tool || entry.kind == ProgressKind::FileAccess) && entry.status == strings::RunningValue)
+        entry.status = state == State::Cancelled ? strings::CancelledValue : state == State::Failed ? strings::Failed : strings::Unknown;
 }
 void ProgressParser::finalResponse(const Json &output, bool structured) {
     for (auto it = items_.rbegin(); it != items_.rend(); ++it) if (it->kind == ProgressKind::Message && equivalent(it->content, output)) {
         const bool quotedJson = it->content.is_string() && displayJson(stringValue(it->content)).is_string();
         it->jsonContent = it->jsonContent || structured || quotedJson;
-        it->name = "最終応答"; it->finalResponse = true; it->content = output; return;
+        it->name = strings::FinalResponseLabel; it->finalResponse = true; it->content = output; return;
     }
-    auto &entry = item("final-response", ProgressKind::Message); entry.name = "最終応答"; entry.finalResponse = true; entry.content = output; entry.jsonContent = structured;
+    auto &entry = item(strings::FinalResponse, ProgressKind::Message); entry.name = strings::FinalResponseLabel; entry.finalResponse = true; entry.content = output; entry.jsonContent = structured;
 }
 void ProgressParser::line(const QString &text) {
     ++line_; if (text.trimmed().isEmpty()) return;
     const auto value = plainLog_ ? Json(Json::value_t::discarded) : displayJson(text);
-    if (line_ == 1 && value.is_object() && str(value, "type") == "agentnodify.prompt" && value.contains("prompt") && value["prompt"].is_string()) {
-        auto &entry = item("input-prompt", ProgressKind::Prompt); entry.name = "入力プロンプト"; entry.text = str(value, "prompt"); return;
+    if (line_ == 1 && value.is_object() && str(value, strings::Type) == strings::AgentnodifyPrompt && value.contains(strings::Prompt) && value[strings::Prompt].is_string()) {
+        auto &entry = item(strings::InputPrompt, ProgressKind::Prompt); entry.name = strings::InputPromptLabel; entry.text = str(value, strings::Prompt); return;
     }
     if (value.is_discarded() || !value.is_object()) {
-        auto &entry = item(QString("plain:%1").arg(line_), ProgressKind::Simple); entry.text = text; return;
+        auto &entry = item(QString(strings::PlainEventKey).arg(line_), ProgressKind::Simple); entry.text = text; return;
     }
-    try { event(value); } catch (const std::exception &) { simple(value, "解釈できないイベント"); }
+    try { event(value); } catch (const std::exception &) { simple(value, strings::UnrecognizedEvent); }
 }
 void ProgressParser::simple(const Json &value, const QString &label) {
     QString key;
-    if (value.is_object() && value.contains("item") && !str(value["item"], "id").isEmpty()) key = "simple:item:" + str(value["item"], "id");
-    else if (value.is_object() && value.contains("part")) {
-        auto id = str(value["part"], "id"); if (id.isEmpty()) id = str(value["part"], "partID");
-        if (!id.isEmpty()) key = "simple:part:" + id;
+    if (value.is_object() && value.contains(strings::Item) && !str(value[strings::Item], strings::Id).isEmpty()) key = strings::SimpleItem + str(value[strings::Item], strings::Id);
+    else if (value.is_object() && value.contains(strings::Part)) {
+        auto id = str(value[strings::Part], strings::Id); if (id.isEmpty()) id = str(value[strings::Part], strings::PartID);
+        if (!id.isEmpty()) key = strings::SimplePart + id;
     }
-    if (str(value, "type") == "stream_event" && value.contains("event") && value["event"].is_object()) {
-        const auto &event = value["event"];
-        const int index = event.contains("index") && event["index"].is_number_integer() ? event["index"].get<int>() : 0;
-        key = "simple:stream:" + claudeMessage_ + ":" + QString::number(index) + ":" + str(event, "type");
+    if (str(value, strings::Type) == strings::StreamEvent && value.contains(strings::Event) && value[strings::Event].is_object()) {
+        const auto &event = value[strings::Event];
+        const int index = event.contains(strings::Index) && event[strings::Index].is_number_integer() ? event[strings::Index].get<int>() : 0;
+        key = strings::SimpleStream + claudeMessage_ + strings::Colon + QString::number(index) + strings::Colon + str(event, strings::Type);
     }
-    if (key.isEmpty()) key = QString("event:%1:%2").arg(line_).arg(items_.size());
+    if (key.isEmpty()) key = QString(strings::EventKey).arg(line_).arg(items_.size());
     auto &entry = item(key, ProgressKind::Simple);
-    entry.name = label.isEmpty() ? str(value, "type") : label;
-    if (entry.name.isEmpty()) entry.name = "イベント";
-    entry.text = str(value, "subtype"); if (entry.text.isEmpty()) entry.text = str(value, "message");
+    entry.name = label.isEmpty() ? str(value, strings::Type) : label;
+    if (entry.name.isEmpty()) entry.name = strings::EventLabel;
+    entry.text = str(value, strings::Subtype); if (entry.text.isEmpty()) entry.text = str(value, strings::Message);
     entry.content = value;
 }
 void ProgressParser::file(const QString &key, const QString &path, const QString &access, const QString &status) {
-    if (path.isEmpty() || path.contains("://")) return; // A remote resource is not a filesystem access.
+    if (path.isEmpty() || path.contains(strings::UrlSchemeSeparator)) return; // A remote resource is not a filesystem access.
     auto normalized = path; normalized.replace('\\', '/');
     if (!directory_.isEmpty() && QDir::isRelativePath(normalized)) normalized = QDir(directory_).filePath(normalized);
     normalized = QDir::cleanPath(normalized);
-    auto &entry = item(key + ":file:" + access + ":" + normalized, ProgressKind::FileAccess);
+    auto &entry = item(key + strings::FileEventSeparator + access + strings::Colon + normalized, ProgressKind::FileAccess);
     entry.path = normalized; entry.name = access;
-    if (entry.status.isEmpty() || entry.status == "running" || status != "running") entry.status = status;
+    if (entry.status.isEmpty() || entry.status == strings::RunningValue || status != strings::RunningValue) entry.status = status;
 }
 void ProgressParser::files(const QString &key, const QString &name, const Json &raw, const QString &status) {
     const auto input = expandedInput(raw); if (!input.is_object()) return;
-    const auto toolName = name.toLower().section('/', -1).section('.', -1).section("__", -1);
+    const auto toolName = name.toLower().section('/', -1).section('.', -1).section(strings::ToolNamespaceSeparator, -1);
     QString access;
-    if (toolName == "read" || toolName == "read_file") access = "読取";
-    else if (toolName == "write" || toolName == "write_file") access = "書込";
-    else if (toolName == "edit" || toolName == "multiedit" || toolName == "notebookedit") access = "変更";
+    if (toolName == strings::Read || toolName == strings::ReadFile) access = strings::FileReadLabel;
+    else if (toolName == strings::Write || toolName == strings::WriteFile) access = strings::FileWriteLabel;
+    else if (toolName == strings::Edit || toolName == strings::Multiedit || toolName == strings::Notebookedit) access = strings::FileChangedLabel;
     // A generic MCP read/write may target a database or remote resource. Require
     // a file-specific tool/argument before attributing it to the filesystem.
-    if ((name.contains('/') || name.contains("__")) && !toolName.endsWith("_file") &&
-        !input.contains("file_path") && !input.contains("filePath") && !input.contains("notebook_path")) access.clear();
+    if ((name.contains('/') || name.contains(strings::ToolNamespaceSeparator)) && !toolName.endsWith(strings::File) &&
+        !input.contains(strings::FilePath) && !input.contains(strings::FilePathValue) && !input.contains(strings::NotebookPath)) access.clear();
     if (!access.isEmpty()) {
-        auto path = str(input, "file_path"); if (path.isEmpty()) path = str(input, "filePath");
-        if (path.isEmpty()) path = str(input, "path"); if (path.isEmpty()) path = str(input, "notebook_path");
+        auto path = str(input, strings::FilePath); if (path.isEmpty()) path = str(input, strings::FilePathValue);
+        if (path.isEmpty()) path = str(input, strings::PathValue); if (path.isEmpty()) path = str(input, strings::NotebookPath);
         file(key, path, access, status);
     }
-    if (toolName == "patch" || toolName == "apply_patch") {
-        auto patch = str(input, "patchText"); if (patch.isEmpty()) patch = str(input, "patch");
+    if (toolName == strings::Patch || toolName == strings::ApplyPatch) {
+        auto patch = str(input, strings::PatchText); if (patch.isEmpty()) patch = str(input, strings::Patch);
         for (const auto &line : patch.split('\n')) {
-            if (line.startsWith("*** Add File: ")) file(key, line.mid(14).trimmed(), "作成", status);
-            else if (line.startsWith("*** Delete File: ")) file(key, line.mid(17).trimmed(), "削除", status);
-            else if (line.startsWith("*** Update File: ")) file(key, line.mid(17).trimmed(), "変更", status);
-            else if (line.startsWith("*** Move to: ") || line.startsWith("*** Move To: ")) file(key, line.mid(13).trimmed(), "移動", status);
+            if (line.startsWith(strings::PatchAddPrefix)) file(key, line.mid(sizeof(strings::PatchAddPrefix) - 1).trimmed(), strings::FileCreatedLabel, status);
+            else if (line.startsWith(strings::PatchDeletePrefix)) file(key, line.mid(sizeof(strings::PatchDeletePrefix) - 1).trimmed(), strings::FileDeletedLabel, status);
+            else if (line.startsWith(strings::PatchUpdatePrefix)) file(key, line.mid(sizeof(strings::PatchUpdatePrefix) - 1).trimmed(), strings::FileChangedLabel, status);
+            else if (line.startsWith(strings::PatchMovePrefix) || line.startsWith(strings::PatchMoveAlternativePrefix)) file(key, line.mid(sizeof(strings::PatchMovePrefix) - 1).trimmed(), strings::FileMovedLabel, status);
         }
     }
 }
 void ProgressParser::tool(const QString &key, const QString &name, const QString &status, const Json *input, const Json *output) {
     auto &entry = item(key, ProgressKind::Tool);
     if (!name.isEmpty()) entry.name = name;
-    if (entry.name.isEmpty()) entry.name = "ツール";
-    if (entry.status.isEmpty() || entry.status == "running" || status != "running") entry.status = status;
+    if (entry.name.isEmpty()) entry.name = strings::ToolLabel;
+    if (entry.status.isEmpty() || entry.status == strings::RunningValue || status != strings::RunningValue) entry.status = status;
     if (input) { entry.input = *input; entry.hasInput = true; }
     if (output) { entry.output = *output; entry.hasOutput = true; }
-    if (key.startsWith("codex:") && entry.name == "command_execution") entry.commandLabel = "シェル実行";
-    else if (key.startsWith("claude:tool:") && entry.name.compare("PowerShell", Qt::CaseInsensitive) == 0) entry.commandLabel = "PowerShell";
-    else if (key.startsWith("opencode:") && entry.name == "glob") entry.commandLabel = "glob";
-    if (!entry.commandLabel.isEmpty()) entry.command = str(expandedInput(entry.input), entry.commandLabel == "glob" ? "pattern" : "command");
+    if (key.startsWith(strings::CodexValue) && entry.name == strings::CommandExecution) entry.commandLabel = strings::ShellName;
+    else if (key.startsWith(strings::ClaudeTool) && entry.name.compare(strings::PowerShell, Qt::CaseInsensitive) == 0) entry.commandLabel = strings::PowerShell;
+    else if (key.startsWith(strings::Opencode) && entry.name == strings::Glob) entry.commandLabel = strings::Glob;
+    if (!entry.commandLabel.isEmpty()) entry.command = str(expandedInput(entry.input), entry.commandLabel == strings::Glob ? strings::Pattern : strings::Command);
     // Copy before adding file rows, which may reallocate items_.
     const auto toolName = entry.name; const auto arguments = entry.input; const auto effectiveStatus = entry.status;
     files(key, toolName, arguments, effectiveStatus);
@@ -152,80 +154,80 @@ void ProgressParser::tool(const QString &key, const QString &name, const QString
 }
 void ProgressParser::summarizeFileTool(const QString &key) {
     auto &entry = item(key, ProgressKind::Tool);
-    if (!((key.startsWith("opencode:") && entry.name == "patch") ||
-        (key.startsWith("claude:tool:") && entry.name.compare("Write", Qt::CaseInsensitive) == 0))) return;
-    for (auto &file : items_) if (file.kind == ProgressKind::FileAccess && file.key.startsWith(key + ":file:")) {
+    if (!((key.startsWith(strings::Opencode) && entry.name == strings::Patch) ||
+        (key.startsWith(strings::ClaudeTool) && entry.name.compare(strings::WriteValue, Qt::CaseInsensitive) == 0))) return;
+    for (auto &file : items_) if (file.kind == ProgressKind::FileAccess && file.key.startsWith(key + strings::FileEventSeparator)) {
         entry.hidden = true;
         if (entry.spaceBefore) { file.spaceBefore = true; entry.spaceBefore = false; }
         return;
     }
 }
 void ProgressParser::event(const Json &value) {
-    const auto type = str(value, "type");
-    if (type == "turn.started" || type == "turn.start" || type == "turn.completed" ||
-        type == "step_start" || type == "step_finish" || type == "step-start" || type == "step-finish") {
+    const auto type = str(value, strings::Type);
+    if (type == strings::TurnStarted || type == strings::TurnStart || type == strings::TurnCompleted ||
+        type == strings::StepStart || type == strings::StepFinish || type == strings::StepStartValue || type == strings::StepFinishValue) {
         pendingBoundary_ = !items_.empty(); return;
     }
-    if (type == "rate_limit_event" || type == "thread.started" ||
-        (type == "system" && (str(value, "subtype") == "thinking_tokens" || str(value, "subtype") == "init"))) return;
-    if (type == "assistant" || type == "user" || type == "result" || type == "stream_event") { claude(value); return; }
-    if (type.startsWith("item.") && value.contains("item") && value["item"].is_object()) {
-        const auto &data = value["item"]; const auto kind = str(data, "type");
-        auto id = str(data, "id"); if (id.isEmpty()) id = QString::number(line_);
-        const auto key = "codex:" + id;
-        auto status = statusOf(str(data, "status"));
-        if (str(data, "status").isEmpty() && type == "item.completed") status = "succeeded";
-        if (kind == "agent_message") {
-            if (!data.contains("text") || !data["text"].is_string()) { simple(value); return; }
-            auto &entry = item(key, ProgressKind::Message); entry.name = "エージェント"; entry.content = str(data, "text").toStdString(); return;
+    if (type == strings::RateLimitEvent || type == strings::ThreadStarted ||
+        (type == strings::System && (str(value, strings::Subtype) == strings::ThinkingTokens || str(value, strings::Subtype) == strings::Init))) return;
+    if (type == strings::Assistant || type == strings::User || type == strings::Result || type == strings::StreamEvent) { claude(value); return; }
+    if (type.startsWith(strings::ItemValue) && value.contains(strings::Item) && value[strings::Item].is_object()) {
+        const auto &data = value[strings::Item]; const auto kind = str(data, strings::Type);
+        auto id = str(data, strings::Id); if (id.isEmpty()) id = QString::number(line_);
+        const auto key = strings::CodexValue + id;
+        auto status = statusOf(str(data, strings::Status));
+        if (str(data, strings::Status).isEmpty() && type == strings::ItemCompleted) status = strings::SucceededValue;
+        if (kind == strings::AgentMessage) {
+            if (!data.contains(strings::TextFormat) || !data[strings::TextFormat].is_string()) { simple(value); return; }
+            auto &entry = item(key, ProgressKind::Message); entry.name = strings::AgentName; entry.content = str(data, strings::TextFormat).toStdString(); return;
         }
-        if (kind == "command_execution") {
-            if (data.contains("exit_code") && data["exit_code"].is_number_integer() && data["exit_code"] != 0) status = "failed";
-            const Json input = {{"command", data.value("command", Json())}};
-            const Json *output = data.contains("aggregated_output") ? &data["aggregated_output"] : nullptr;
-            tool(key, "command_execution", status, &input, output); return;
+        if (kind == strings::CommandExecution) {
+            if (data.contains(strings::ExitCode) && data[strings::ExitCode].is_number_integer() && data[strings::ExitCode] != 0) status = strings::Failed;
+            const Json input = {{strings::Command, data.value(strings::Command, Json())}};
+            const Json *output = data.contains(strings::AggregatedOutput) ? &data[strings::AggregatedOutput] : nullptr;
+            tool(key, strings::CommandExecution, status, &input, output); return;
         }
-        if (kind == "mcp_tool_call") {
-            const auto name = str(data, "server") + "/" + str(data, "tool");
-            const Json *input = data.contains("arguments") ? &data["arguments"] : nullptr;
-            const Json *output = data.contains("error") && !data["error"].is_null() ? &data["error"] : data.contains("result") ? &data["result"] : nullptr;
-            if (data.contains("error") && !data["error"].is_null()) status = "failed";
+        if (kind == strings::McpToolCall) {
+            const auto name = str(data, strings::Server) + strings::Slash + str(data, strings::Tool);
+            const Json *input = data.contains(strings::Arguments) ? &data[strings::Arguments] : nullptr;
+            const Json *output = data.contains(strings::ErrorValue) && !data[strings::ErrorValue].is_null() ? &data[strings::ErrorValue] : data.contains(strings::Result) ? &data[strings::Result] : nullptr;
+            if (data.contains(strings::ErrorValue) && !data[strings::ErrorValue].is_null()) status = strings::Failed;
             tool(key, name, status, input, output); return;
         }
-        if (kind == "web_search") {
-            const Json input = {{"query", data.value("query", Json())}};
-            const Json *output = data.contains("result") ? &data["result"] : nullptr;
-            tool(key, "web_search", status, &input, output); return;
+        if (kind == strings::WebSearch) {
+            const Json input = {{strings::Query, data.value(strings::Query, Json())}};
+            const Json *output = data.contains(strings::Result) ? &data[strings::Result] : nullptr;
+            tool(key, strings::WebSearch, status, &input, output); return;
         }
-        if (kind == "file_change" && data.contains("changes") && data["changes"].is_array()) {
+        if (kind == strings::FileChange && data.contains(strings::Changes) && data[strings::Changes].is_array()) {
             bool found = false;
-            for (const auto &change : data["changes"]) if (!str(change, "path").isEmpty()) { file(key, str(change, "path"), accessOf(str(change, "kind")), status); found = true; }
+            for (const auto &change : data[strings::Changes]) if (!str(change, strings::PathValue).isEmpty()) { file(key, str(change, strings::PathValue), accessOf(str(change, strings::Kind)), status); found = true; }
             if (!found) simple(value, kind);
             return;
         }
         simple(value, kind); return;
     }
-    if ((type == "text" || type == "tool_use") && value.contains("part") && value["part"].is_object()) {
-        const auto &part = value["part"]; auto id = str(part, "id");
-        if (id.isEmpty()) id = str(part, "partID"); if (id.isEmpty()) id = QString::number(line_);
-        const auto key = "opencode:" + id;
-        if (type == "text") {
-            if (!part.contains("text") || !part["text"].is_string()) { simple(value); return; }
-            auto &entry = item(key, ProgressKind::Message); entry.name = "エージェント"; entry.content = str(part, "text").toStdString(); return;
+    if ((type == strings::TextFormat || type == strings::ToolUse) && value.contains(strings::Part) && value[strings::Part].is_object()) {
+        const auto &part = value[strings::Part]; auto id = str(part, strings::Id);
+        if (id.isEmpty()) id = str(part, strings::PartID); if (id.isEmpty()) id = QString::number(line_);
+        const auto key = strings::Opencode + id;
+        if (type == strings::TextFormat) {
+            if (!part.contains(strings::TextFormat) || !part[strings::TextFormat].is_string()) { simple(value); return; }
+            auto &entry = item(key, ProgressKind::Message); entry.name = strings::AgentName; entry.content = str(part, strings::TextFormat).toStdString(); return;
         }
-        if (!part.contains("state") || !part["state"].is_object()) { simple(value); return; }
-        const auto &state = part["state"]; const auto status = statusOf(str(state, "status"));
-        const Json *input = state.contains("input") ? &state["input"] : nullptr;
-        const Json *output = state.contains("error") ? &state["error"] : state.contains("output") ? &state["output"] : state.contains("content") ? &state["content"] : nullptr;
-        if (!output && state.contains("metadata") && state["metadata"].is_object() && state["metadata"].contains("content")) output = &state["metadata"]["content"];
-        tool(key, str(part, "tool"), status, input, output);
+        if (!part.contains(strings::State) || !part[strings::State].is_object()) { simple(value); return; }
+        const auto &state = part[strings::State]; const auto status = statusOf(str(state, strings::Status));
+        const Json *input = state.contains(strings::Input) ? &state[strings::Input] : nullptr;
+        const Json *output = state.contains(strings::ErrorValue) ? &state[strings::ErrorValue] : state.contains(strings::Output) ? &state[strings::Output] : state.contains(strings::Content) ? &state[strings::Content] : nullptr;
+        if (!output && state.contains(strings::Metadata) && state[strings::Metadata].is_object() && state[strings::Metadata].contains(strings::Content)) output = &state[strings::Metadata][strings::Content];
+        tool(key, str(part, strings::Tool), status, input, output);
         // V2 CLI diagnostics can nest tool metadata one level deeper.
-        if (state.contains("metadata") && state["metadata"].is_object()) {
-            const auto &outer = state["metadata"];
-            const auto &metadata = outer.contains("metadata") && outer["metadata"].is_object() ? outer["metadata"] : outer;
-            if (metadata.contains("files") && metadata["files"].is_array()) for (const auto &change : metadata["files"]) {
-                auto path = str(change, "file"); if (path.isEmpty()) path = str(change, "path");
-                file(key, path, accessOf(str(change, "status")), status);
+        if (state.contains(strings::Metadata) && state[strings::Metadata].is_object()) {
+            const auto &outer = state[strings::Metadata];
+            const auto &metadata = outer.contains(strings::Metadata) && outer[strings::Metadata].is_object() ? outer[strings::Metadata] : outer;
+            if (metadata.contains(strings::Files) && metadata[strings::Files].is_array()) for (const auto &change : metadata[strings::Files]) {
+                auto path = str(change, strings::FileValue); if (path.isEmpty()) path = str(change, strings::PathValue);
+                file(key, path, accessOf(str(change, strings::Status)), status);
             }
         }
         summarizeFileTool(key);
@@ -234,83 +236,83 @@ void ProgressParser::event(const Json &value) {
     simple(value);
 }
 void ProgressParser::thinking(const QString &message, int index) {
-    auto &entry = item("claude:thinking:" + message + ":" + QString::number(index), ProgressKind::Thinking);
-    entry.name = "思考中";
+    auto &entry = item(strings::ClaudeThinking + message + strings::Colon + QString::number(index), ProgressKind::Thinking);
+    entry.name = strings::ThinkingLabel;
 }
 void ProgressParser::claude(const Json &value) {
-    const auto type = str(value, "type");
-    if (type == "stream_event" && value.contains("event") && value["event"].is_object()) {
-        const auto &event = value["event"]; const auto kind = str(event, "type");
-        if (kind == "message_start" && event.contains("message")) { claudeMessage_ = str(event["message"], "id"); blocks_.clear(); claudeBlock_ = -1; return; }
-        const int index = event.value("index", 0);
-        if (kind == "content_block_start" && event.contains("content_block")) {
+    const auto type = str(value, strings::Type);
+    if (type == strings::StreamEvent && value.contains(strings::Event) && value[strings::Event].is_object()) {
+        const auto &event = value[strings::Event]; const auto kind = str(event, strings::Type);
+        if (kind == strings::MessageStart && event.contains(strings::Message)) { claudeMessage_ = str(event[strings::Message], strings::Id); blocks_.clear(); claudeBlock_ = -1; return; }
+        const int index = event.value(strings::Index, 0);
+        if (kind == strings::ContentBlockStart && event.contains(strings::ContentBlock)) {
             claudeBlock_ = index;
-            const auto &block = event["content_block"]; const auto blockType = str(block, "type");
-            if (blockType == "tool_use") {
-                const auto key = "claude:tool:" + str(block, "id"); blocks_[index] = {key, {}, true};
-                const Json input = block.value("input", Json::object()); tool(key, str(block, "name"), "running", &input, nullptr);
-            } else if (blockType == "text") {
-                const auto key = "claude:text:" + claudeMessage_ + ":" + QString::number(index); blocks_[index] = {key, {}, false};
-                auto &entry = item(key, ProgressKind::Message); entry.name = "エージェント"; entry.content = str(block, "text").toStdString();
-            } else if (blockType == "thinking" || blockType == "redacted_thinking") {
+            const auto &block = event[strings::ContentBlock]; const auto blockType = str(block, strings::Type);
+            if (blockType == strings::ToolUse) {
+                const auto key = strings::ClaudeTool + str(block, strings::Id); blocks_[index] = {key, {}, true};
+                const Json input = block.value(strings::Input, Json::object()); tool(key, str(block, strings::Name), strings::RunningValue, &input, nullptr);
+            } else if (blockType == strings::TextFormat) {
+                const auto key = strings::ClaudeText + claudeMessage_ + strings::Colon + QString::number(index); blocks_[index] = {key, {}, false};
+                auto &entry = item(key, ProgressKind::Message); entry.name = strings::AgentName; entry.content = str(block, strings::TextFormat).toStdString();
+            } else if (blockType == strings::Thinking || blockType == strings::RedactedThinking) {
                 thinking(claudeMessage_, index);
-                blocks_[index] = {"claude:thinking:" + claudeMessage_ + ":" + QString::number(index), {}, false, true};
+                blocks_[index] = {strings::ClaudeThinking + claudeMessage_ + strings::Colon + QString::number(index), {}, false, true};
             } else simple(value, blockType);
             return;
         }
-        if (kind == "content_block_delta" && event.contains("delta") &&
-            (str(event["delta"], "type") == "thinking_delta" || str(event["delta"], "type") == "signature_delta")) return;
-        if (kind == "content_block_delta" && event.contains("delta") && blocks_.contains(index)) {
+        if (kind == strings::ContentBlockDelta && event.contains(strings::Delta) &&
+            (str(event[strings::Delta], strings::Type) == strings::ThinkingDelta || str(event[strings::Delta], strings::Type) == strings::SignatureDelta)) return;
+        if (kind == strings::ContentBlockDelta && event.contains(strings::Delta) && blocks_.contains(index)) {
             claudeBlock_ = index;
-            auto &block = blocks_[index]; const auto &delta = event["delta"];
+            auto &block = blocks_[index]; const auto &delta = event[strings::Delta];
             if (block.thinking) return;
-            if (!block.tool && str(delta, "type") == "text_delta") {
-                auto &entry = item(block.key, ProgressKind::Message); entry.content = (stringValue(entry.content) + str(delta, "text")).toStdString();
-            } else if (block.tool && str(delta, "type") == "input_json_delta") {
-                block.input += str(delta, "partial_json"); const auto input = expandedInput(Json(block.input.toStdString()));
-                const auto name = item(block.key, ProgressKind::Tool).name; tool(block.key, name, "running", &input, nullptr);
+            if (!block.tool && str(delta, strings::Type) == strings::TextDelta) {
+                auto &entry = item(block.key, ProgressKind::Message); entry.content = (stringValue(entry.content) + str(delta, strings::TextFormat)).toStdString();
+            } else if (block.tool && str(delta, strings::Type) == strings::InputJsonDelta) {
+                block.input += str(delta, strings::PartialJson); const auto input = expandedInput(Json(block.input.toStdString()));
+                const auto name = item(block.key, ProgressKind::Tool).name; tool(block.key, name, strings::RunningValue, &input, nullptr);
             } else simple(value);
             return;
         }
-        if (kind == "content_block_stop") { claudeBlock_ = -1; return; }
-        if (kind == "message_stop" || kind == "message_delta") return;
+        if (kind == strings::ContentBlockStop) { claudeBlock_ = -1; return; }
+        if (kind == strings::MessageStop || kind == strings::MessageDelta) return;
         simple(value); return;
     }
-    if ((type == "assistant" || type == "user") && value.contains("message") && value["message"].is_object()) {
-        const auto &message = value["message"];
-        if (!message.contains("content") || !message["content"].is_array()) { simple(value); return; }
-        const auto messageId = str(message, "id").isEmpty() ? QString::number(line_) : str(message, "id");
+    if ((type == strings::Assistant || type == strings::User) && value.contains(strings::Message) && value[strings::Message].is_object()) {
+        const auto &message = value[strings::Message];
+        if (!message.contains(strings::Content) || !message[strings::Content].is_array()) { simple(value); return; }
+        const auto messageId = str(message, strings::Id).isEmpty() ? QString::number(line_) : str(message, strings::Id);
         int index = 0;
-        for (const auto &block : message["content"]) {
-            const auto kind = str(block, "type");
-            if (type == "assistant" && kind == "text") {
-                const auto text = str(block, "text"); QString key;
-                const auto prefix = "claude:text:" + messageId + ":";
+        for (const auto &block : message[strings::Content]) {
+            const auto kind = str(block, strings::Type);
+            if (type == strings::Assistant && kind == strings::TextFormat) {
+                const auto text = str(block, strings::TextFormat); QString key;
+                const auto prefix = strings::ClaudeText + messageId + strings::Colon;
                 if (messageId == claudeMessage_) {
-                    const auto streamedIndex = message["content"].size() == 1 && claudeBlock_ >= 0 ? claudeBlock_ : index;
+                    const auto streamedIndex = message[strings::Content].size() == 1 && claudeBlock_ >= 0 ? claudeBlock_ : index;
                     if (blocks_.contains(streamedIndex) && !blocks_[streamedIndex].tool) key = blocks_[streamedIndex].key;
                 }
                 // Without partial events, UUID identifies a complete message. Different
                 // complete blocks may intentionally contain exactly the same text.
-                if (key.isEmpty()) key = prefix + (str(value, "uuid").isEmpty() ? QString::number(line_) : str(value, "uuid")) + ":" + QString::number(index);
-                auto &entry = item(key, ProgressKind::Message); entry.name = "エージェント"; entry.content = text.toStdString();
-            } else if (type == "assistant" && (kind == "thinking" || kind == "redacted_thinking")) {
-                const int thinkingIndex = messageId == claudeMessage_ && message["content"].size() == 1 && claudeBlock_ >= 0 ? claudeBlock_ : index;
+                if (key.isEmpty()) key = prefix + (str(value, strings::Uuid).isEmpty() ? QString::number(line_) : str(value, strings::Uuid)) + strings::Colon + QString::number(index);
+                auto &entry = item(key, ProgressKind::Message); entry.name = strings::AgentName; entry.content = text.toStdString();
+            } else if (type == strings::Assistant && (kind == strings::Thinking || kind == strings::RedactedThinking)) {
+                const int thinkingIndex = messageId == claudeMessage_ && message[strings::Content].size() == 1 && claudeBlock_ >= 0 ? claudeBlock_ : index;
                 thinking(messageId, thinkingIndex);
-            } else if (kind == "tool_use") {
-                const Json input = block.value("input", Json::object());
-                tool("claude:tool:" + str(block, "id"), str(block, "name"), "running", &input, nullptr);
-            } else if (kind == "tool_result") {
-                const auto key = "claude:tool:" + str(block, "tool_use_id"); const Json output = block.value("content", Json());
-                tool(key, {}, block.value("is_error", false) ? "failed" : "succeeded", nullptr, &output);
-            } else simple(block, type + ":" + kind);
+            } else if (kind == strings::ToolUse) {
+                const Json input = block.value(strings::Input, Json::object());
+                tool(strings::ClaudeTool + str(block, strings::Id), str(block, strings::Name), strings::RunningValue, &input, nullptr);
+            } else if (kind == strings::ToolResult) {
+                const auto key = strings::ClaudeTool + str(block, strings::ToolUseId); const Json output = block.value(strings::Content, Json());
+                tool(key, {}, block.value(strings::IsError, false) ? strings::Failed : strings::SucceededValue, nullptr, &output);
+            } else simple(block, type + strings::Colon + kind);
             ++index;
         }
         return;
     }
-    if (type == "result" && !value.value("is_error", false)) {
-        if (value.contains("structured_output")) finalResponse(value["structured_output"], true);
-        else if (value.contains("result") && value["result"].is_string() && !str(value, "result").isEmpty()) finalResponse(value["result"]);
+    if (type == strings::Result && !value.value(strings::IsError, false)) {
+        if (value.contains(strings::StructuredOutputValue)) finalResponse(value[strings::StructuredOutputValue], true);
+        else if (value.contains(strings::Result) && value[strings::Result].is_string() && !str(value, strings::Result).isEmpty()) finalResponse(value[strings::Result]);
         else simple(value);
         return;
     }

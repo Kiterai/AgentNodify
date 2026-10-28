@@ -1,4 +1,5 @@
 #pragma once
+#include "constants.h"
 #include "graph.h"
 #include "coordinator.h"
 #include "progressview.h"
@@ -98,7 +99,7 @@ private:
     QString activeInput_;
     std::map<QString, QString> selectedInputs_;
     QSplitter *workInputSplit_ = nullptr;
-    int inputPaneHeight_ = 230;
+    int inputPaneHeight_ = metrics::DefaultInputPaneHeight;
     QWidget *inputPanel_ = nullptr;
     QComboBox *inputSelector_ = nullptr;
     ContentView *inputMessage_ = nullptr;

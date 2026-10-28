@@ -1,6 +1,7 @@
+#include "constants.h"
+#include "strings.h"
+#include "nodedefinition.h"
 #include "flow.h"
-#include "schedule.h"
-#include <QTimeZone>
 #include <cmath>
 #include <nlohmann/json-schema.hpp>
 #include <QFile>
@@ -20,162 +21,112 @@ QString q(const std::string &v) { return QString::fromUtf8(v); }
 struct Part { QString key; bool index; };
 std::vector<Part> parts(QString path) {
     std::vector<Part> result;
-    QRegularExpression token(R"((?:^|\.)([A-Za-z_\p{L}][\w\p{L}-]*)|\[(\d+)\])");
+    QRegularExpression token(strings::VariablePathPattern);
     auto matches = token.globalMatch(path);
     qsizetype end = 0;
     while (matches.hasNext()) {
         auto m = matches.next();
-        if (m.capturedStart() != end) error("不正な変数パス: " + path);
+        if (m.capturedStart() != end) error(strings::InvalidVariablePath + path);
         result.push_back({m.captured(1).isEmpty() ? m.captured(2) : m.captured(1), m.captured(1).isEmpty()});
         end = m.capturedEnd();
     }
-    if (end != path.size() || result.empty()) error("不正な変数パス: " + path);
+    if (end != path.size() || result.empty()) error(strings::InvalidVariablePath + path);
     return result;
-}
-// Internal alternatives preserve each producer's own $ref root. This is only
-// used for variable-path inference, never sent as a schema to an agent.
-Json sources(const std::vector<Json> &values) {
-    Json alternatives = Json::array();
-    for (auto &value : values) if (!value.is_null() && std::find(alternatives.begin(), alternatives.end(), value) == alternatives.end()) alternatives.push_back(value);
-    return alternatives.empty() ? Json() : Json{{"_anSources", alternatives}};
 }
 Json outputSchema(const Flow &f, Id id, QSet<Id> &visiting) {
     if (visiting.contains(id) || !f.nodes.contains(id)) return Json();
     visiting.insert(id);
     const auto &n = f.nodes.at(id);
-    Json out;
-    if (n.kind == Kind::Start) out = {{"type", "object"}, {"properties", Json::object()}, {"additionalProperties", false}};
-    else if (n.kind == Kind::Agent) out = n.schema.trimmed().isEmpty() ? Json{{"type", "string"}} : parseJson(n.schema);
-    else if (n.kind == Kind::UserInput) out = {{"type", "string"}};
-    else if (n.kind == Kind::Script || n.kind == Kind::FlowWait) out = {{"_anUnknown", true}};
-    else if (n.kind == Kind::ProjectCreate) out = {{"type", "object"}, {"properties", {{"result", {{"type", "string"}}}, {"path", {{"type", "string"}}}, {"reason", {{"type", "string"}}}}}};
-    else if (n.kind == Kind::FlowRun) out = {{"type", "object"}, {"properties", {{"result", {{"type", "string"}}}}}};
-    else if (n.kind == Kind::Shell) out = n.shellOutput == "text" ? Json{{"type", "string"}} : Json{{"type", "object"}, {"properties", {{"exit_code", {{"type", "integer"}}}, {"stdout", {{"type", "string"}}}, {"stderr", {{"type", "string"}}}}}, {"required", {"exit_code", "stdout", "stderr"}}, {"additionalProperties", false}};
-    else if (n.kind == Kind::All) {
-        Json items = Json::array();
-        for (unsigned i = 0; i < n.inputs; ++i) {
-            std::vector<Json> incoming;
-            for (auto &e : f.edges) if (e.to == id && e.input == i) incoming.push_back(outputSchema(f, e.from, visiting));
-            items.push_back(sources(incoming));
+    const auto &definition = nodeDefinition(n.kind);
+    SchemaInputs inputs;
+    if (definition.schemaUsesInputs) {
+        std::vector<std::vector<Json>> ports(f.inputCount(n));
+        std::vector<Json> incoming;
+        for (const auto &e : f.edges) if (e.to == id) {
+            auto schema = outputSchema(f, e.from, visiting);
+            incoming.push_back(schema);
+            if (e.input < ports.size()) ports[e.input].push_back(std::move(schema));
         }
-        out = {{"type", "array"}, {"items", items}};
-    } else if (n.kind == Kind::Any) {
-        std::vector<Json> incoming;
-        for (const auto &e : f.edges) if (e.to == id) incoming.push_back(outputSchema(f, e.from, visiting));
-        out = {{"type", "object"}, {"properties", {{"event", {{"type", "integer"}, {"minimum", 0}, {"maximum", n.inputs ? n.inputs - 1 : 0}}}, {"input", sources(incoming)}}}, {"required", {"event", "input"}}, {"additionalProperties", false}};
-    } else {
-        std::vector<Json> incoming;
-        for (auto &e : f.edges) if (e.to == id) incoming.push_back(outputSchema(f, e.from, visiting));
-        out = sources(incoming);
+        for (const auto &port : ports) inputs.ports.push_back(schemaSources(port));
+        inputs.merged = schemaSources(incoming);
     }
+    Json out = definition.schema(n, inputs);
     visiting.remove(id);
     return out;
 }
 }
-bool isHostOperation(Kind k) { return k == Kind::ProjectCreate || k == Kind::FlowRun || k == Kind::FlowWait; }
-bool hasNodeName(Kind k) { return k != Kind::All && k != Kind::Any && k != Kind::Branch && k != Kind::Delay && k != Kind::Schedule; }
-QString kindName(Kind k) {
-    switch (k) {
-    case Kind::Start: return QStringLiteral("始端");
-    case Kind::End: return QStringLiteral("終端");
-    case Kind::Delay: return QStringLiteral("待機");
-    case Kind::Schedule: return QStringLiteral("スケジュール");
-    case Kind::All: return QStringLiteral("All");
-    case Kind::Any: return QStringLiteral("Any");
-    case Kind::UserInput: return QStringLiteral("ユーザ入力");
-    case Kind::Branch: return QStringLiteral("分岐");
-    case Kind::Script: return QStringLiteral("スクリプト");
-    case Kind::Shell: return QStringLiteral("シェル実行");
-    case Kind::ProjectCreate: return QStringLiteral("AgentNodify プロジェクト作成");
-    case Kind::FlowRun: return QStringLiteral("AgentNodify フロー実行");
-    case Kind::FlowWait: return QStringLiteral("AgentNodify フロー終了");
-    default: return QStringLiteral("エージェント");
-    }
+bool isHostOperation(Kind k) { return nodeDefinition(k).host; }
+bool hasNodeName(Kind k) { return nodeDefinition(k).named; }
+QString kindName(Kind k) { return nodeDefinition(k).name; }
+QString kindKey(Kind k) { return nodeDefinition(k).key; }
+Kind parseKind(const std::string &key) {
+    const auto value = QString::fromStdString(key);
+    for (const auto &definition : nodeDefinitions())
+        if (definition.key == value || definition.aliases.contains(value)) return definition.kind;
+    error(strings::UnknownNodeType + value);
 }
-QString kindKey(Kind k) {
-    switch(k) { case Kind::Start: return "start"; case Kind::End: return "end"; case Kind::Delay: return "delay"; case Kind::Schedule: return "schedule";
-    case Kind::All: return "all"; case Kind::Any: return "any"; case Kind::UserInput: return "user_input"; case Kind::Branch: return "branch"; case Kind::Script: return "script"; case Kind::Shell: return "shell";
-    case Kind::ProjectCreate: return "project_create"; case Kind::FlowRun: return "flow_run"; case Kind::FlowWait: return "flow_wait"; default: return "agent"; }
-}
-Kind parseKind(const std::string &k) {
-    if (k == "start") return Kind::Start;
-    if (k == "end") return Kind::End;
-    if (k == "delay") return Kind::Delay;
-    if (k == "schedule") return Kind::Schedule;
-    if (k == "and" || k == "all") return Kind::All;
-    if (k == "any") return Kind::Any;
-    if (k == "user_input") return Kind::UserInput;
-    if (k == "branch") return Kind::Branch;
-    if (k == "agent") return Kind::Agent;
-    if (k == "script") return Kind::Script;
-    if (k == "shell") return Kind::Shell;
-    if (k == "project_create") return Kind::ProjectCreate;
-    if (k == "flow_run") return Kind::FlowRun;
-    if (k == "flow_wait") return Kind::FlowWait;
-    error("不明なノード種別: " + q(k));
-}
-unsigned Flow::inputCount(const Node &n) const { return n.kind == Kind::Start ? 0 : (n.kind == Kind::All || n.kind == Kind::Any) ? n.inputs : 1; }
-unsigned Flow::outputCount(const Node &n) const { return n.kind == Kind::End ? 0 : n.kind == Kind::UserInput ? unsigned(n.userChoices.size()) : n.kind == Kind::Branch ? unsigned(n.rules.size()) + 1 : 1; }
+unsigned Flow::inputCount(const Node &n) const { return nodeDefinition(n.kind).inputs(n); }
+unsigned Flow::outputCount(const Node &n) const { return nodeDefinition(n.kind).outputs(n); }
 Json Flow::toJson() const {
     Json ns = Json::array(), es = Json::array();
     for (auto &[id, n] : nodes) {
         Json rules = Json::array();
         Json choices = Json::array(); for (const auto &choice : n.userChoices) choices.push_back(s(choice));
-        for (auto &r : n.rules) rules.push_back({{"variable", s(r.variable)}, {"value", s(r.value)}, {"equals", r.equals}});
-        ns.push_back({{"id", id}, {"kind", s(kindKey(n.kind))}, {"title", s(hasNodeName(n.kind) ? n.title : QString())},
-            {"x", n.position.x()}, {"y", n.position.y()}, {"agent", s(n.agent)}, {"model", s(n.model)}, {"effort", s(n.effort)},
-            {"prompt", s(n.prompt)}, {"schema", s(n.schema)}, {"retainContext", n.retainContext}, {"inputs", n.inputs}, {"rules", rules},
-            {"scriptLanguage", s(n.scriptLanguage)}, {"scriptPath", s(n.scriptPath)}, {"scriptDirectory", s(n.scriptDirectory)},
-            {"shellCommand", s(n.shellCommand)}, {"shellDirectory", s(n.shellDirectory)}, {"shellOutput", s(n.shellOutput)}, {"targetFlow", s(n.targetFlow)}, {"projectPath", s(n.projectPath)}, {"userChoices", choices},
-            {"waitDuration", n.waitDuration}, {"waitUnit", s(n.waitUnit)}, {"scheduleMonth", s(n.scheduleMonth)}, {"scheduleDay", s(n.scheduleDay)}, {"scheduleHour", s(n.scheduleHour)}, {"scheduleMinute", s(n.scheduleMinute)}, {"scheduleWeekdays", n.scheduleWeekdays}});
+        for (auto &r : n.rules) rules.push_back({{strings::Variable, s(r.variable)}, {strings::Value, s(r.value)}, {strings::Equals, r.equals}});
+        ns.push_back({{strings::Id, id}, {strings::Kind, s(kindKey(n.kind))}, {strings::Title, s(hasNodeName(n.kind) ? n.title : QString())},
+            {strings::X, n.position.x()}, {strings::Y, n.position.y()}, {strings::Agent, s(n.agent)}, {strings::Model, s(n.model)}, {strings::Effort, s(n.effort)},
+            {strings::Prompt, s(n.prompt)}, {strings::Schema, s(n.schema)}, {strings::RetainContext, n.retainContext}, {strings::Inputs, n.inputs}, {strings::Rules, rules},
+            {strings::ScriptLanguage, s(n.scriptLanguage)}, {strings::ScriptPath, s(n.scriptPath)}, {strings::ScriptDirectory, s(n.scriptDirectory)},
+            {strings::ShellCommand, s(n.shellCommand)}, {strings::ShellDirectory, s(n.shellDirectory)}, {strings::ShellOutput, s(n.shellOutput)}, {strings::TargetFlow, s(n.targetFlow)}, {strings::ProjectPath, s(n.projectPath)}, {strings::UserChoices, choices},
+            {strings::WaitDuration, n.waitDuration}, {strings::WaitUnit, s(n.waitUnit)}, {strings::ScheduleMonth, s(n.scheduleMonth)}, {strings::ScheduleDay, s(n.scheduleDay)}, {strings::ScheduleHour, s(n.scheduleHour)}, {strings::ScheduleMinute, s(n.scheduleMinute)}, {strings::ScheduleWeekdays, n.scheduleWeekdays}});
     }
-    for (auto &e : edges) es.push_back({{"from", e.from}, {"to", e.to}, {"output", e.output}, {"input", e.input}});
+    for (auto &e : edges) es.push_back({{strings::From, e.from}, {strings::To, e.to}, {strings::Output, e.output}, {strings::Input, e.input}});
     const auto next = qMax(nextNodeId, nodes.empty() ? quint64(1) : quint64(nodes.rbegin()->first) + 1);
-    return {{"version", 1}, {"name", s(name)}, {"nodes", ns}, {"edges", es}, {"nextNodeId", next}};
+    return {{strings::Version, defaults::FlowVersion}, {strings::Name, s(name)}, {strings::Nodes, ns}, {strings::Edges, es}, {strings::NextNodeId, next}};
 }
 Flow Flow::fromJson(const Json &j) {
-    if (j.at("version") != 1) error("未対応のフローファイル形式です");
-    Flow f; f.name = q(j.at("name").get<std::string>()); f.nextNodeId = j.value("nextNodeId", quint64(1));
-    for (auto &v : j.at("nodes")) {
-        Node n; n.id = v.at("id").get<Id>(); n.kind = parseKind(v.at("kind"));
-        n.title = q(v.at("title")); n.position = {v.at("x").get<double>(), v.at("y").get<double>()};
+    if (j.at(strings::Version) != defaults::FlowVersion) error(strings::UnsupportedFlowVersion);
+    Flow f; f.name = q(j.at(strings::Name).get<std::string>()); f.nextNodeId = j.value(strings::NextNodeId, quint64(1));
+    for (auto &v : j.at(strings::Nodes)) {
+        Node n; n.id = v.at(strings::Id).get<Id>(); n.kind = parseKind(v.at(strings::Kind));
+        n.title = q(v.at(strings::Title)); n.position = {v.at(strings::X).get<double>(), v.at(strings::Y).get<double>()};
         if (!hasNodeName(n.kind)) n.title.clear();
-        n.agent = q(v.value("agent", "Codex")); n.model = q(v.value("model", ""));
-        n.effort = q(v.value("effort", ""));
-        n.prompt = q(v.value("prompt", "")); n.schema = q(v.value("schema", ""));
-        n.retainContext = v.value("retainContext", false);
-        n.inputs = v.value("inputs", 2u);
-        n.scriptLanguage = q(v.value("scriptLanguage", "python")); n.scriptPath = q(v.value("scriptPath", "")); n.scriptDirectory = q(v.value("scriptDirectory", ""));
-        n.shellCommand = q(v.value("shellCommand", "")); n.shellDirectory = q(v.value("shellDirectory", ""));
-        n.shellOutput = q(v.value("shellOutput", "json"));
-        const auto duration = v.value("waitDuration", 1.0);
-        if (!std::isfinite(duration) || duration < 0 || duration > 1000000 || std::floor(duration) != duration) error("待機時間は0〜1000000の整数を指定してください");
-        n.waitDuration = int(duration); n.waitUnit = q(v.value("waitUnit", "seconds"));
-        n.scheduleMonth = q(v.value("scheduleMonth", "*")); n.scheduleDay = q(v.value("scheduleDay", "*")); n.scheduleHour = q(v.value("scheduleHour", "*")); n.scheduleMinute = q(v.value("scheduleMinute", "*"));
-        n.scheduleWeekdays = v.value("scheduleWeekdays", std::vector<int>{});
-        n.targetFlow = q(v.value("targetFlow", "")); n.projectPath = q(v.value("projectPath", ""));
-        if (v.contains("userChoices")) {
-            if (!v.at("userChoices").is_array()) error("ユーザー選択肢は配列で指定してください");
-            n.userChoices.clear(); for (const auto &choice : v.at("userChoices")) n.userChoices.push_back(q(choice.get<std::string>()));
+        n.agent = q(v.value(strings::Agent, strings::Codex)); n.model = q(v.value(strings::Model, strings::Empty));
+        n.effort = q(v.value(strings::Effort, strings::Empty));
+        n.prompt = q(v.value(strings::Prompt, strings::Empty)); n.schema = q(v.value(strings::Schema, strings::Empty));
+        n.retainContext = v.value(strings::RetainContext, false);
+        n.inputs = v.value(strings::Inputs, defaults::InputPorts);
+        n.scriptLanguage = q(v.value(strings::ScriptLanguage, strings::PythonLanguage)); n.scriptPath = q(v.value(strings::ScriptPath, strings::Empty)); n.scriptDirectory = q(v.value(strings::ScriptDirectory, strings::Empty));
+        n.shellCommand = q(v.value(strings::ShellCommand, strings::Empty)); n.shellDirectory = q(v.value(strings::ShellDirectory, strings::Empty));
+        n.shellOutput = q(v.value(strings::ShellOutput, strings::JsonFormat));
+        const auto duration = v.value(strings::WaitDuration, double(defaults::WaitDuration));
+        if (!std::isfinite(duration) || duration < 0 || duration > limits::WaitDuration || std::floor(duration) != duration) error(QString(strings::InvalidWaitDuration).arg(limits::WaitDuration));
+        n.waitDuration = int(duration); n.waitUnit = q(v.value(strings::WaitUnit, strings::Seconds));
+        n.scheduleMonth = q(v.value(strings::ScheduleMonth, strings::Wildcard)); n.scheduleDay = q(v.value(strings::ScheduleDay, strings::Wildcard)); n.scheduleHour = q(v.value(strings::ScheduleHour, strings::Wildcard)); n.scheduleMinute = q(v.value(strings::ScheduleMinute, strings::Wildcard));
+        n.scheduleWeekdays = v.value(strings::ScheduleWeekdays, std::vector<int>{});
+        n.targetFlow = q(v.value(strings::TargetFlow, strings::Empty)); n.projectPath = q(v.value(strings::ProjectPath, strings::Empty));
+        if (v.contains(strings::UserChoices)) {
+            if (!v.at(strings::UserChoices).is_array()) error(strings::UserChoicesMustBeArray);
+            n.userChoices.clear(); for (const auto &choice : v.at(strings::UserChoices)) n.userChoices.push_back(q(choice.get<std::string>()));
         }
-        if (n.inputs > 256) error("入力数は256以下にしてください");
-        for (auto &r : v.at("rules")) n.rules.push_back({q(r.at("variable")), q(r.at("value")), r.at("equals").get<bool>()});
-        if (!f.nodes.emplace(n.id, n).second) error("ノードIDが重複しています");
+        if (n.inputs > limits::InputPorts) error(QString(strings::InputCountTooLarge).arg(limits::InputPorts));
+        for (auto &r : v.at(strings::Rules)) n.rules.push_back({q(r.at(strings::Variable)), q(r.at(strings::Value)), r.at(strings::Equals).get<bool>()});
+        if (!f.nodes.emplace(n.id, n).second) error(strings::DuplicateNodeId);
         f.nextNodeId = qMax(f.nextNodeId, quint64(n.id) + 1);
     }
-    for (auto &e : j.at("edges")) f.edges.push_back({e.at("from"), e.at("to"), e.at("output"), e.at("input")});
+    for (auto &e : j.at(strings::Edges)) f.edges.push_back({e.at(strings::From), e.at(strings::To), e.at(strings::Output), e.at(strings::Input)});
     return f;
 }
 Flow Flow::initial(bool withEnd) {
     Flow f;
-    Node a; a.id = 1; a.kind = Kind::Start; a.title = kindName(a.kind); a.position = {0, 120};
-    Node b; b.id = 2; b.kind = Kind::End; b.title = kindName(b.kind); b.position = {600, 120};
+    Node a; a.id = 1; a.kind = Kind::Start; a.title = kindName(a.kind); a.position = {0, metrics::InitialNodeY};
+    Node b; b.id = 2; b.kind = Kind::End; b.title = kindName(b.kind); b.position = {metrics::InitialEndX, metrics::InitialNodeY};
     f.nodes.emplace(a.id, a); if (withEnd) f.nodes.emplace(b.id, b); return f;
 }
 void Flow::save(const QString &path) const {
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly)) error(file.errorString());
-    QByteArray data = QByteArray::fromStdString(toJson().dump(2));
+    QByteArray data = QByteArray::fromStdString(toJson().dump(defaults::JsonIndent));
     if (file.write(data) != data.size() || !file.commit()) error(file.errorString());
 }
 Flow Flow::load(const QString &path) {
@@ -183,37 +134,37 @@ Flow Flow::load(const QString &path) {
     auto flow = fromJson(Json::parse(file.readAll().toStdString())); flow.sourcePath = QFileInfo(path).absoluteFilePath(); return flow;
 }
 Json parseJson(const QString &text) { return Json::parse(s(text)); }
-QString display(const Json &v) { return v.is_string() ? q(v.get<std::string>()) : q(v.dump(2)); }
+QString display(const Json &v) { return v.is_string() ? q(v.get<std::string>()) : q(v.dump(defaults::JsonIndent)); }
 Json resolve(const Json &value, const QString &path) {
-    if (path == "#") return value;
+    if (path == strings::WholeInput) return value;
     Json current = value;
     for (auto &p : parts(path)) {
         if (p.index) {
             bool ok = false; auto i = p.key.toULongLong(&ok);
-            if (!ok || !current.is_array() || i >= current.size()) error("配列要素が存在しません: " + path);
+            if (!ok || !current.is_array() || i >= current.size()) error(strings::MissingArrayElement + path);
             current = Json(current.at(size_t(i)));
         } else {
-            if (!current.is_object() || !current.contains(s(p.key))) error("変数が存在しません: " + path);
+            if (!current.is_object() || !current.contains(s(p.key))) error(strings::MissingVariable + path);
             current = Json(current.at(s(p.key)));
         }
     }
     return current;
 }
 QString interpolate(const QString &text, const Json &value) {
-    QRegularExpression re(R"(\$\{([^}]+)\})"); auto it = re.globalMatch(text);
+    QRegularExpression re(strings::InterpolationPattern); auto it = re.globalMatch(text);
     QString out; qsizetype last = 0;
     while (it.hasNext()) { auto m = it.next(); out += text.mid(last, m.capturedStart() - last) + display(resolve(value, m.captured(1))); last = m.capturedEnd(); }
     return out + text.mid(last);
 }
 void checkSchema(const Json &schema) {
     // Validate both the schema document and references, using Draft 7.
-    if (schema.is_object() && schema.contains("$schema")) {
-        const auto dialect = schema.at("$schema").get<std::string>();
-        if (dialect != "http://json-schema.org/draft-07/schema#" &&
-            dialect != "https://json-schema.org/draft-07/schema#" &&
-            dialect != "http://json-schema.org/draft-07/schema" &&
-            dialect != "https://json-schema.org/draft-07/schema")
-            error("対応するJSON SchemaはDraft 7です");
+    if (schema.is_object() && schema.contains(strings::SchemaDialect)) {
+        const auto dialect = schema.at(strings::SchemaDialect).get<std::string>();
+        if (dialect != strings::Draft7Http &&
+            dialect != strings::Draft7Https &&
+            dialect != strings::HttpJsonSchemaOrgDraft07Schema &&
+            dialect != strings::HttpsJsonSchemaOrgDraft07Schema)
+            error(strings::UnsupportedSchemaDialect);
     }
     // Draft 7 permits format to be annotation-only. Network URI resolution is
     // deliberately disabled; local $ref and structural assertions are checked.
@@ -229,36 +180,36 @@ void validateOutput(const Json &schema, const Json &output) {
     validator.set_root_schema(schema); validator.validate(output);
 }
 Json schemaAt(const Json &schema, const QString &path) {
-    if (path == "#") return schema;
+    if (path == strings::WholeInput) return schema;
     const auto segments = parts(path);
     std::function<Json(Json, const Json &, size_t)> walk = [&](Json current, const Json &root, size_t index) -> Json {
         // Script output is dynamic: validate variable syntax here, its value at execution.
-        if (current.is_object() && current.contains("_anUnknown") && current["_anUnknown"] == true) return current;
-        if (current.is_object() && current.contains("_anSources")) {
+        if (current.is_object() && current.contains(strings::AnUnknown) && current[strings::AnUnknown] == true) return current;
+        if (current.is_object() && current.contains(strings::AnSources)) {
             std::vector<Json> alternatives;
-            for (auto &source : current.at("_anSources")) alternatives.push_back(walk(source, source, index));
-            return sources(alternatives);
+            for (auto &source : current.at(strings::AnSources)) alternatives.push_back(walk(source, source, index));
+            return schemaSources(alternatives);
         }
         if (index == segments.size()) return current;
         const auto &p = segments[index];
         // Resolve local references without allowing network schema loads.
         QSet<QString> refs;
-        while (current.is_object() && current.contains("$ref")) {
-            auto ref = q(current.at("$ref").get<std::string>());
-            if (!ref.startsWith('#') || refs.contains(ref)) error("解決できないスキーマ参照: " + ref);
+        while (current.is_object() && current.contains(strings::SchemaReference)) {
+            auto ref = q(current.at(strings::SchemaReference).get<std::string>());
+            if (!ref.startsWith('#') || refs.contains(ref)) error(strings::UnresolvedSchemaReference + ref);
             refs.insert(ref); current = Json(root.at(Json::json_pointer(s(ref.mid(1)))));
         }
         if (p.index) {
-            if (!current.is_object() || !current.contains("items")) error("スキーマに配列要素がありません: " + path);
-            auto items = current.at("items");
+            if (!current.is_object() || !current.contains(strings::Items)) error(strings::MissingSchemaItems + path);
+            auto items = current.at(strings::Items);
             if (items.is_array()) {
                 bool ok; auto i = p.key.toULongLong(&ok);
-                if (!ok || i >= items.size()) error("スキーマの配列範囲外: " + path);
+                if (!ok || i >= items.size()) error(strings::SchemaIndexOutOfRange + path);
                 current = items.at(size_t(i));
             } else current = items;
         } else {
-            if (!current.is_object() || !current.contains("properties") || !current["properties"].contains(s(p.key))) error("前段スキーマに変数がありません: " + path);
-            current = Json(current.at("properties").at(s(p.key)));
+            if (!current.is_object() || !current.contains(strings::Properties) || !current[strings::Properties].contains(s(p.key))) error(strings::MissingSchemaVariable + path);
+            current = Json(current.at(strings::Properties).at(s(p.key)));
         }
         return walk(current, root, index + 1);
     };
@@ -266,75 +217,42 @@ Json schemaAt(const Json &schema, const QString &path) {
 }
 QStringList Flow::validate() const {
     QStringList errors; int starts = 0, ends = 0;
-    for (auto &[id, n] : nodes) { starts += n.kind == Kind::Start; ends += n.kind == Kind::End; }
-    if (starts != 1) errors << "始端ノードは1つ必要です";
-    if (ends > 1) errors << "終端ノードは0個または1個にしてください";
+    for (auto &[id, n] : nodes) { starts += nodeDefinition(n.kind).source; ends += nodeDefinition(n.kind).terminal; }
+    if (starts != 1) errors << strings::MissingStart;
+    if (ends > 1) errors << strings::TooManyEnds;
     std::map<std::pair<Id, unsigned>, unsigned> incoming;
     for (auto &e : edges) {
-        if (!nodes.contains(e.from) || !nodes.contains(e.to)) { errors << "接続先ノードが存在しません"; continue; }
-        if (e.output >= outputCount(nodes.at(e.from)) || e.input >= inputCount(nodes.at(e.to))) errors << "接続ポートが範囲外です";
+        if (!nodes.contains(e.from) || !nodes.contains(e.to)) { errors << strings::MissingConnectionNode; continue; }
+        if (e.output >= outputCount(nodes.at(e.from)) || e.input >= inputCount(nodes.at(e.to))) errors << strings::InvalidConnectionPort;
         ++incoming[{e.to, e.input}];
     }
     for (size_t i = 0; i < edges.size(); ++i)
-        for (size_t j = 0; j < i; ++j) if (edges[i] == edges[j]) errors << "同じ接続が重複しています";
+        for (size_t j = 0; j < i; ++j) if (edges[i] == edges[j]) errors << strings::DuplicateConnection;
     QSet<Id> reachable, terminal;
     std::function<void(Id, bool)> trace = [&](Id id, bool reverse) {
         auto &seen = reverse ? terminal : reachable;
         if (seen.contains(id)) return; seen.insert(id);
         for (auto &e : edges) if ((reverse ? e.to : e.from) == id) trace(reverse ? e.from : e.to, reverse);
     };
-    for (auto &[id, n] : nodes) { if (n.kind == Kind::Start) trace(id, false); if (n.kind == Kind::End) trace(id, true); }
+    for (auto &[id, n] : nodes) { if (nodeDefinition(n.kind).source) trace(id, false); if (nodeDefinition(n.kind).terminal) trace(id, true); }
     for (auto &[id, n] : nodes) {
-        const auto label = QString("[%1] ").arg(n.title.isEmpty() ? kindName(n.kind) : n.title);
-        if (!reachable.contains(id)) errors << label + "始端から到達できません";
-        if (ends && !terminal.contains(id)) errors << label + "終端に到達できません";
-        for (unsigned p = 0; p < inputCount(n); ++p) if (!incoming.contains({id, p})) errors << label + QString("入力%1が未接続です").arg(p);
-        if ((n.kind == Kind::All || n.kind == Kind::Any) && (n.inputs == 0 || n.inputs > 256)) errors << label + "入力数は1〜256にしてください";
-        if (n.kind == Kind::UserInput) {
-            if (n.userChoices.isEmpty()) errors << label + "ユーザー選択肢は1個以上必要です";
-            for (const auto &choice : n.userChoices) if (choice.trimmed().isEmpty()) errors << label + "選択肢の名前が空です";
-            for (unsigned port = 0; port < outputCount(n); ++port) {
-                bool connected = false; for (const auto &edge : edges) if (edge.from == id && edge.output == port) connected = true;
-                if (!connected) errors << label + QString("選択肢出力%1が未接続です").arg(port);
-            }
-        }
-        if (isHostOperation(n.kind)) {
-            if (n.targetFlow.isEmpty()) errors << label + "フローを選択してください";
-            if (n.projectPath.trimmed().isEmpty()) errors << label + "プロジェクトパスが空です";
-        }
-        if (n.kind == Kind::Shell && n.shellCommand.trimmed().isEmpty()) errors << label + "シェルコマンドが空です";
-        if (n.kind == Kind::Shell && n.shellOutput != "json" && n.shellOutput != "text") errors << label + "シェルの出力形式が不正です";
-        if (n.kind == Kind::Delay || n.kind == Kind::Schedule) {
-            try {
-                if (n.kind == Kind::Delay) waitMilliseconds(n);
-                else Schedule(n).next(QDateTime(QDate(2000,1,1),QTime(0,0),QTimeZone::UTC));
-            } catch (const std::exception &error) { errors << label + QString::fromUtf8(error.what()); }
-        }
-        if (n.kind == Kind::Script) {
-            if (n.scriptLanguage != "python" && n.scriptLanguage != "javascript") errors << label + "スクリプト言語はPythonまたはJavaScriptを指定してください";
-            if (n.scriptPath.trimmed().isEmpty()) errors << label + "スクリプトファイルのパスが空です";
-        }
-        if (n.kind == Kind::Agent) {
-            if (n.prompt.trimmed().isEmpty()) errors << label + "プロンプトが空です";
-            if (n.agent != "Codex" && n.agent != "Claude Code" && n.agent != "OpenCode") errors << label + "不明なエージェントです";
-            try { if (!n.schema.trimmed().isEmpty()) checkSchema(parseJson(n.schema)); }
-            catch (const std::exception &e) { errors << label + "不正なJSON Schema: " + e.what(); }
+        const auto label = QString(strings::NodeErrorPrefix).arg(n.title.isEmpty() ? kindName(n.kind) : n.title);
+        if (!reachable.contains(id)) errors << label + strings::UnreachableFromStart;
+        if (ends && !terminal.contains(id)) errors << label + strings::UnreachableEnd;
+        for (unsigned p = 0; p < inputCount(n); ++p) if (!incoming.contains({id, p})) errors << label + QString(strings::UnconnectedInput).arg(p);
+        const auto &definition = nodeDefinition(n.kind);
+        for (const auto &message : definition.validate(*this, n)) errors << label + message;
+        if (definition.outputConnectionsRequired) for (unsigned port = 0; port < outputCount(n); ++port) {
+            const bool connected = std::any_of(edges.begin(), edges.end(), [&](const Edge &e) { return e.from == id && e.output == port; });
+            if (!connected) errors << label + definition.unconnectedOutputMessage.arg(port);
         }
         try {
             std::vector<Json> inputs;
             for (auto &e : edges) if (e.to == id) { QSet<Id> seen; inputs.push_back(outputSchema(*this, e.from, seen)); }
-            auto input = sources(inputs);
-            if (n.kind == Kind::Agent || n.kind == Kind::Shell || isHostOperation(n.kind)) {
-                QRegularExpression re(R"(\$\{([^}]+)\})"); auto it = re.globalMatch(isHostOperation(n.kind) ? n.projectPath : n.kind == Kind::Shell ? n.shellCommand : n.prompt);
-                while (it.hasNext()) schemaAt(input, it.next().captured(1));
-            }
-            if (n.kind == Kind::Branch) {
-                for (auto &r : n.rules) schemaAt(input, r.variable);
-                for (unsigned p = 0; p < outputCount(n); ++p) {
-                    bool connected = false; for (auto &e : edges) if (e.from == id && e.output == p) connected = true;
-                    if (!connected) errors << label + QString("分岐出力%1が未接続です").arg(p);
-                }
-            }
+            auto input = schemaSources(inputs);
+            QRegularExpression re(strings::InterpolationPattern); auto it = re.globalMatch(definition.interpolation(n));
+            while (it.hasNext()) schemaAt(input, it.next().captured(1));
+            for (const auto &path : definition.variables(n)) schemaAt(input, path);
         } catch (const std::exception &e) { errors << label + QString::fromUtf8(e.what()); }
     }
     errors.removeDuplicates(); return errors;

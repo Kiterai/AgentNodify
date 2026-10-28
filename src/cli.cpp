@@ -1,3 +1,4 @@
+#include "strings.h"
 #include "cli.h"
 #include <QFileInfo>
 #include <QStandardPaths>
@@ -12,10 +13,10 @@ QString resolveExecutable(const QString &program) {
 #ifdef Q_OS_WIN
     if (resolved.isEmpty()) {
         QStringList paths;
-        for (auto key : {"HKEY_CURRENT_USER\\Environment", "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment"}) {
+        for (auto key : {strings::UserEnvironmentRegistry, strings::MachineEnvironmentRegistry}) {
             QSettings settings(QString::fromLatin1(key), QSettings::NativeFormat);
-            auto path = settings.value("Path").toString();
-            QRegularExpression variable("%([^%]+)%");
+            auto path = settings.value(strings::Path).toString();
+            QRegularExpression variable(strings::EnvironmentVariablePattern);
             auto matches = variable.globalMatch(path); QString expanded; qsizetype last = 0;
             while (matches.hasNext()) {
                 auto match = matches.next(); expanded += path.mid(last, match.capturedStart() - last);

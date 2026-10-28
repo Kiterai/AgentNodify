@@ -33,6 +33,12 @@ signals:
     void userInputRequested(QString projectId, const an::UserInputRequest &request);
     void userInputClosed(QString requestId);
 private:
+    friend struct NodeRegistry;
+    void failOperation(const Node &, const QString &, Runner::HostCompletion);
+    void operateProjectCreate(Runner *, const Node &, const QString &, const QString &, Runner::HostCompletion);
+    void operateFlowRun(Runner *, const Node &, const QString &, const QString &, Runner::HostCompletion);
+    void operateFlowWait(Runner *, const Node &, const QString &, const QString &, Runner::HostCompletion);
+
     struct Waiter { QPointer<Runner> caller; Runner::HostCompletion complete; };
     struct Session {
         QString projectId;

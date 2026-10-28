@@ -1,4 +1,5 @@
 #pragma once
+#include "constants.h"
 #include "progress.h"
 #include <QScrollArea>
 #include <QWidget>
@@ -16,7 +17,7 @@ public:
     void setValue(const Json &value, bool markdown = true, bool forceJson = false);
     void setPlainText(const QString &text);
     QString toPlainText() const { return plain_; }
-    void setCompactMessage(int maxLines = 3);
+    void setCompactMessage(int maxLines = metrics::UserMessageLines);
 private:
     QTextBrowser *browser_;
     QTreeWidget *tree_;
