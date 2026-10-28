@@ -56,7 +56,14 @@ target_compile_definitions(agentnodeforms PRIVATE AGENTNODIFY_NODE_UI)
 target_link_libraries(agentnodeforms PRIVATE agentcore Qt6::Widgets)
 target_sources(agentui PRIVATE $<TARGET_OBJECTS:agentnodeforms>)
 target_link_libraries(agentui PUBLIC agentcore Qt6::Widgets QtNodes::QtNodes)
+qt_add_resources(agentui application_icons
+  PREFIX "/icons"
+  BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets"
+  FILES assets/agentnodify.ico)
 add_executable(AgentNodify WIN32 src/app/main.cpp)
+if(WIN32)
+  target_sources(AgentNodify PRIVATE assets/agentnodify.rc)
+endif()
 if(APPLE)
   set_target_properties(AgentNodify PROPERTIES
     MACOSX_BUNDLE TRUE

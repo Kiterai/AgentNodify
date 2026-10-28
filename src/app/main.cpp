@@ -29,7 +29,9 @@ int main(int argc, char **argv) {
         QMessageBox::warning(nullptr, an::strings::ApplicationName, message);
         return 1;
     }
-    an::Window window(smoke); window.show();
+    an::Window window(smoke);
+    app.setWindowIcon(window.windowIcon());
+    window.showMaximized();
     QObject::connect(&window, &an::Window::quitRequested, &app, &QCoreApplication::quit);
     if (smoke) QTimer::singleShot(an::time::SmokeMilliseconds, &app, [&] { app.exit(window.smokeTest() ? 0 : 1); });
     return app.exec();

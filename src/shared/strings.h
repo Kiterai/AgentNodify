@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 namespace an::strings {
+inline constexpr char ApplicationIconResource[] = ":/icons/agentnodify.ico";
 inline constexpr char16_t EllipsisCharacter = u'…';
 inline constexpr char16_t LineSeparator = u'\u2028', ParagraphSeparator = u'\u2029';
 namespace detail {

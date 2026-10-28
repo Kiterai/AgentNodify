@@ -48,6 +48,19 @@ void GuiTest::initTestCase() {
     QStandardPaths::setTestModeEnabled(true);
     QCoreApplication::setApplicationName("AgentNodify GUI tests");
 }
+void GuiTest::applicationIconAsset() {
+    Window window(true);
+    const QIcon asset(strings::ApplicationIconResource);
+    QVERIFY(!asset.isNull());
+    QVERIFY(!window.windowIcon().isNull());
+    for (const QSize size : {QSize(16, 16), QSize(32, 32), QSize(48, 48), QSize(256, 256)}) {
+        QVERIFY(asset.availableSizes().contains(size));
+        const auto image = asset.pixmap(size).toImage();
+        QVERIFY(!image.isNull());
+        QCOMPARE(window.windowIcon().pixmap(size).toImage(), image);
+        QCOMPARE(window.trayIcon_->icon().pixmap(size).toImage(), image);
+    }
+}
 void GuiTest::previewHeightAndClick() {
     TextPreview preview; preview.setFixedWidth(280); preview.show();
     preview.setPlainText("short"); QCOMPARE(preview.visibleLines(), 1);

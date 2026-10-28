@@ -6,6 +6,7 @@ class GuiTest : public QObject {
     Q_OBJECT
 private slots:
     void initTestCase();
+    void applicationIconAsset();
     void previewHeightAndClick();
     void embeddedParameters();
     void branchAndInputForms();

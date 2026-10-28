@@ -1,0 +1,2 @@
+// Keep the executable and Qt window icons backed by the same asset.
+1 ICON "agentnodify.ico"

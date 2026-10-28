@@ -46,6 +46,9 @@
 #include <QMimeData>
 #include <QtNodes/internal/NodeGraphicsObject.hpp>
 
+// Resource initialization must be declared outside the application namespace.
+static void initializeApplicationIcons() { Q_INIT_RESOURCE(application_icons); }
+
 namespace an {
 namespace {
 Json historyShape(const Flow &flow, bool positions = true) {
@@ -195,17 +198,10 @@ QIcon projectStatusIcon(bool inputWaiting) {
     return icon;
 }
 QIcon applicationIcon() {
-    QIcon icon;
-    for (int size : metrics::ApplicationIconSizes) {
-        QPixmap image(size, size); image.fill(colors::Transparent);
-        QPainter painter(&image); painter.setRenderHint(QPainter::Antialiasing); painter.scale(size / metrics::ApplicationDesignExtent, size / metrics::ApplicationDesignExtent);
-        painter.setPen(Qt::NoPen); painter.setBrush(QColor(colors::MenuBackground)); painter.drawRoundedRect(metrics::ApplicationIconRect, metrics::ApplicationRadius, metrics::ApplicationRadius);
-        painter.setPen(QPen(QColor(colors::ApplicationIconStroke), metrics::ApplicationStroke));
-        for (const auto &line : metrics::ApplicationEdges) painter.drawLine(line);
-        painter.setPen(Qt::NoPen); painter.setBrush(QColor(colors::ApplicationIconFill));
-        for (auto point : metrics::ApplicationNodes) painter.drawEllipse(point, metrics::ApplicationNodeRadius, metrics::ApplicationNodeRadius);
-        painter.end(); icon.addPixmap(image);
-    }
+    static const QIcon icon = [] {
+        initializeApplicationIcons();
+        return QIcon(strings::ApplicationIconResource);
+    }();
     return icon;
 }
 std::string str(const QString &s) { return s.toUtf8().toStdString(); }
@@ -1175,6 +1171,7 @@ void Window::closeEvent(QCloseEvent *event) {
     persist(); event->accept();
 }
 bool Window::smokeTest() {
+    if (!isMaximized() || windowIcon().isNull() || QApplication::windowIcon().cacheKey() != windowIcon().cacheKey()) return false;
     auto id = editGraph_->addNode(strings::Agent); if (id == QtNodes::InvalidNodeId) return false;
     const auto end = editGraph_->addNode(strings::End); if (end == QtNodes::InvalidNodeId) return false;
     selectNode(id); showText(strings::Prompt); text_->setPlainText(strings::SayHello);
