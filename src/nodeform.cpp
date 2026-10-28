@@ -20,7 +20,6 @@
 #include <QScrollBar>
 #include <QSignalBlocker>
 #include <QSpinBox>
-#include <QDoubleSpinBox>
 #include <QGridLayout>
 #include <algorithm>
 #include <QTextBlock>
@@ -131,7 +130,7 @@ void TextPreview::resizeToText() {
 }
 
 NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : QWidget(parent), node_(node), catalog_(catalog) {
-    setObjectName("nodeForm"); setFixedWidth(node.kind == Kind::All || node.kind == Kind::Any || node.kind == Kind::Branch || node.kind == Kind::UserInput ? 210 : 320);
+    setObjectName("nodeForm"); setFixedWidth(node.kind == Kind::All || node.kind == Kind::Any || node.kind == Kind::Branch || node.kind == Kind::UserInput || node.kind == Kind::Delay || node.kind == Kind::Schedule ? 210 : 320);
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     setToolTip(nodeDescription(node.kind));
     setStyleSheet(R"(
@@ -140,13 +139,12 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
         QWidget#nodeForm QLabel { background: transparent; color:#b8c8df; }
         QWidget#nodeForm QCheckBox, QWidget#nodeForm QCheckBox:disabled { color:#e6edf8; spacing:6px; }
         QWidget#nodeForm QCheckBox::indicator { width:16px; height:16px; }
-        QWidget#nodeForm QLineEdit, QWidget#nodeForm QComboBox, QWidget#nodeForm QSpinBox, QWidget#nodeForm QDoubleSpinBox,
+        QWidget#nodeForm QLineEdit, QWidget#nodeForm QComboBox, QWidget#nodeForm QSpinBox,
         QWidget#nodeForm QPlainTextEdit { background:#17202e; color:#e6edf8; border:1px solid #46566e; border-radius:4px; padding:5px; selection-background-color:#3b5680; }
         QWidget#nodeForm QPushButton { background:#314159; color:#dce5f3; border:1px solid #4b5d79; border-radius:4px; padding:4px 8px; }
         QWidget#nodeForm QPushButton:hover { background:#455d7f; }
     )");
-    if (node.kind == Kind::UserInput) setStyleSheet(styleSheet() + "QWidget#nodeForm, QWidget#nodeForm QLabel { color:#40242c; }");
-    if (node.kind == Kind::Delay || node.kind == Kind::Schedule) setStyleSheet(styleSheet() + "QWidget#nodeForm, QWidget#nodeForm QLabel { color:#173b5b; }");
+    if (hasSpecialNodeBackground(node.kind)) setStyleSheet(styleSheet() + QString("QWidget#nodeForm, QWidget#nodeForm QLabel { color:%1; }").arg(nodeForeground(node.kind).name()));
     auto *layout = new QVBoxLayout(this); layout->setContentsMargins(8, 8, 8, 8); layout->setSpacing(6);
     auto *form = new QFormLayout; form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     parameterForm_ = form;
@@ -275,12 +273,12 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
         connect(targetFlow_, &QComboBox::currentIndexChanged, this, [this] { if (!updating_) { node_.targetFlow = targetFlow_->currentData().toString(); publish(); } });
         connect(projectPath_, &QLineEdit::textEdited, this, [this](const QString &text) { node_.projectPath = text; publish(); });
     } else if (node.kind == Kind::Delay) {
-        waitDuration_=new QDoubleSpinBox; waitDuration_->setObjectName("waitDuration"); waitDuration_->setRange(0,1000000); waitDuration_->setDecimals(3); waitDuration_->setValue(node.waitDuration);
+        waitDuration_=new QSpinBox; waitDuration_->setObjectName("waitDuration"); waitDuration_->setMinimumWidth(0); waitDuration_->setRange(0,1000000); waitDuration_->setValue(node.waitDuration);
         waitUnit_=new QComboBox; waitUnit_->setObjectName("waitUnit"); styleComboBoxPopup(waitUnit_);
         for (const auto &[label,value] : std::vector<std::pair<QString,QString>>{{"日","days"},{"時間","hours"},{"分","minutes"},{"秒","seconds"}}) waitUnit_->addItem(label,value);
         if(waitUnit_->findData(node.waitUnit)<0) waitUnit_->addItem(node.waitUnit+"（未対応）",node.waitUnit);
         waitUnit_->setCurrentIndex(waitUnit_->findData(node.waitUnit)); form->addRow("待機時間",waitDuration_); form->addRow("単位",waitUnit_);
-        connect(waitDuration_,&QDoubleSpinBox::valueChanged,this,[this](double value){if(!updating_ && !readOnly_) {node_.waitDuration=value;publish();}});
+        connect(waitDuration_,&QSpinBox::valueChanged,this,[this](int value){if(!updating_ && !readOnly_) {node_.waitDuration=value;publish();}});
         connect(waitUnit_,&QComboBox::currentIndexChanged,this,[this]{if(!updating_ && !readOnly_) {node_.waitUnit=waitUnit_->currentData().toString();publish();}});
     } else if (node.kind == Kind::Schedule) {
         auto addField=[this,form](const QString &label,const QString &name,const QString &value,int low,int high,QString Node::*field) {
@@ -292,11 +290,11 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
         scheduleDay_=addField("日","scheduleDay",node.scheduleDay,1,31,&Node::scheduleDay);
         scheduleHour_=addField("時","scheduleHour",node.scheduleHour,0,23,&Node::scheduleHour);
         scheduleMinute_=addField("分","scheduleMinute",node.scheduleMinute,0,59,&Node::scheduleMinute);
-        auto *weekdays=new QWidget; weekdays->setObjectName("scheduleWeekdays"); auto *grid=new QGridLayout(weekdays); grid->setContentsMargins(0,0,0,0); grid->setSpacing(4);
+        auto *weekdays=new QWidget; weekdays->setObjectName("scheduleWeekdays"); weekdays->setFixedWidth(132); auto *grid=new QGridLayout(weekdays); grid->setContentsMargins(0,0,0,0); grid->setHorizontalSpacing(1); grid->setVerticalSpacing(2);
         const QStringList names={"月","火","水","木","金","土","日"};
         for(int i=0;i<7;++i) {
-            auto *check=new NodeCheckBox(""); check->setObjectName(QString("scheduleWeekday%1").arg(i+1)); check->setAccessibleName(names[i]+"曜日"); check->setChecked(std::find(node.scheduleWeekdays.begin(),node.scheduleWeekdays.end(),i+1)!=node.scheduleWeekdays.end());
-            auto *label=new QLabel(names[i]); label->setObjectName(QString("scheduleWeekdayLabel%1").arg(i+1)); label->setAlignment(Qt::AlignCenter);
+            auto *check=new NodeCheckBox(""); check->setFixedSize(18,20); check->setObjectName(QString("scheduleWeekday%1").arg(i+1)); check->setAccessibleName(names[i]+"曜日"); check->setChecked(std::find(node.scheduleWeekdays.begin(),node.scheduleWeekdays.end(),i+1)!=node.scheduleWeekdays.end());
+            auto *label=new QLabel(names[i]); label->setFixedWidth(18); label->setObjectName(QString("scheduleWeekdayLabel%1").arg(i+1)); label->setAlignment(Qt::AlignCenter);
             grid->addWidget(check,0,i,Qt::AlignCenter); grid->addWidget(label,1,i); scheduleWeekdays_.push_back(check); weekdayLabels_.push_back(label);
             connect(check,&QCheckBox::toggled,this,[this]{if(updating_ || readOnly_)return;node_.scheduleWeekdays.clear();for(size_t day=0;day<scheduleWeekdays_.size();++day)if(scheduleWeekdays_[day]->isChecked())node_.scheduleWeekdays.push_back(int(day+1));updateWeekdayLabels();publish();});
         }

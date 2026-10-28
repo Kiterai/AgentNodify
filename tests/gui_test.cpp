@@ -375,8 +375,7 @@ void GuiTest::optionalTerminalControls() {
     window.editScene_->clearSelection();window.editScene_->nodeGraphicsObject(id)->setSelected(true);for(auto *action:window.editView_->actions())if(action->shortcut()==QKeySequence(Qt::CTRL|Qt::Key_D))action->trigger();QCOMPARE(window.editGraph_->flow.nodes.size(),size_t(2));
     auto answer=[&](QMessageBox::StandardButton button){QTimer::singleShot(0,&window,[button]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget());QVERIFY(box);box->button(button)->click();});};
     window.editScene_->clearSelection(); window.editScene_->nodeGraphicsObject(id)->setSelected(true);
-    answer(QMessageBox::Cancel); window.editView_->deleteSelectionAction()->trigger(); QVERIFY(window.editGraph_->nodeExists(id)); QVERIFY(!add->isEnabled());
-    answer(QMessageBox::Ok); window.editView_->deleteSelectionAction()->trigger(); QVERIFY(!window.editGraph_->nodeExists(id)); QVERIFY(add->isEnabled());
+    window.editView_->deleteSelectionAction()->trigger(); QVERIFY(!window.editGraph_->nodeExists(id)); QVERIFY(add->isEnabled()); QVERIFY(!QApplication::activeModalWidget());
     window.stepHistory(false); QVERIFY(window.editGraph_->nodeExists(id)); QVERIFY(!add->isEnabled());
     answer(QMessageBox::Ok); window.stepHistory(true); QVERIFY(add->isEnabled());
     window.newFlow(); QCOMPARE(window.editGraph_->flow.nodes.size(),size_t(1)); QVERIFY(add->isEnabled());
@@ -384,9 +383,11 @@ void GuiTest::optionalTerminalControls() {
 }
 void GuiTest::timingNodeForms() {
     Window window(true); window.show(); QTest::mouseClick(window.findChild<QPushButton *>("addNode_delay"),Qt::LeftButton); const auto delay=window.selected_;
-    auto *form=window.editGraph_->form(delay); auto *duration=form->findChild<QDoubleSpinBox *>("waitDuration"); auto *unit=form->findChild<QComboBox *>("waitUnit"); QVERIFY(duration); QVERIFY(unit); QCOMPARE(unit->count(),4); QCOMPARE(unit->currentData().toString(),QString("seconds"));
-    duration->setValue(0.5); unit->setCurrentIndex(unit->findData("hours")); QCOMPARE(window.editGraph_->flow.nodes.at(delay).waitUnit,QString("hours")); window.stepHistory(false); QCOMPARE(unit->currentData().toString(),QString("seconds")); window.stepHistory(true); QCOMPARE(unit->currentData().toString(),QString("hours"));
+    auto *form=window.editGraph_->form(delay); auto *duration=form->findChild<QSpinBox *>("waitDuration"); auto *unit=form->findChild<QComboBox *>("waitUnit"); QVERIFY(duration); QVERIFY(!form->findChild<QDoubleSpinBox *>("waitDuration")); QVERIFY(unit); QCOMPARE(unit->count(),4); QCOMPARE(unit->currentData().toString(),QString("seconds"));
+    QCOMPARE(form->width(),210);QVERIFY(!form->findChild<QLineEdit *>("nodeTitle")); duration->setValue(5);duration->setFocus();QTest::keyClick(duration,Qt::Key_Period);QVERIFY(!duration->text().contains('.'));
+    unit->setCurrentIndex(unit->findData("hours")); QCOMPARE(window.editGraph_->flow.nodes.at(delay).waitUnit,QString("hours")); window.stepHistory(false); QCOMPARE(unit->currentData().toString(),QString("seconds")); window.stepHistory(true); QCOMPARE(unit->currentData().toString(),QString("hours"));
     QTest::mouseClick(window.findChild<QPushButton *>("addNode_schedule"),Qt::LeftButton); const auto schedule=window.selected_; auto *scheduled=window.editGraph_->form(schedule);
+    QCOMPARE(scheduled->width(),210);QCOMPARE(scheduled->findChild<QWidget *>("scheduleWeekdays")->width(),132);QVERIFY(!scheduled->findChild<QLineEdit *>("nodeTitle"));
     for(QString field:{"scheduleMonth","scheduleDay","scheduleHour","scheduleMinute"}){auto *edit=scheduled->findChild<QLineEdit *>(field); QVERIFY(edit); QCOMPARE(edit->text(),QString("*"));}
     auto *month=scheduled->findChild<QLineEdit *>("scheduleMonth");month->setFocus();month->selectAll();QTest::keyClicks(month,"1,2"); QCOMPARE(window.editGraph_->flow.nodes.at(schedule).scheduleMonth,QString("1,2"));window.stepHistory(false);QCOMPARE(month->text(),QString("*"));window.stepHistory(true);
     for(int day=1;day<=7;++day){auto *check=scheduled->findChild<QCheckBox *>(QString("scheduleWeekday%1").arg(day));auto *label=scheduled->findChild<QLabel *>(QString("scheduleWeekdayLabel%1").arg(day));QVERIFY(check);QVERIFY(label);QVERIFY(!check->isChecked());QVERIFY(label->styleSheet().contains("#75899c"));}
@@ -398,7 +399,7 @@ void GuiTest::timingNodeForms() {
     QCoreApplication::processEvents();QVERIFY(scheduled->findChild<QLabel *>("scheduleWeekdayLabel1")->y()>monday->y());static_cast<GraphView *>(window.editView_)->zoomToFit();QVERIFY(window.grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-timing-nodes.png")));
 }
 void GuiTest::endlessDelayInWindow() {
-    QTemporaryDir directory;Window window(true);window.show();auto flow=Flow::initial(false);Node delay;delay.id=3;delay.kind=Kind::Delay;delay.waitDuration=0.02;flow.nodes[3]=delay;flow.edges={{1,3},{3,3}};window.editGraph_->replace(flow);window.changed();
+    QTemporaryDir directory;Window window(true);window.show();auto flow=Flow::initial(false);Node delay;delay.id=3;delay.kind=Kind::Delay;delay.waitDuration=1;flow.nodes[3]=delay;flow.edges={{1,3},{3,3}};window.editGraph_->replace(flow);window.changed();
     window.projects_.push_back({"Endless",directory.path(),window.documents_[0].path,{}});window.refreshProjects();window.tabs_->setCurrentIndex(1);QSignalSpy done(window.runner_,&Runner::finished);window.executeFlow();QTRY_VERIFY(window.runner_->results().at(3).executions>=2);QVERIFY(done.isEmpty());QVERIFY(window.stopButton_->isEnabled());
     QTimer::singleShot(0,&window,[]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget());QVERIFY(box);box->button(QMessageBox::Ok)->click();});QTest::mouseClick(window.stopButton_,Qt::LeftButton);QTRY_COMPARE(done.count(),1);QVERIFY(!window.busy());
 }
@@ -406,7 +407,7 @@ void GuiTest::editorUndoRedoParameters() {
     Window window(true); window.show(); QCoreApplication::processEvents();
     QTest::mouseClick(window.findChild<QPushButton *>("addNode_agent"),Qt::LeftButton); const auto id=window.selected_; const auto position=window.editGraph_->flow.nodes.at(id).position;
     auto stack=window.documents_[0].undo; QCOMPARE(stack->count(),1); QVERIFY(window.undoAction_->isEnabled());
-    auto answer=[&](QMessageBox::StandardButton button) { QTimer::singleShot(0,&window,[button]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); QCOMPARE(box->windowTitle(),QString("ノードを削除")); box->button(button)->click();}); };
+    auto answer=[&](QMessageBox::StandardButton button) { QTimer::singleShot(0,&window,[button]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); QCOMPARE(box->windowTitle(),QString("ノードを削除")); QCOMPARE(box->standardButton(box->defaultButton()),QMessageBox::Ok);if(button==QMessageBox::Ok)QTest::keyClick(box,Qt::Key_Return);else box->button(button)->click();}); };
     answer(QMessageBox::Cancel); window.stepHistory(false); QCOMPARE(stack->index(),1); QVERIFY(window.editGraph_->nodeExists(id));
     answer(QMessageBox::Ok); window.stepHistory(false); QCOMPARE(stack->index(),0); QVERIFY(!window.editGraph_->nodeExists(id));
     window.stepHistory(true); QVERIFY(window.editGraph_->nodeExists(id)); QCOMPARE(window.editGraph_->flow.nodes.at(id).position,position);
@@ -433,15 +434,14 @@ void GuiTest::editorUndoRedoDeletion() {
     flow.edges={{1,3},{3,4},{4,2},{3,3}}; window.editGraph_->replace(flow); window.changed(); auto stack=window.documents_[0].undo; stack->clear();
     int warnings=0; auto answer=[&](QMessageBox::StandardButton button) { QTimer::singleShot(0,&window,[&,button]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); QCOMPARE(box->windowTitle(),QString("ノードを削除")); ++warnings; box->button(button)->click();}); };
     window.editScene_->clearSelection(); window.editScene_->nodeGraphicsObject(3)->setSelected(true); window.editScene_->nodeGraphicsObject(4)->setSelected(true);
-    window.editView_->setFocus(); window.editScene_->clearFocus(); QCoreApplication::processEvents(); answer(QMessageBox::Cancel); QTest::keyClick(window.editView_,Qt::Key_Delete); QCOMPARE(stack->count(),0); QCOMPARE(window.editGraph_->flow.edges,flow.edges); QVERIFY(window.editGraph_->nodeExists(3));
-    answer(QMessageBox::Ok); window.editView_->deleteSelectionAction()->trigger(); QCOMPARE(stack->count(),1); QVERIFY(!window.editGraph_->nodeExists(3)); QVERIFY(!window.editGraph_->nodeExists(4)); QVERIFY(window.editGraph_->flow.edges.empty()); QCOMPARE(warnings,2);
-    window.stepHistory(false); QCOMPARE(window.editGraph_->flow.edges,flow.edges); QCOMPARE(window.editGraph_->flow.nodes.at(3).title,QString("Question 3")); QCOMPARE(window.editGraph_->flow.nodes.at(3).position,flow.nodes.at(3).position); QCOMPARE(warnings,2);
+    window.editView_->setFocus(); window.editScene_->clearFocus(); QCoreApplication::processEvents(); QTest::keyClick(window.editView_,Qt::Key_Delete); QCOMPARE(stack->count(),1); QVERIFY(!window.editGraph_->nodeExists(3)); QVERIFY(!window.editGraph_->nodeExists(4)); QVERIFY(window.editGraph_->flow.edges.empty()); QCOMPARE(warnings,0); QVERIFY(!QApplication::activeModalWidget());
+    window.stepHistory(false); QCOMPARE(window.editGraph_->flow.edges,flow.edges); QCOMPARE(window.editGraph_->flow.nodes.at(3).title,QString("Question 3")); QCOMPARE(window.editGraph_->flow.nodes.at(3).position,flow.nodes.at(3).position); QCOMPARE(warnings,0);
     answer(QMessageBox::Cancel); window.stepHistory(true); QCOMPARE(stack->index(),0); QVERIFY(window.editGraph_->nodeExists(3));
     answer(QMessageBox::Ok); window.stepHistory(true); QCOMPARE(stack->index(),1); QVERIFY(!window.editGraph_->nodeExists(3)); window.stepHistory(false);
     // Edges alone, including ones attached to terminals, need no warning.
     window.editScene_->clearSelection(); auto *connection=window.editScene_->connectionGraphicsObject({1,0,3,0}); QVERIFY(connection); connection->setSelected(true);
-    window.editView_->deleteSelectionAction()->trigger(); QVERIFY(!window.editGraph_->connectionExists({1,0,3,0})); QVERIFY(window.editGraph_->nodeExists(3)); QCOMPARE(warnings,4);
-    window.stepHistory(false); QVERIFY(window.editGraph_->connectionExists({1,0,3,0})); QCOMPARE(warnings,4);
+    window.editView_->deleteSelectionAction()->trigger(); QVERIFY(!window.editGraph_->connectionExists({1,0,3,0})); QVERIFY(window.editGraph_->nodeExists(3)); QCOMPARE(warnings,2);
+    window.stepHistory(false); QVERIFY(window.editGraph_->connectionExists({1,0,3,0})); QCOMPARE(warnings,2);
     window.editScene_->clearSelection(); window.editScene_->nodeGraphicsObject(1)->setSelected(true); const int count=stack->count(); window.editView_->deleteSelectionAction()->trigger(); QCOMPARE(stack->count(),count); QVERIFY(window.editGraph_->nodeExists(1));
 }
 void GuiTest::editorUndoIsolationAndPorts() {
@@ -487,10 +487,7 @@ void GuiTest::nodeContextAndMenuSpacing() {
             if (!menu) return;
             shown = menu->objectName() == "nodeContextMenu";
             const auto text = menu->actions()[0]->text(); const bool active = menu->actions()[0]->isEnabled();
-            if (enabled) {
-                QTimer::singleShot(0, &window, [] { auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); QCOMPARE(box->windowTitle(),QString("ノードを削除")); box->button(QMessageBox::Ok)->click(); });
-                menu->actions()[0]->trigger();
-            }
+            if (enabled) menu->actions()[0]->trigger();
             menu->close();
             QCOMPARE(text, QString("削除")); QCOMPARE(active, enabled);
         });
@@ -836,7 +833,7 @@ void GuiTest::compactNamelessNodes() {
     Graph graph; graph.replace(Flow::initial());
     const auto agent=graph.addNode("agent"); auto named=graph.flow.nodes.at(agent); named.title="Custom agent"; graph.updateNode(named);
     QCOMPARE(graph.nodeData(agent,NodeRole::Caption).toString(),kindName(Kind::Agent)); QCOMPARE(graph.form(agent)->findChild<QLineEdit *>("nodeTitle")->text(),named.title);
-    for(Kind kind:{Kind::All,Kind::Any,Kind::Branch,Kind::UserInput}) {
+    for(Kind kind:{Kind::All,Kind::Any,Kind::Branch,Kind::UserInput,Kind::Delay,Kind::Schedule}) {
         const auto id=graph.addNode(kindKey(kind)); auto *form=graph.form(id); QVERIFY(form); form->show(); QCoreApplication::processEvents(); QCOMPARE(form->width(),210);
         QCOMPARE(graph.nodeData(id,NodeRole::Caption).toString(),kindName(kind));
         if(kind!=Kind::UserInput) { QVERIFY(!form->findChild<QLineEdit *>("nodeTitle")); QVERIFY(graph.flow.nodes.at(id).title.isEmpty()); auto node=graph.flow.nodes.at(id); node.title="Old name"; graph.updateNode(node); QVERIFY(graph.flow.nodes.at(id).title.isEmpty()); }
@@ -844,6 +841,16 @@ void GuiTest::compactNamelessNodes() {
     }
     auto saved=graph.flow.toJson(); for(auto &node:saved["nodes"]) if(!hasNodeName(parseKind(node["kind"]))) node["title"]="legacy name";
     const auto restored=Flow::fromJson(saved); for(const auto &[id,node]:restored.nodes) if(!hasNodeName(node.kind)) QVERIFY(node.title.isEmpty());
+}
+void GuiTest::nodeColorsAndPalette() {
+    Window window(true); window.show(); int i=0;
+    for(const auto &[kind,color]:std::vector<std::pair<Kind,QColor>>{{Kind::All,QColor("#142b49")},{Kind::Any,QColor("#142b49")},{Kind::Branch,QColor("#e59a42")},{Kind::UserInput,QColor("#6f2635")},{Kind::Delay,QColor("#9ac9f2")},{Kind::Schedule,QColor("#9ac9f2")},{Kind::End,QColor("#efc65e")}}) {
+        const auto id=window.editGraph_->addNode(kindKey(kind)); QVERIFY(id!=InvalidNodeId); window.editGraph_->setNodeData(id,NodeRole::Position,QPointF((i%3)*360,(i/3)*280));++i;
+        NodeStyle style(QJsonObject::fromVariantMap(window.editGraph_->nodeData(id,NodeRole::Style).toMap()));QCOMPARE(style.GradientColor0,color);QCOMPARE(style.FontColor,nodeForeground(kind));QCOMPARE(style.NormalBoundaryColor,nodeAccent(kind));QVERIFY(style.NormalBoundaryColor!=style.GradientColor0);
+        auto *button=window.findChild<QPushButton *>("addNode_"+kindKey(kind));QVERIFY(button);QVERIFY(button->styleSheet().contains("background:"+color.name()));
+        if(kind==Kind::End)QVERIFY(!button->isEnabled());
+    }
+    window.editGraph_->setNodeData(1,NodeRole::Position,QPointF(-120,100));QCoreApplication::processEvents();static_cast<GraphView *>(window.editView_)->zoomToFit();QVERIFY(window.grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-node-colors.png")));
 }
 void GuiTest::runningFlowEditRestrictions() {
     QTemporaryDir directory; Window window(true); window.show(); auto flow=Flow::initial();
@@ -885,7 +892,7 @@ void GuiTest::startAndStopDialogs() {
     window.config_.codex+=".exe";
 #endif
     window.smoke_=false; QStringList dialogs; QMessageBox::StandardButton answer=QMessageBox::Cancel;
-    QTimer responder; responder.setInterval(5); connect(&responder,&QTimer::timeout,&window,[&] { if(auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) { dialogs<<box->windowTitle(); box->done(answer); } }); responder.start();
+    QTimer responder; responder.setInterval(5); connect(&responder,&QTimer::timeout,&window,[&] { if(auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) { dialogs<<box->windowTitle(); if(box->windowTitle()=="フローを停止" && answer==QMessageBox::Ok){QCOMPARE(box->standardButton(box->defaultButton()),QMessageBox::Ok);QTest::keyClick(box,Qt::Key_Return);}else box->done(answer); } }); responder.start();
     window.executeFlow(); QTRY_VERIFY(window.runner_->running()); QTest::qWait(40); QVERIFY(dialogs.isEmpty());
     window.tabs_->setCurrentIndex(0); auto changed=window.editGraph_->flow.nodes.at(3); changed.prompt="changed"; answer=QMessageBox::Ok; window.editGraph_->updateNode(changed); QCOMPARE(window.editGraph_->flow.nodes.at(3).prompt,QString("SLEEP")); QCOMPARE(dialogs,QStringList{"実行中のフロー"}); dialogs.clear();
     window.tabs_->setCurrentIndex(1); answer=QMessageBox::Cancel; QTest::mouseClick(window.stopButton_,Qt::LeftButton); QVERIFY(window.busy()); QCOMPARE(dialogs,QStringList{"フローを停止"}); dialogs.clear();
@@ -1050,7 +1057,7 @@ void GuiTest::userInputNodeForm() {
     window.workGraph_->replace(window.editGraph_->flow); auto *readonly = window.workGraph_->form(id);
     QVERIFY(readonly->findChild<QLineEdit *>("choiceName")->isReadOnly()); QVERIFY(!readonly->findChild<QPushButton *>("addChoice")->isEnabled());
     for (auto state : {State::Pending,State::Running,State::Succeeded}) {
-        window.editGraph_->states[id] = state; NodeStyle style(QJsonObject::fromVariantMap(window.editGraph_->nodeData(id,NodeRole::Style).toMap())); QCOMPARE(style.GradientColor0,QColor("#f2a4a4")); QCOMPARE(style.FontColor,QColor("#40242c"));
+        window.editGraph_->states[id] = state; NodeStyle style(QJsonObject::fromVariantMap(window.editGraph_->nodeData(id,NodeRole::Style).toMap())); QCOMPARE(style.GradientColor0,QColor("#6f2635")); QCOMPARE(style.FontColor,QColor("#f6e3e7"));
     }
     window.editGraph_->setNodeData(1,NodeRole::Position,QPointF(0,140)); window.editGraph_->setNodeData(id,NodeRole::Position,QPointF(250,30)); window.editGraph_->setNodeData(2,NodeRole::Position,QPointF(850,140));
     form->grab();

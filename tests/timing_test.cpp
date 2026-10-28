@@ -9,7 +9,7 @@
 using namespace an;
 namespace {
 QDateTime utc(QString value) { return QDateTime::fromString(value,Qt::ISODateWithMs); }
-Node timerNode(Kind kind,Id id=3) { Node node; node.id=id; node.kind=kind; node.waitDuration=0.03; return node; }
+Node timerNode(Kind kind,Id id=3) { Node node; node.id=id; node.kind=kind; node.waitDuration=1; return node; }
 }
 class TimingTest : public QObject {
     Q_OBJECT
@@ -20,13 +20,14 @@ private slots:
         auto schedule=timerNode(Kind::Schedule,4); schedule.scheduleMonth="1,2"; schedule.scheduleDay="*/2"; schedule.scheduleHour="3,12"; schedule.scheduleMinute="*/5"; schedule.scheduleWeekdays={1,3,5};
         flow.nodes[4]=schedule; flow.edges={{1,3},{3,4},{4,3}}; QVERIFY(flow.validate().isEmpty()); QVERIFY(Flow::fromJson(flow.toJson()).toJson()==flow.toJson());
         auto legacy=flow.toJson(); for(auto &node:legacy["nodes"]) {node.erase("waitDuration");node.erase("waitUnit");node.erase("scheduleMonth");node.erase("scheduleWeekdays");}
-        const auto restored=Flow::fromJson(legacy); QCOMPARE(restored.nodes.at(3).waitDuration,1.0); QCOMPARE(restored.nodes.at(3).waitUnit,QString("seconds")); QCOMPARE(restored.nodes.at(4).scheduleMonth,QString("*")); QVERIFY(restored.nodes.at(4).scheduleWeekdays.empty());
+        const auto restored=Flow::fromJson(legacy); QCOMPARE(restored.nodes.at(3).waitDuration,1); QCOMPARE(restored.nodes.at(3).waitUnit,QString("seconds")); QCOMPARE(restored.nodes.at(4).scheduleMonth,QString("*")); QVERIFY(restored.nodes.at(4).scheduleWeekdays.empty());
+        auto fractional=flow.toJson();for(auto &node:fractional["nodes"])if(node["kind"]=="delay")node["waitDuration"]=0.5;QVERIFY_THROWS_EXCEPTION(std::exception,Flow::fromJson(fractional));
         Node end; end.kind=Kind::End; end.id=2; flow.nodes[2]=end; end.id=5; flow.nodes[5]=end; QVERIFY(!flow.validate().isEmpty());
     }
     void units() {
         auto node=timerNode(Kind::Delay); node.waitDuration=2;
         for(const auto &[unit,expected]:std::vector<std::pair<QString,qint64>>{{"seconds",2000},{"minutes",120000},{"hours",7200000},{"days",172800000}}) {node.waitUnit=unit; QCOMPARE(waitMilliseconds(node),expected);}
-        node.waitUnit="seconds"; node.waitDuration=0.001; QCOMPARE(waitMilliseconds(node),qint64(1)); node.waitDuration=0; QCOMPARE(waitMilliseconds(node),qint64(0));
+        node.waitUnit="seconds"; node.waitDuration=1; QCOMPARE(waitMilliseconds(node),qint64(1000)); node.waitDuration=0; QCOMPARE(waitMilliseconds(node),qint64(0));
         node.waitDuration=-1; QVERIFY_THROWS_EXCEPTION(std::exception,waitMilliseconds(node)); node.waitDuration=1; node.waitUnit="invalid"; QVERIFY_THROWS_EXCEPTION(std::exception,waitMilliseconds(node));
     }
     void invalidSchedules_data() {
@@ -68,10 +69,10 @@ private slots:
         connect(&runner,&Runner::executionChanged,&runner,[&](const NodeExecution &entry){if(entry.node==5 && entry.state==State::Succeeded)outputs.push_back(entry.output);});
         QVERIFY(runner.start(flow,directory.path(),{})); QTRY_COMPARE(requested.count(),2);
         QElapsedTimer elapsed;elapsed.start(); for(int i=0;i<2;++i){const auto request=qvariant_cast<UserInputRequest>(requested[i][0]); QVERIFY(runner.submitUserInput(request.id,i?"B":"A",0));}
-        QTRY_COMPARE(done.count(),1); QVERIFY(done[0][0].toBool()); QCOMPARE(outputs.size(),size_t(2)); QVERIFY(outputs[0]=="A"); QVERIFY(outputs[1]=="B"); QVERIFY(elapsed.elapsed()>=50);
+        QTRY_COMPARE(done.count(),1); QVERIFY(done[0][0].toBool()); QCOMPARE(outputs.size(),size_t(2)); QVERIFY(outputs[0]=="A"); QVERIFY(outputs[1]=="B"); QVERIFY(elapsed.elapsed()>=1900);
     }
     void endlessAndCancel() {
-        QTemporaryDir directory; auto flow=Flow::initial(false); flow.nodes[3]=timerNode(Kind::Delay); flow.edges={{1,3},{3,3}};
+        QTemporaryDir directory; auto flow=Flow::initial(false); flow.nodes[3]=timerNode(Kind::Delay); flow.nodes[3].waitDuration=0; flow.edges={{1,3},{3,3}};
         Runner runner; QSignalSpy done(&runner,&Runner::finished); QVERIFY(runner.start(flow,directory.path(),{})); QTRY_VERIFY(runner.results().at(3).executions>=3); QVERIFY(done.isEmpty()); QVERIFY(runner.running());
         runner.cancel(); QCOMPARE(done.count(),1); QVERIFY(!done[0][0].toBool()); const auto count=runner.results().at(3).executions; QTest::qWait(60); QCOMPARE(runner.results().at(3).executions,count);
         done.clear(); QVERIFY(runner.start(Flow::initial(false),directory.path(),{})); QTRY_COMPARE(done.count(),1); QVERIFY(done[0][0].toBool());

@@ -8,6 +8,41 @@
 #include <QStylePainter>
 
 namespace an {
+bool hasSpecialNodeBackground(Kind kind) {
+    return kind==Kind::Start || kind==Kind::End || kind==Kind::All || kind==Kind::Any || kind==Kind::Branch || kind==Kind::UserInput || kind==Kind::Delay || kind==Kind::Schedule;
+}
+QColor nodeBackground(Kind kind) {
+    switch(kind) {
+    case Kind::Start: case Kind::End: return QColor("#efc65e");
+    case Kind::All: case Kind::Any: return QColor("#142b49");
+    case Kind::Branch: return QColor("#e59a42");
+    case Kind::UserInput: return QColor("#6f2635");
+    case Kind::Delay: case Kind::Schedule: return QColor("#9ac9f2");
+    default: return QColor("#252d3b");
+    }
+}
+QColor nodeForeground(Kind kind) {
+    switch(kind) {
+    case Kind::Start: case Kind::End: return QColor("#30260e");
+    case Kind::Branch: return QColor("#3b230e");
+    case Kind::Delay: case Kind::Schedule: return QColor("#173b5b");
+    case Kind::UserInput: return QColor("#f6e3e7");
+    default: return QColor("#ecf0f7");
+    }
+}
+QColor nodeAccent(Kind kind) {
+    switch(kind) {
+    case Kind::Start: case Kind::End: return QColor("#8f6d18");
+    case Kind::All: case Kind::Any: return QColor("#6f91bf");
+    case Kind::Branch: return QColor("#986329");
+    case Kind::UserInput: return QColor("#d58a99");
+    case Kind::Delay: case Kind::Schedule: return QColor("#5488b4");
+    case Kind::Agent: return QColor("#74b9ff");
+    case Kind::Script: return QColor("#bda4ff");
+    case Kind::Shell: return QColor("#8ecddb");
+    default: return QColor("#79d8bd");
+    }
+}
 QString ElidedButton::displayedText() const {
     QStyleOptionButton option; initStyleOption(&option);
     int available = style()->subElementRect(QStyle::SE_PushButtonContents, &option, this).width();

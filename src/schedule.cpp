@@ -30,8 +30,8 @@ std::set<int> field(const QString &text, int low, int high, const QString &name)
 }
 qint64 waitMilliseconds(const Node &node) {
     const qint64 factor = node.waitUnit == "days" ? 86400000 : node.waitUnit == "hours" ? 3600000 : node.waitUnit == "minutes" ? 60000 : node.waitUnit == "seconds" ? 1000 : 0;
-    if (!factor || !std::isfinite(node.waitDuration) || node.waitDuration < 0 || node.waitDuration > 1000000) invalid("待機時間は0〜1000000、単位は日・時間・分・秒を指定してください");
-    return qint64(std::ceil(node.waitDuration * factor));
+    if (!factor || node.waitDuration < 0 || node.waitDuration > 1000000) invalid("待機時間は0〜1000000の整数、単位は日・時間・分・秒を指定してください");
+    return qint64(node.waitDuration) * factor;
 }
 Schedule::Schedule(const Node &node)
     : months_(field(node.scheduleMonth,1,12,"月")), days_(field(node.scheduleDay,1,31,"日")),

@@ -1,6 +1,7 @@
 #include "flow.h"
 #include "schedule.h"
 #include <QTimeZone>
+#include <cmath>
 #include <nlohmann/json-schema.hpp>
 #include <QFile>
 #include <QFileInfo>
@@ -72,7 +73,7 @@ Json outputSchema(const Flow &f, Id id, QSet<Id> &visiting) {
 }
 }
 bool isHostOperation(Kind k) { return k == Kind::ProjectCreate || k == Kind::FlowRun || k == Kind::FlowWait; }
-bool hasNodeName(Kind k) { return k != Kind::All && k != Kind::Any && k != Kind::Branch; }
+bool hasNodeName(Kind k) { return k != Kind::All && k != Kind::Any && k != Kind::Branch && k != Kind::Delay && k != Kind::Schedule; }
 QString kindName(Kind k) {
     switch (k) {
     case Kind::Start: return QStringLiteral("始端");
@@ -147,7 +148,9 @@ Flow Flow::fromJson(const Json &j) {
         n.scriptLanguage = q(v.value("scriptLanguage", "python")); n.scriptPath = q(v.value("scriptPath", "")); n.scriptDirectory = q(v.value("scriptDirectory", ""));
         n.shellCommand = q(v.value("shellCommand", "")); n.shellDirectory = q(v.value("shellDirectory", ""));
         n.shellOutput = q(v.value("shellOutput", "json"));
-        n.waitDuration = v.value("waitDuration", 1.0); n.waitUnit = q(v.value("waitUnit", "seconds"));
+        const auto duration = v.value("waitDuration", 1.0);
+        if (!std::isfinite(duration) || duration < 0 || duration > 1000000 || std::floor(duration) != duration) error("待機時間は0〜1000000の整数を指定してください");
+        n.waitDuration = int(duration); n.waitUnit = q(v.value("waitUnit", "seconds"));
         n.scheduleMonth = q(v.value("scheduleMonth", "*")); n.scheduleDay = q(v.value("scheduleDay", "*")); n.scheduleHour = q(v.value("scheduleHour", "*")); n.scheduleMinute = q(v.value("scheduleMinute", "*"));
         n.scheduleWeekdays = v.value("scheduleWeekdays", std::vector<int>{});
         n.targetFlow = q(v.value("targetFlow", "")); n.projectPath = q(v.value("projectPath", ""));

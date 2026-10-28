@@ -29,6 +29,7 @@ private slots:
     void nodeExecutionHistory();
     void historyLabelFormat();
     void compactNamelessNodes();
+    void nodeColorsAndPalette();
     void runningFlowEditRestrictions();
     void startAndStopDialogs();
     void addedNodeAutoFit();

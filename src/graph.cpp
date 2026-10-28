@@ -1,4 +1,5 @@
 #include "graph.h"
+#include "theme.h"
 #include <QtNodes/NodeStyle>
 #include <QJsonDocument>
 #include <QWidget>
@@ -198,27 +199,17 @@ QVariant Graph::nodeData(Id id, NodeRole role) const {
     case NodeRole::Widget: return QVariant::fromValue<QWidget *>(form(id));
     case NodeRole::Style: {
         NodeStyle style;
-        QColor accent = n.kind == Kind::Agent ? QColor("#74b9ff") : n.kind == Kind::Script ? QColor("#bda4ff") : n.kind == Kind::Shell ? QColor("#8ecddb") : n.kind == Kind::Branch ? QColor("#ffc576") : QColor("#79d8bd");
+        QColor accent = nodeAccent(n.kind);
         if (states.contains(id)) {
             if (states.at(id) == State::Running) accent = QColor("#e5bb68");
             if (states.at(id) == State::Failed) accent = QColor("#ff7c85");
             if (states.at(id) == State::Succeeded) accent = QColor("#72ddaa");
         }
         style.NormalBoundaryColor = accent; style.SelectedBoundaryColor = QColor("#ffffff");
-        style.GradientColor0 = style.GradientColor1 = style.GradientColor2 = style.GradientColor3 = QColor("#252d3b");
-        style.FontColor = QColor("#ecf0f7"); style.FontColorFaded = QColor("#9caec7");
-        if (n.kind == Kind::UserInput) {
-            style.GradientColor0 = style.GradientColor1 = style.GradientColor2 = style.GradientColor3 = QColor("#f2a4a4");
-            style.FontColor = style.FontColorFaded = QColor("#40242c");
-        }
-        if (n.kind == Kind::Delay || n.kind == Kind::Schedule) {
-            style.GradientColor0 = style.GradientColor1 = style.GradientColor2 = style.GradientColor3 = QColor("#9ac9f2");
-            style.FontColor = style.FontColorFaded = QColor("#173b5b");
-        }
+        style.GradientColor0 = style.GradientColor1 = style.GradientColor2 = style.GradientColor3 = nodeBackground(n.kind);
+        style.FontColor = nodeForeground(n.kind); style.FontColorFaded = hasSpecialNodeBackground(n.kind) ? nodeForeground(n.kind) : QColor("#9caec7");
         if (n.kind == Kind::Start || n.kind == Kind::End) {
-            style.GradientColor0 = style.GradientColor1 = style.GradientColor2 = style.GradientColor3 = QColor("#efc65e");
-            style.FontColor = style.FontColorFaded = QColor("#30260e");
-            accent = QColor("#8f6d18"); style.NormalBoundaryColor = accent;
+            accent = nodeAccent(n.kind); style.NormalBoundaryColor = accent;
         }
         style.ConnectionPointColor = accent; style.FilledConnectionPointColor = accent;
         if (readOnly) {

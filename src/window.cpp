@@ -442,6 +442,7 @@ void Window::buildUi() {
             else selectNode(id);
         }, true);
         add->setToolTip("＋ " + kindName(k) + "\n" + nodeDescription(k)); add->setObjectName("addNode_" + kindKey(k));
+        if(hasSpecialNodeBackground(k)) add->setStyleSheet(QString("QPushButton { background:%1; color:%2; border:1px solid %3; } QPushButton:hover { background:%4; } QPushButton:disabled { background:#3b414b; color:#8992a0; border-color:#555e6c; }").arg(nodeBackground(k).name(),nodeForeground(k).name(),nodeAccent(k).name(),nodeBackground(k).lighter(115).name()));
     }
     auto *validate = button("フローを検証", leftLayout, [this] { validateFlow(); }, true); validate->setToolTip("フローを検証");
     leftLayout->addStretch(); left->setObjectName("nodePalette");
@@ -521,7 +522,7 @@ void Window::buildUi() {
         if (project_ < 0 || project_ >= int(projects_.size())) return;
         const auto id = projects_[size_t(project_)].historyId;
         if (!coordinator_->running(id)) return;
-        if (QMessageBox::warning(this, "フローを停止", "選択中のプロジェクトのフロー実行を停止しますか？", QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Cancel) == QMessageBox::Ok) coordinator_->cancelProject(id);
+        if (QMessageBox::warning(this, "フローを停止", "選択中のプロジェクトのフロー実行を停止しますか？", QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Ok) == QMessageBox::Ok) coordinator_->cancelProject(id);
     }); stopButton_->setEnabled(false); cl->addLayout(toolbar);
     workInputSplit_ = new QSplitter(Qt::Vertical); workInputSplit_->setObjectName("workInputSplitter"); workInputSplit_->setChildrenCollapsible(false); workInputSplit_->setHandleWidth(6); cl->addWidget(workInputSplit_, 1);
     workScene_ = new QtNodes::BasicGraphicsScene(*workGraph_, this); workView_ = new GraphView(workScene_); workView_->setMinimumHeight(120); workView_->setScaleRange(0.15, 3); workInputSplit_->addWidget(workView_);
@@ -646,7 +647,7 @@ void Window::updateUndoActions() {
     redoAction_->setText(stack && stack->canRedo() ? "やり直す: " + stack->redoText() : "やり直す");
 }
 bool Window::confirmNodeDeletion(int count) {
-    return count == 0 || QMessageBox::warning(this, "ノードを削除", QString("%1個のノードと接続を削除しますか？").arg(count), QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Cancel) == QMessageBox::Ok;
+    return count == 0 || QMessageBox::warning(this, "ノードを削除", QString("%1個のノードと接続を削除しますか？").arg(count), QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Ok) == QMessageBox::Ok;
 }
 void Window::stepHistory(bool redo) {
     if (current_ < 0 || tabs_->currentIndex() != 0) return;
@@ -708,7 +709,7 @@ void Window::deleteEditorObjects(std::optional<Id> node) {
         if (auto *object = dynamic_cast<QtNodes::NodeGraphicsObject *>(item)) addNode(object->nodeId());
         else if (auto *wire = dynamic_cast<QtNodes::ConnectionGraphicsObject *>(item)) connections.push_back(wire->connectionId());
     }
-    if ((nodes.empty() && connections.empty()) || !confirmNodeDeletion(int(nodes.size()))) return;
+    if (nodes.empty() && connections.empty()) return;
     if (!editGraph_->canEdit()) return;
     editorOperation([&] { for (auto connection : connections) editGraph_->deleteConnection(connection); for (auto id : nodes) editGraph_->deleteNode(id); });
 }

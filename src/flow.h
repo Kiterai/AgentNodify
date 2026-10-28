@@ -39,7 +39,7 @@ struct Node {
     QString shellOutput = "json";
     QString targetFlow, projectPath;
     QStringList userChoices = {QStringLiteral("OK")};
-    double waitDuration = 1;
+    int waitDuration = 1;
     QString waitUnit = "seconds";
     QString scheduleMonth = "*", scheduleDay = "*", scheduleHour = "*", scheduleMinute = "*";
     std::vector<int> scheduleWeekdays; // Qt weekday numbering: Monday=1, Sunday=7.
