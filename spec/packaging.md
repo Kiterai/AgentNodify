@@ -6,11 +6,11 @@ CMakeのinstall定義とCPackのIFWジェネレータを使う。通常ビルド
 
 初期構成は**オフライン専用**で、Maintenance Toolによるアンインストールを提供する。更新URL、オンラインリポジトリ、アプリ内更新確認はまだ設定していない。架空の配信URLや認証情報は埋め込まない。
 
-インストール対象は、アプリ・Qt依存・MSVCランタイム・サンプル・ライセンスをまとめた単一の必須コンポーネント `org.agentnodify.application`。バージョンはCMakeの`project(VERSION)`に従う。依存ライブラリのinstall規則や開発ディレクトリ全体をパッケージへ取り込まず、コンポーネントを明示する。
+インストール対象は、アプリ・Qt依存・MSVCランタイム・サンプル・ライセンスをまとめた単一の必須コンポーネント `org.agentnodify.application`。バージョンはCMakeの`project(VERSION)`に従う。`AGENTNODIFY_VERSION`キャッシュ変数（既定`0.1.0`）でビルド単位に上書きでき、アプリとインストーラに同じ版を使う。依存ライブラリのinstall規則や開発ディレクトリ全体をパッケージへ取り込まず、コンポーネントを明示する。
 
 ## Windowsでの生成
 
-通常のビルド環境に加えて、QtのMaintenance Tool等でIFWを導入する。`binarycreator.exe`、`installerbase.exe`、`repogen.exe`を含むIFWのルートを指定する（`bin`ではない）。ツールを自動ダウンロードするスクリプトや、開発者個人のパスは共有設定に含めない。
+通常のビルド環境に加えて、QtのMaintenance Tool等でIFWを導入する。`binarycreator.exe`、`installerbase.exe`、`repogen.exe`を含むIFWのルートを指定する（`bin`ではない）。ローカル用スクリプトはツールを自動ダウンロードせず、開発者個人のパスは共有設定に含めない。GitHub Actionsでは後述の固定版を取得する。
 
 ```powershell
 $qt = Read-Host 'Qtキットの絶対パス'
@@ -18,7 +18,7 @@ $ifw = Read-Host 'IFWの絶対パス（binの親）'
 .\scripts\package.ps1 -QtPath $qt -IfwPath $ifw
 ```
 
-`Qt6_ROOT`と`QTIFWDIR`による指定も可能。`-BuildDirectory`、`-Generator`、`-Architecture`はビルドスクリプト同様に指定できる。既定ビルド先は`build`。Qtキットや生成器を変更するときは新しいビルド先を使う。
+`Qt6_ROOT`と`QTIFWDIR`による指定も可能。`-BuildDirectory`、`-Generator`、`-Architecture`はビルドスクリプト同様に指定できる。`-Version 0.1.1`でビルド・インストーラのバージョンを指定できる。既定ビルド先は`build`。Qtキットや生成器を変更するときは新しいビルド先を使う。
 
 スクリプトはRelease構成、ビルド、通常のCTestと配布レイアウト検査、CPack実行を順に行い、失敗時は中止する。実CLIの認証・モデル取得・課金テストは実施しない。出力先は `<build>/installer/AgentNodify-<version>-<OS>-<CPU>-Setup.exe`。
 
@@ -94,6 +94,34 @@ WindowsでIFW 4.7.0を使い、Releaseビルド・全15件のCTest・CPackによ
 4. 常駐中・フロー実行中の削除操作で、予期せぬデータ損失がないこと。
 5. Maintenance Tool／Windows設定からの削除、ショートカット解除。
 6. 設定・履歴・外部プロジェクトと、インストール先の未知ファイルが保持されること。
+
+## GitHub Actionsでの自動リリース
+
+### 初回の公開準備（所有者の作業）
+
+既存のローカル検証用パッケージを、資料未整備のまま公開しないよう必須チェックを設ける。以下をPRで`packaging/distribution/`へ追加し、公開前レビューを完了してからSettings → Secrets and variables → Actions → Variablesで`RELEASE_LEGAL_APPROVED`を文字列`true`に設定する。これは秘密情報ではなく、所有者の公開承認を表す。未設定・必要ファイル欠落時はリリースジョブが失敗し、タグ・Releaseは発行しない（通常ビルドの結果は別に確認できる）。ファイルの存在・非空チェックは法的適合を保証しない。
+
+| ファイル | 準備する内容 |
+|---|---|
+| `APPLICATION-LICENSE.txt` | 所有者が決定したアプリの配布ライセンス |
+| `QT-NOTICES.txt` | Qt 6.8.3と含まれる第三者コードの表示・適用ライセンス全文（補足ファイルも配置可能） |
+| `IFW-NOTICES.txt` | IFW 4.7.0・静的Qt・含まれる第三者コードの表示と適用ライセンス全文 |
+| `SOURCE-OFFER.txt` | 適用条件に従った対応ソースの提供方法・実際の提供先・変更／ビルド情報。必要な追加資料も同じディレクトリへ置く |
+
+権利者の判断が必要なため、架空のライセンスやソース提供先、承認済みのダミー資料は追加しない。全資料はインストーラの`licenses/distribution/`に含まれる。公開前レビューにはMSVCランタイムの再配布条件やクリーンVMでの確認も含める。公開されるインストーラは未署名で、SmartScreen等が警告する可能性がある。
+
+### 自動処理と採番
+
+`master`へのマージに伴うpushで通常ビルドが成功した後、専用ジョブがQt 6.8.3・IFW 4.7.0（`qt.tools.ifw.47`）をaqtinstall 3.3.0で取得する。`scripts/release.mjs prepare`が版を計算し、`scripts/package.ps1 -Version <版>`で全通常テストと`packaging_layout`検査、CPack生成を行う。成功後にのみ`publish`がタグ・下書きReleaseを作り、インストーラと`SHA256SUMS.txt`をアップロードして正式Releaseへ切り替える。`develop`ではタグ・Releaseを作らない。
+
+- 版は安定版のSemVer `MAJOR.MINOR.PATCH`、タグは`vMAJOR.MINOR.PATCH`。初回はCMake既定`0.1.0`のパッチを上げた`v0.1.1`となる。
+- 全安定版タグ・下書きを含むReleaseとCMakeの基準版を数値比較し、最大の版のパッチを1つ上げる。プレリリース、ビルドメタデータ、不正形式のタグは採番対象外。
+- メジャー／マイナーは自動推測しない。変更する場合はCMakeの基準版をPRで上げる（例: `0.2.0`へ変更すると次回は`v0.2.1`）。破壊的変更かどうかのSemVer判断は所有者が行う。
+- CMakeソースをリリースごとに自動コミットしない。タグのコミットのソースと、Releaseに記録した版を使って`-Version`で再現する。
+- 同じコミットの再実行ではRelease本文のコミット識別子を検証し、未完成の下書きは同じ版で再開、公開済みなら採番・再公開をスキップする。公開済みのアセット・タグは上書きしない。
+- 公開途中で失敗した場合、下書き・タグが残ることがある。自動削除せず、同じ実行を再実行する。タグの付け替え・二重のコミット識別子・並行した手動リリース等で版が衝突した場合は失敗させる。別の発行者による操作と自動公開を同時に行わない。
+
+トークンは組み込みの`GITHUB_TOKEN`を使い、リリースジョブだけ`contents: write`を持つ。PAT・署名鍵・追加Secretsは不要。同一ブランチの直列実行と待機キューの上限については[開発ガイド](development.md#github-actionswindows)を参照。`master`への直接push禁止は引き続きブランチ保護で管理する。GitHub Releaseでの配布は、Maintenance Toolの自動更新リポジトリの整備とは別である。
 
 ## 将来の更新配信
 
