@@ -60,6 +60,20 @@ ctest --test-dir build -C Release --output-on-failure
 手動手順は現在のシェルのPATHを変更します。必要なら専用のターミナルで実行してください。
 ネットワーク制限下ではCMakeの `FETCHCONTENT_SOURCE_DIR_JSON`、`FETCHCONTENT_SOURCE_DIR_JSON_VALIDATOR`、`FETCHCONTENT_SOURCE_DIR_QTNODES` に、それぞれ指定バージョンの展開済みソースを指定できます。
 
+## GitHub Actions（Windows）
+
+`.github/workflows/windows-build.yml` は`master`ブランチへのpushだけで、GitHubホストの`windows-2022`上にMSVC 2022 x64／Qt 6.8.3を用意します。PR作成・他ブランチへのpush・手動実行では起動しません。既存の`scripts/build.ps1`でReleaseビルド・通常のCTest・Qt DLL配置を実行します。Python・Node.jsはランナー付属のものを使用し、不在なら失敗させます。Qtは固定版のaqtinstallで取得し、個人のQtパスや認証情報は使いません。
+
+`master`をPR経由でのみ更新できるよう保護し、マージに伴う`push`でビルドを起動する運用です。このワークフローを追加するPRのマージから有効になります。マージコミット・Squash・Rebaseのいずれでも、更新後の`master`をビルドします。ブランチ保護を迂回した直接pushが許可されている場合はそれでも起動するため、直接更新の禁止はGitHubのブランチ保護で管理してください。マージ前の必須チェックには使えません。
+
+Actions画面の`Windows build`から結果を確認できます。CTestログ・CMake構成ログ・テスト画像は、失敗時も含めて`windows-x64-release-diagnostics`アーティファクトに7日間保存します。ビルド自体のログは各実行のステップにあります。
+
+このCIはビルド検証用です。実CLIの認証・モデル取得・推論、IFWインストーラ作成、バイナリ配布、Release公開、署名は行いません。配布を追加するときは[配布ガイド](packaging.md)のライセンスと公開前確認を別途満たしてください。
+
+リポジトリのSettings → Actions → GeneralでActionsと使用する`actions/checkout`・`actions/upload-artifact`を許可してください。実行トークンは`contents: read`のみで、追加Secretsは不要です。非公開リポジトリではWindowsランナーの利用枠・料金を確認してください。`pull_request_target`は使用しません。
+
+ワークフローを登録する認証には対象リポジトリのContentsとWorkflowsの書き込み権限が必要です（classic PATなら`repo`と`workflow`、fine-grained PAT／GitHub Appなら`Contents: Read and write`と`Workflows: Read and write`）。PR作成にはさらにPull requestsの書き込み権限が必要です。実行結果のAPI確認にはActionsの読み取り、手動起動・再実行にはActionsの書き込みが必要です。トークンをソースやチャットへ貼り付けないでください。
+
 ## テスト
 
 IFWインストーラの生成・配布ファイル・公開前の確認は[配布ガイド](packaging.md)を参照してください。通常ビルドにIFWは不要です。
