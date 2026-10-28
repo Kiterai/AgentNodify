@@ -49,31 +49,45 @@ void ShellTest::definition() {
     auto flow = shellFlow(command("Hello")); flow.nodes[3].shellDirectory = "work";
     QVERIFY(flow.validate().isEmpty()); QCOMPARE(flow.inputCount(flow.nodes[3]), 1u); QCOMPARE(flow.outputCount(flow.nodes[3]), 1u);
     QVERIFY(Flow::fromJson(flow.toJson()).toJson() == flow.toJson()); QVERIFY(!flow.toJson().contains("sourcePath"));
+    QCOMPARE(flow.nodes[3].shellOutput,QString("json")); auto legacy=flow.toJson(); for(auto &node:legacy["nodes"]) node.erase("shellOutput"); QCOMPARE(Flow::fromJson(legacy).nodes.at(3).shellOutput,QString("json"));
+    flow.nodes[3].shellOutput="text"; QCOMPARE(Flow::fromJson(flow.toJson()).nodes.at(3).shellOutput,QString("text")); flow.nodes[3].shellOutput="invalid"; QVERIFY(!flow.validate().isEmpty()); flow.nodes[3].shellOutput="json";
     flow.nodes[3].shellCommand.clear(); QVERIFY(!flow.validate().isEmpty()); flow.nodes[3].shellCommand = command("${missing}"); QVERIFY(!flow.validate().isEmpty());
     flow.nodes[3].shellCommand = command("Hello"); Node agent; agent.id = 4; agent.prompt = "${exit_code} ${stdout} ${stderr}"; flow.nodes[4] = agent;
     flow.edges = {{1, 3}, {3, 4}, {4, 2}}; QVERIFY(flow.validate().isEmpty()); flow.nodes[4].prompt = "${absent}"; QVERIFY(!flow.validate().isEmpty());
     flow.nodes[4].kind = Kind::Shell; flow.nodes[4].shellCommand = command("${stdout}", "${stderr}"); QVERIFY(flow.validate().isEmpty());
     flow.nodes[4].shellCommand = command("${stdout..bad}"); QVERIFY(!flow.validate().isEmpty());
+    flow.nodes[3].shellOutput="text"; flow.nodes[4].shellCommand=command("${stdout}"); QVERIFY(!flow.validate().isEmpty()); flow.nodes[4].shellCommand=command("${#}"); QVERIFY(flow.validate().isEmpty());
 }
 void ShellTest::result_data() {
-    QTest::addColumn<QString>("out"); QTest::addColumn<QString>("err"); QTest::addColumn<int>("code");
-    QTest::newRow("success UTF8 multiline") << QString("日本語\nstdout '$()' \"x\"") << QString("diagnostic 日本語\n") << 0;
-    QTest::newRow("nonzero") << QString("out") << QString("error") << 7;
-    QTest::newRow("empty") << QString() << QString() << 0;
-    QTest::newRow("JSON stdout remains a string") << QString("{\"a\":1}\n") << QString() << 0;
+    QTest::addColumn<QString>("out"); QTest::addColumn<QString>("err"); QTest::addColumn<int>("code"); QTest::addColumn<bool>("text");
+    for(bool text:{false,true}) {
+        const auto suffix=text?" text":" JSON";
+        QTest::newRow(qPrintable(QString("success UTF8 multiline")+suffix)) << QString("日本語\nstdout '$()' \"x\"") << QString("diagnostic 日本語\n") << 0 << text;
+        QTest::newRow(qPrintable(QString("nonzero")+suffix)) << QString("out") << QString("error") << 7 << text;
+        QTest::newRow(qPrintable(QString("empty")+suffix)) << QString() << QString() << 0 << text;
+        QTest::newRow(qPrintable(QString("JSON stdout remains a string")+suffix)) << QString("{\"a\":1}\n") << QString() << 0 << text;
+    }
 }
 void ShellTest::result() {
     if (!available()) QSKIP("System shell not installed"); QFETCH(QString, out); QFETCH(QString, err); QFETCH(int, code);
-    QTemporaryDir directory; const auto flow = shellFlow(command(out, err, code));
+    QFETCH(bool,text); QTemporaryDir directory; auto flow = shellFlow(command(out, err, code)); flow.nodes[3].shellOutput=text?"text":"json";
     Runner runner; QSignalSpy done(&runner, &Runner::finished); std::vector<NodeExecution> history;
     connect(&runner, &Runner::executionChanged, this, [&](const NodeExecution &entry) { if (entry.node == 3 && entry.state == State::Succeeded) history.push_back(entry); });
     QVERIFY(runner.start(flow, directory.path(), {}, directory.filePath("flow.json"))); QTRY_COMPARE_WITH_TIMEOUT(done.count(), 1, 15000);
     QVERIFY2(done[0][0].toBool(), qPrintable(done[0][1].toString()));
-    const Json expected = {{"exit_code", code}, {"stdout", out.toStdString()}, {"stderr", err.toStdString()}};
+    const Json expected = text?Json(out.toStdString()):Json{{"exit_code", code}, {"stdout", out.toStdString()}, {"stderr", err.toStdString()}};
     QVERIFY(runner.results().at(2).output == expected); QCOMPARE(history.size(), size_t(1)); QVERIFY(history[0].output == expected);
-    QVERIFY(history[0].structuredOutput); QCOMPARE(history[0].executionNumber, quint64(1)); QCOMPARE(history[0].log, err);
+    QCOMPARE(history[0].structuredOutput,!text); QCOMPARE(history[0].executionNumber, quint64(1)); QCOMPARE(history[0].log, err);
     saveNodeExecution(directory.filePath("history"), history[0]); const auto restored = loadNodeExecutions(directory.filePath("history"));
-    QCOMPARE(restored.size(), size_t(1)); QVERIFY(restored[0].output == expected); QVERIFY(restored[0].structuredOutput);
+    QCOMPARE(restored.size(), size_t(1)); QVERIFY(restored[0].output == expected); QCOMPARE(restored[0].structuredOutput,!text);
+}
+void ShellTest::textForwarding() {
+    if(!available()) QSKIP("System shell not installed"); QTemporaryDir directory; const QString out="{\"message\":\"日本語\"}\n";
+    auto flow=shellFlow(command(out,"diagnostic",7)); flow.nodes[3].shellOutput="text";
+    auto next=flow.nodes[3]; next.id=4; next.shellOutput="json"; next.shellCommand=command("${#}"); flow.nodes[4]=next; flow.edges={{1,3},{3,4},{4,2}};
+    QVERIFY(flow.validate().isEmpty()); Runner runner; QSignalSpy done(&runner,&Runner::finished); QVERIFY(runner.start(flow,directory.path(),{},directory.filePath("flow.json"))); QTRY_COMPARE_WITH_TIMEOUT(done.count(),1,15000); QVERIFY(done[0][0].toBool());
+    QVERIFY(runner.results().at(3).output.is_string()); QCOMPARE(QString::fromStdString(runner.results().at(3).output.get<std::string>()),out); QCOMPARE(QString::fromStdString(runner.results().at(2).output.at("stdout").get<std::string>()),out);
+    QCOMPARE(runner.results().at(3).log,QString("diagnostic"));
 }
 void ShellTest::directories_data() {
     QTest::addColumn<QString>("mode"); for (QString mode : {"default", "relative", "absolute", "absolute without flow path"}) QTest::newRow(qPrintable(mode)) << mode;

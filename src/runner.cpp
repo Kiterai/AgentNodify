@@ -113,7 +113,7 @@ void Runner::beginExecution(Id id) {
         execution.agent = "sh";
 #endif
     }
-    execution.structuredOutput = flow_.nodes.at(id).kind == Kind::Any || isHostOperation(flow_.nodes.at(id).kind) || flow_.nodes.at(id).kind == Kind::Shell || (flow_.nodes.at(id).kind == Kind::Agent && !flow_.nodes.at(id).schema.trimmed().isEmpty());
+    execution.structuredOutput = flow_.nodes.at(id).kind == Kind::Any || isHostOperation(flow_.nodes.at(id).kind) || (flow_.nodes.at(id).kind == Kind::Shell && flow_.nodes.at(id).shellOutput == "json") || (flow_.nodes.at(id).kind == Kind::Agent && !flow_.nodes.at(id).schema.trimmed().isEmpty());
     if (execution.title.isEmpty()) execution.title = kindName(flow_.nodes.at(id).kind);
     execution.startedAt = QDateTime::currentDateTimeUtc(); activeExecutions_[id] = execution;
     emit executionChanged(activeExecutions_.at(id));
@@ -421,7 +421,8 @@ void Runner::processFinished(Id id, int code, QProcess::ExitStatus status) {
     try {
         auto &n = flow_.nodes.at(id); Json output;
         if (j.shell) {
-            output = {{"exit_code", code}, {"stdout", QString::fromUtf8(j.stdoutData).toStdString()}, {"stderr", QString::fromUtf8(j.stderrData).toStdString()}};
+            if (n.shellOutput == "text") output = QString::fromUtf8(j.stdoutData).toStdString();
+            else output = {{"exit_code", code}, {"stdout", QString::fromUtf8(j.stdoutData).toStdString()}, {"stderr", QString::fromUtf8(j.stderrData).toStdString()}};
         } else if (j.script) {
             QStringDecoder decoder(QStringDecoder::Utf8, QStringConverter::Flag::Stateless); const QString text = decoder.decode(j.stdoutData);
             if (decoder.hasError()) throw std::runtime_error("スクリプトの標準出力はUTF-8で出力してください");

@@ -703,6 +703,9 @@ void GuiTest::shellNodeForm() {
     auto *add = window.findChild<QPushButton *>("addNode_shell"); QVERIFY(add); QTest::mouseClick(add, Qt::LeftButton);
     const auto id = window.selected_; QVERIFY(window.editGraph_->flow.nodes.at(id).kind == Kind::Shell);
     auto *form = window.editGraph_->form(id); QVERIFY(form); auto *preview = form->findChild<TextPreview *>("shellCommandPreview"); QVERIFY(preview);
+    auto *mode=form->findChild<QComboBox *>("shellOutput"); QVERIFY(mode); QCOMPARE(mode->count(),2); QCOMPARE(mode->currentData().toString(),QString("json"));
+    mode->setCurrentIndex(mode->findData("text")); QCOMPARE(window.editGraph_->flow.nodes.at(id).shellOutput,QString("text")); QCOMPARE(Flow::fromJson(window.editGraph_->flow.toJson()).nodes.at(id).shellOutput,QString("text"));
+    window.stepHistory(false); QCOMPARE(mode->currentData().toString(),QString("json")); window.stepHistory(true); QCOMPARE(mode->currentData().toString(),QString("text")); window.stepHistory(false);
     QTest::mouseClick(preview->viewport(), Qt::LeftButton); QCOMPARE(window.field_, QString("shellCommand")); QCOMPARE(window.textTitle_->text(), QString("シェルコマンド"));
     window.text_->setPlainText("echo hello\necho world"); QCOMPARE(window.editGraph_->flow.nodes.at(id).shellCommand, QString("echo hello\necho world"));
     QCOMPARE(preview->toPlainText(), QString("echo hello\necho world")); QVERIFY(!form->findChild<QComboBox *>("nodeModel"));
@@ -726,9 +729,13 @@ void GuiTest::shellNodeForm() {
     window.projects_.push_back({"Shell project", directory.filePath("project"), flowPath, {}}); window.refreshProjects(); window.selectProject(0);
     window.tabs_->setCurrentIndex(1); window.selectWorkNode(id);
     auto *workForm = window.workGraph_->form(id); QVERIFY(workForm->findChild<QLineEdit *>("shellDirectory")->isReadOnly()); QVERIFY(!workForm->findChild<QPushButton *>("shellDirectoryBrowse")->isEnabled());
+    auto *workMode=workForm->findChild<QComboBox *>("shellOutput"); QVERIFY(workMode); QTest::keyClick(workMode,Qt::Key_Down); QCOMPARE(workMode->currentData().toString(),QString("json"));
     QSignalSpy done(window.runner_, &Runner::finished); window.executeFlow(); QTRY_COMPARE_WITH_TIMEOUT(done.count(), 1, 15000); QVERIFY2(done[0][0].toBool(), qPrintable(done[0][1].toString()));
     const auto stdoutText = QString::fromStdString(window.runner_->results().at(2).output.at("stdout")).trimmed();
     QCOMPARE(QDir::fromNativeSeparators(stdoutText), QFileInfo(directory.filePath("flows")).canonicalFilePath());
+    window.tabs_->setCurrentIndex(0); mode->setCurrentIndex(mode->findData("text")); window.tabs_->setCurrentIndex(1); window.executeFlow(); QTRY_COMPARE_WITH_TIMEOUT(done.count(),2,15000); QVERIFY(done[1][0].toBool());
+    QVERIFY(window.runner_->results().at(2).output.is_string()); QCOMPARE(QDir::fromNativeSeparators(QString::fromStdString(window.runner_->results().at(2).output.get<std::string>()).trimmed()),QFileInfo(directory.filePath("flows")).canonicalFilePath());
+    bool textHistory=false; for(auto entry=window.projects_[0].history.rbegin();entry!=window.projects_[0].history.rend();++entry) if(entry->node==id) { QVERIFY(!entry->structuredOutput); textHistory=true; break; } QVERIFY(textHistory);
     window.tabs_->setCurrentIndex(0); window.editView_->centerScene(); QCoreApplication::processEvents();
     QVERIFY(window.grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-shell-node.png")));
 }

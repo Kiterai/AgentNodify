@@ -64,6 +64,7 @@ private:
     QLineEdit *scriptPath_ = nullptr, *scriptDirectory_ = nullptr;
     QPushButton *scriptFileBrowse_ = nullptr, *scriptDirectoryBrowse_ = nullptr;
     QLineEdit *shellDirectory_ = nullptr;
+    QComboBox *shellOutput_ = nullptr;
     QComboBox *targetFlow_ = nullptr;
     QLineEdit *projectPath_ = nullptr;
     std::vector<std::pair<QString, QString>> flowChoices_;

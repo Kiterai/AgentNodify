@@ -36,6 +36,7 @@ struct Node {
     QString scriptLanguage = "python";
     QString scriptPath, scriptDirectory;
     QString shellCommand, shellDirectory;
+    QString shellOutput = "json";
     QString targetFlow, projectPath;
     QStringList userChoices = {QStringLiteral("OK")};
 };

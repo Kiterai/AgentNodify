@@ -71,7 +71,7 @@ QString nodeDescription(Kind kind) {
     case Kind::FlowWait: return "指定フロー・プロジェクトの実行終了を待ち、終端の入力を出力します。完了済みなら直ちに返します。未開始・失敗・中止・循環待機はエラーになります。相対パスは実行元プロジェクト基準で、${name}等を使用できます。";
     case Kind::Agent: return "選択したエージェントへ1タスクを渡します。入力全体は ${#}、個別の値は ${name}、${obj.key}、${items[0]} で参照できます。${#}はスキーマ未指定の文字列入力でも使用できます。入力を受けるたびに実行します。出力スキーマは省略可能です。";
     case Kind::Script: return "PythonまたはJavaScriptファイルをシステムのPython／Node.jsで実行します。前段データをUTF-8のJSONで標準入力へ渡し、標準出力を次段へ渡します（JSON、または文字列）。相対パスはプロジェクト基準です。実行ディレクトリの省略時はスクリプトのある場所を使います。";
-    case Kind::Shell: return "シェルコマンドを実行します（Windows: PowerShell、その他: /bin/sh）。前段の値を ${name} 等でそのまま置換します。出力は exit_code・stdout・stderr を持つJSONです。実行ディレクトリの省略時・相対パスの基準はフローの保存先です。信頼できる入力だけを使用してください。";
+    case Kind::Shell: return "シェルコマンドを実行します（Windows: PowerShell、その他: /bin/sh）。前段の値を ${name} 等でそのまま置換します。出力は exit_code・stdout・stderr を持つJSON、またはstdoutのみのテキストを選択できます。実行ディレクトリの省略時・相対パスの基準はフローの保存先です。信頼できる入力だけを使用してください。";
     case Kind::All: return "全入力の発火を待ち、入力ポート番号順の配列を出力します。発火後は待ち合わせ状態をリセットし、再び新しい全入力を待ちます。先着した入力はFIFOで保持します。入力数を減らすと、削除した入力端への接続だけを消します。";
     case Kind::Any: return "いずれかの入力にイベントが届くたびに発火します。出力はevent（入力の0始まりインデックス）とinput（その入力データ）です。複数イベントは到着順に1件ずつ処理します。入力数を減らすと、削除した入力端への接続だけを消します。";
     case Kind::UserInput: return "作業画面の中央下部でユーザー入力を待ちます。前段データをメッセージとして表示し、選択したボタンの出力端だけへ入力文字列を渡します。選択肢は最低1個です。選択肢の追加・削除でも残った端への接続を維持します。";
@@ -238,6 +238,13 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
             node_.scriptDirectory = dialog.selectedFiles().first(); scriptDirectory_->setText(node_.scriptDirectory); publish();
         });
     } else if (node.kind == Kind::Shell) {
+        shellOutput_ = new QComboBox; shellOutput_->setObjectName("shellOutput"); styleComboBoxPopup(shellOutput_);
+        shellOutput_->setMinimumWidth(0); shellOutput_->setMinimumContentsLength(10); shellOutput_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+        shellOutput_->addItem("JSON（終了コード・stdout・stderr）", "json"); shellOutput_->addItem("テキスト（stdoutのみ）", "text");
+        if (shellOutput_->findData(node.shellOutput) < 0) shellOutput_->addItem(node.shellOutput + "（未対応）", node.shellOutput);
+        shellOutput_->setCurrentIndex(shellOutput_->findData(node.shellOutput)); form->addRow("出力形式", shellOutput_);
+        shellOutput_->setToolTip("JSONはexit_code・stdout・stderrを出力します。テキストはstdoutを文字列のまま出力し、後段では${#}で参照できます。stderrはどちらも進行ログに残ります。");
+        connect(shellOutput_, &QComboBox::currentIndexChanged, this, [this] { if (!updating_ && !readOnly_) { node_.shellOutput = shellOutput_->currentData().toString(); publish(); } });
         shellDirectory_ = new QLineEdit(node.shellDirectory); shellDirectory_->setObjectName("shellDirectory"); shellDirectory_->setMinimumWidth(0);
         shellDirectory_->setPlaceholderText("省略時: フローの保存ディレクトリ"); shellDirectory_->setToolTip("絶対パス、またはフローの保存先からの相対パス");
         shellDirectoryBrowse_ = new QPushButton("参照…"); shellDirectoryBrowse_->setObjectName("shellDirectoryBrowse"); shellDirectoryBrowse_->setToolTip("シェルの実行ディレクトリを選択");
@@ -390,6 +397,10 @@ void NodeForm::setNode(const Node &node) {
     if (scriptPath_ && scriptPath_->text() != node.scriptPath) scriptPath_->setText(node.scriptPath);
     if (scriptDirectory_ && scriptDirectory_->text() != node.scriptDirectory) scriptDirectory_->setText(node.scriptDirectory);
     if (shellDirectory_ && shellDirectory_->text() != node.shellDirectory) shellDirectory_->setText(node.shellDirectory);
+    if (shellOutput_) {
+        if (shellOutput_->findData(node.shellOutput) < 0) shellOutput_->addItem(node.shellOutput + "（未対応）", node.shellOutput);
+        shellOutput_->setCurrentIndex(shellOutput_->findData(node.shellOutput));
+    }
     if (targetFlow_) setFlowChoices(flowChoices_);
     if (projectPath_ && projectPath_->text() != node.projectPath) projectPath_->setText(node.projectPath);
     if (shellCommand_ && shellCommand_->toPlainText() != node.shellCommand) shellCommand_->setPlainText(node.shellCommand);

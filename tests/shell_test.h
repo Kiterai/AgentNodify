@@ -11,6 +11,7 @@ private slots:
     void directories();
     void savedFlowContext();
     void variablesAndNonzeroExit();
+    void textForwarding();
     void loop();
     void parallelJoin();
     void failures_data();

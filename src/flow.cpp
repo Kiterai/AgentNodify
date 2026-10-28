@@ -47,7 +47,7 @@ Json outputSchema(const Flow &f, Id id, QSet<Id> &visiting) {
     else if (n.kind == Kind::Script || n.kind == Kind::FlowWait) out = {{"_anUnknown", true}};
     else if (n.kind == Kind::ProjectCreate) out = {{"type", "object"}, {"properties", {{"result", {{"type", "string"}}}, {"path", {{"type", "string"}}}, {"reason", {{"type", "string"}}}}}};
     else if (n.kind == Kind::FlowRun) out = {{"type", "object"}, {"properties", {{"result", {{"type", "string"}}}}}};
-    else if (n.kind == Kind::Shell) out = {{"type", "object"}, {"properties", {{"exit_code", {{"type", "integer"}}}, {"stdout", {{"type", "string"}}}, {"stderr", {{"type", "string"}}}}}, {"required", {"exit_code", "stdout", "stderr"}}, {"additionalProperties", false}};
+    else if (n.kind == Kind::Shell) out = n.shellOutput == "text" ? Json{{"type", "string"}} : Json{{"type", "object"}, {"properties", {{"exit_code", {{"type", "integer"}}}, {"stdout", {{"type", "string"}}}, {"stderr", {{"type", "string"}}}}}, {"required", {"exit_code", "stdout", "stderr"}}, {"additionalProperties", false}};
     else if (n.kind == Kind::All) {
         Json items = Json::array();
         for (unsigned i = 0; i < n.inputs; ++i) {
@@ -119,7 +119,7 @@ Json Flow::toJson() const {
             {"x", n.position.x()}, {"y", n.position.y()}, {"agent", s(n.agent)}, {"model", s(n.model)}, {"effort", s(n.effort)},
             {"prompt", s(n.prompt)}, {"schema", s(n.schema)}, {"retainContext", n.retainContext}, {"inputs", n.inputs}, {"rules", rules},
             {"scriptLanguage", s(n.scriptLanguage)}, {"scriptPath", s(n.scriptPath)}, {"scriptDirectory", s(n.scriptDirectory)},
-            {"shellCommand", s(n.shellCommand)}, {"shellDirectory", s(n.shellDirectory)}, {"targetFlow", s(n.targetFlow)}, {"projectPath", s(n.projectPath)}, {"userChoices", choices}});
+            {"shellCommand", s(n.shellCommand)}, {"shellDirectory", s(n.shellDirectory)}, {"shellOutput", s(n.shellOutput)}, {"targetFlow", s(n.targetFlow)}, {"projectPath", s(n.projectPath)}, {"userChoices", choices}});
     }
     for (auto &e : edges) es.push_back({{"from", e.from}, {"to", e.to}, {"output", e.output}, {"input", e.input}});
     const auto next = qMax(nextNodeId, nodes.empty() ? quint64(1) : quint64(nodes.rbegin()->first) + 1);
@@ -139,6 +139,7 @@ Flow Flow::fromJson(const Json &j) {
         n.inputs = v.value("inputs", 2u);
         n.scriptLanguage = q(v.value("scriptLanguage", "python")); n.scriptPath = q(v.value("scriptPath", "")); n.scriptDirectory = q(v.value("scriptDirectory", ""));
         n.shellCommand = q(v.value("shellCommand", "")); n.shellDirectory = q(v.value("shellDirectory", ""));
+        n.shellOutput = q(v.value("shellOutput", "json"));
         n.targetFlow = q(v.value("targetFlow", "")); n.projectPath = q(v.value("projectPath", ""));
         if (v.contains("userChoices")) {
             if (!v.at("userChoices").is_array()) error("ユーザー選択肢は配列で指定してください");
@@ -288,6 +289,7 @@ QStringList Flow::validate() const {
             if (n.projectPath.trimmed().isEmpty()) errors << label + "プロジェクトパスが空です";
         }
         if (n.kind == Kind::Shell && n.shellCommand.trimmed().isEmpty()) errors << label + "シェルコマンドが空です";
+        if (n.kind == Kind::Shell && n.shellOutput != "json" && n.shellOutput != "text") errors << label + "シェルの出力形式が不正です";
         if (n.kind == Kind::Script) {
             if (n.scriptLanguage != "python" && n.scriptLanguage != "javascript") errors << label + "スクリプト言語はPythonまたはJavaScriptを指定してください";
             if (n.scriptPath.trimmed().isEmpty()) errors << label + "スクリプトファイルのパスが空です";

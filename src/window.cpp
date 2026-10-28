@@ -971,7 +971,7 @@ void Window::showWorkResult() {
     if (project_ < 0 || !projects_[size_t(project_)].results.contains(workSelected_)) { render({}, State::Pending); nodeStatus_->setText(title + " — 待機"); return; }
     const auto &r = projects_[size_t(project_)].results.at(workSelected_);
     nodeStatus_->setText(title + " — " + stateName(r.state) + QString("（実行 %1 回）").arg(r.executions));
-    render(r.log, r.state, r.state == State::Succeeded ? &r.output : nullptr, node.kind == Kind::Shell || (node.kind == Kind::Agent && !node.schema.trimmed().isEmpty()), {}, node.kind == Kind::Script || node.kind == Kind::Shell);
+    render(r.log, r.state, r.state == State::Succeeded ? &r.output : nullptr, (node.kind == Kind::Shell && node.shellOutput == "json") || (node.kind == Kind::Agent && !node.schema.trimmed().isEmpty()), {}, node.kind == Kind::Script || node.kind == Kind::Shell);
 }
 void Window::refreshUserInputPanel() {
     const auto previous = activeInput_;
