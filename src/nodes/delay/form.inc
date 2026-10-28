@@ -1,4 +1,12 @@
-void NodeForm::buildDelay(QVBoxLayout *, QFormLayout *form) {
+class DelayForm final : public NodeParameterForm {
+public:
+    DelayForm(NodeForm &owner, QFormLayout *form);
+private:
+    QSpinBox *waitDuration_ = nullptr;
+    QComboBox *waitUnit_ = nullptr;
+};
+
+DelayForm::DelayForm(NodeForm &owner, QFormLayout *form) : NodeParameterForm(owner) {
     const auto &node = node_;
     waitDuration_ = new QSpinBox;
     waitDuration_->setObjectName(strings::WaitDuration);

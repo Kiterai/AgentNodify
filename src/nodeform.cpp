@@ -2,35 +2,22 @@
 #include "strings.h"
 #include "nodedefinition.h"
 #include "nodeform.h"
+#include "nodeparameterform.h"
 #include "theme.h"
+#include <QAbstractButton>
+#include <QAbstractSpinBox>
 #include <QComboBox>
-#include <QCheckBox>
-#include <QPainter>
-#include <QStyleOptionButton>
-#include <QStyle>
 #include <QFormLayout>
-#include <QFileDialog>
-#include <QFileInfo>
-#include <QGraphicsProxyWidget>
-#include <QGraphicsScene>
-#include <QGraphicsView>
 #include <QEvent>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMouseEvent>
-#include <QPushButton>
-#include <QScrollBar>
-#include <QSignalBlocker>
-#include <QSpinBox>
-#include <QGridLayout>
-#include <algorithm>
 #include <QTextBlock>
 #include <QTextLayout>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <cmath>
-#include <functional>
 
 namespace an {
 QString nodeDescription(Kind kind) { return nodeDefinition(kind).description; }
@@ -89,7 +76,7 @@ TextPreview *NodeForm::addPreview(QVBoxLayout *layout, const QString &label, con
     connect(preview, &TextPreview::heightChanged, this, &NodeForm::scheduleResize);
     return preview;
 }
-NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : QWidget(parent), node_(node), catalog_(catalog) {
+NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : QWidget(parent), node_(node) {
     setObjectName(strings::NodeForm); setFixedWidth(nodeDefinition(node.kind).compact ? metrics::CompactNodeWidth : metrics::StandardNodeWidth);
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     setToolTip(nodeDescription(node.kind));
@@ -97,17 +84,17 @@ NodeForm::NodeForm(const Node &node, QWidget *parent, ModelCatalog *catalog) : Q
     if (hasSpecialNodeBackground(node.kind)) setStyleSheet(styleSheet() + QString(strings::NodeFormForegroundStyle).arg(nodeForeground(node.kind).name()));
     auto *layout = new QVBoxLayout(this); layout->setContentsMargins(metrics::SpaceMedium, metrics::SpaceMedium, metrics::SpaceMedium, metrics::SpaceMedium); layout->setSpacing(metrics::SpaceNormal);
     auto *form = new QFormLayout; form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-    parameterForm_ = form;
     if (hasNodeName(node.kind)) {
         title_ = new QLineEdit(node.title); title_->setMinimumWidth(0); title_->setObjectName(strings::NodeTitle); form->addRow(strings::NameLabel, title_);
         connect(title_, &QLineEdit::textEdited, this, [this](const QString &text) { node_.title = text; publish(); });
     } else node_.title.clear();
     layout->addLayout(form);
-    NodeRegistry::buildForm(*this, layout, form);
+    parameters_ = NodeRegistry::createForm(*this, layout, form, catalog);
     setReadOnly(readOnly_);
     for (auto *widget : findChildren<QWidget *>()) widget->installEventFilter(this);
     layout->activate(); setFixedHeight(layout->sizeHint().height()); scheduleResize();
 }
+NodeForm::~NodeForm() = default;
 bool NodeForm::event(QEvent *event) {
     const bool handled = QWidget::event(event);
     // Newly added choice rows can receive their final stylesheet/font metrics
@@ -130,15 +117,14 @@ bool NodeForm::eventFilter(QObject *object, QEvent *event) {
 }
 void NodeForm::setReadOnly(bool readOnly) {
     readOnly_ = readOnly;
-    if (readOnlyParameters_) readOnlyParameters_(readOnly);
+    if (parameters_) parameters_->applyReadOnly(readOnly);
     for (auto *widget : findChildren<QWidget *>()) {
         widget->installEventFilter(this);
         if (auto *edit = qobject_cast<QLineEdit *>(widget)) edit->setReadOnly(readOnly);
     }
 }
 void NodeForm::setFlowChoices(const std::vector<std::pair<QString, QString>> &choices) {
-    flowChoices_ = choices;
-    if (refreshFlowChoices_) refreshFlowChoices_();
+    if (parameters_) parameters_->setFlowChoices(choices);
 }
 void NodeForm::publish() { if (!updating_) { emit edited(); scheduleResize(); } }
 void NodeForm::setNode(const Node &node) {
@@ -146,7 +132,7 @@ void NodeForm::setNode(const Node &node) {
     updating_ = true; node_ = node;
     if (!hasNodeName(node_.kind)) node_.title.clear();
     if (title_ && title_->text() != node.title) title_->setText(node.title);
-    if (syncParameters_) syncParameters_(previous);
+    if (parameters_) parameters_->synchronize(previous);
     updating_ = false; scheduleResize();
 }
 void NodeForm::scheduleResize() {

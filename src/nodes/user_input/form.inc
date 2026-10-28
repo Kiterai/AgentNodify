@@ -1,4 +1,14 @@
-void NodeForm::buildUserInput(QVBoxLayout *layout, QFormLayout *) {
+class UserInputForm final : public NodeParameterForm {
+public:
+    UserInputForm(NodeForm &owner, QVBoxLayout *layout);
+private:
+    QWidget *choices_ = nullptr;
+    QVBoxLayout *choicesLayout_ = nullptr;
+    QPushButton *addChoice_ = nullptr;
+    void rebuildChoices();
+};
+
+UserInputForm::UserInputForm(NodeForm &owner, QVBoxLayout *layout) : NodeParameterForm(owner) {
     layout->addWidget(new QLabel(strings::UserChoicesLabel));
     choices_ = new QWidget;
     choices_->setObjectName(strings::UserChoices);
@@ -29,7 +39,7 @@ void NodeForm::buildUserInput(QVBoxLayout *layout, QFormLayout *) {
     };
 }
 
-void NodeForm::rebuildChoices() {
+void UserInputForm::rebuildChoices() {
     while (auto *item = choicesLayout_->takeAt(0)) {
         if (auto *widget = item->widget()) {
             widget->hide();

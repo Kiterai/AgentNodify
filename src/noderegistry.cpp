@@ -3,6 +3,8 @@
 #include "nodedefinition.h"
 #ifdef AGENTNODIFY_NODE_UI
 #include "nodeform.h"
+#include "nodeparameterform.h"
+#include "modelcatalog.h"
 #include "theme.h"
 #include <QComboBox>
 #include <QCheckBox>
@@ -44,23 +46,20 @@ namespace an {
 #include "nodes/user_input/form.inc"
 #include "nodecommon/form.inc"
 #include "nodes/branch/form.inc"
-void NodeRegistry::buildForm(NodeForm &form, QVBoxLayout *layout, QFormLayout *fields) {
-    switch (form.node_.kind) {
-    case Kind::Start: break;
-    case Kind::End: break;
-    case Kind::Agent: form.buildAgent(layout, fields); break;
-    case Kind::All: form.buildInputs(layout, fields); break;
-    case Kind::Branch: form.buildBranch(layout, fields); break;
-    case Kind::Script: form.buildScript(layout, fields); break;
-    case Kind::Shell: form.buildShell(layout, fields); break;
-    case Kind::ProjectCreate: form.buildHost(layout, fields); break;
-    case Kind::FlowRun: form.buildHost(layout, fields); break;
-    case Kind::FlowWait: form.buildHost(layout, fields); break;
-    case Kind::Any: form.buildInputs(layout, fields); break;
-    case Kind::UserInput: form.buildUserInput(layout, fields); break;
-    case Kind::Delay: form.buildDelay(layout, fields); break;
-    case Kind::Schedule: form.buildSchedule(layout, fields); break;
+std::unique_ptr<NodeParameterForm> NodeRegistry::createForm(NodeForm &form, QVBoxLayout *layout, QFormLayout *fields, ModelCatalog *catalog) {
+    switch (form.node().kind) {
+    case Kind::Start: case Kind::End: return {};
+    case Kind::Agent: return std::make_unique<AgentForm>(form, layout, fields, catalog);
+    case Kind::All: case Kind::Any: return std::make_unique<InputPortsForm>(form, fields);
+    case Kind::Branch: return std::make_unique<BranchForm>(form, layout);
+    case Kind::Script: return std::make_unique<ScriptForm>(form, fields);
+    case Kind::Shell: return std::make_unique<ShellForm>(form, layout, fields);
+    case Kind::ProjectCreate: case Kind::FlowRun: case Kind::FlowWait: return std::make_unique<HostForm>(form, fields);
+    case Kind::UserInput: return std::make_unique<UserInputForm>(form, layout);
+    case Kind::Delay: return std::make_unique<DelayForm>(form, fields);
+    case Kind::Schedule: return std::make_unique<ScheduleForm>(form, fields);
     }
+    return {};
 }
 }
 #else

@@ -2,6 +2,7 @@
 #include "strings.h"
 #include "nodedefinition.h"
 #include "window.h"
+#include "modelcatalog.h"
 #include "theme.h"
 #include "graphview.h"
 #include "projectopener.h"

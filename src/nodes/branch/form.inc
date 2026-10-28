@@ -1,4 +1,13 @@
-void NodeForm::buildBranch(QVBoxLayout *layout, QFormLayout *) {
+class BranchForm final : public NodeParameterForm {
+public:
+    BranchForm(NodeForm &owner, QVBoxLayout *layout);
+private:
+    QWidget *rules_ = nullptr;
+    QVBoxLayout *rulesLayout_ = nullptr;
+    void rebuildRules();
+};
+
+BranchForm::BranchForm(NodeForm &owner, QVBoxLayout *layout) : NodeParameterForm(owner) {
     rules_ = new QWidget;
     rules_->setObjectName(strings::NodeRules);
     rulesLayout_ = new QVBoxLayout(rules_);
@@ -29,7 +38,7 @@ void NodeForm::buildBranch(QVBoxLayout *layout, QFormLayout *) {
     };
 }
 
-void NodeForm::rebuildRules() {
+void BranchForm::rebuildRules() {
     while (auto *item = rulesLayout_->takeAt(0)) {
         if (auto *widget = item->widget()) {
             widget->hide();
@@ -69,34 +78,34 @@ void NodeForm::rebuildRules() {
         value->setMinimumWidth(0);
         value->setObjectName(strings::RuleValue);
         value->setPlaceholderText(strings::RuleValuePlaceholder);
-        variable->installEventFilter(this);
-        value->installEventFilter(this);
-        op->installEventFilter(this);
+        variable->installEventFilter(&owner_);
+        value->installEventFilter(&owner_);
+        op->installEventFilter(&owner_);
         comparison->addWidget(value, 1);
         comparison->addWidget(new QLabel(strings::ComparisonParticle));
         comparison->addWidget(op);
         comparison->addWidget(new QLabel(strings::ThenLabel));
         layout->addLayout(comparison);
         rulesLayout_->addWidget(card);
-        connect(variable, &QLineEdit::textEdited, card, [this, i](const QString &text) {
+        connect(variable, &QLineEdit::textEdited, this, [this, i](const QString &text) {
             if (i < node_.rules.size()) {
                 node_.rules[i].variable = text;
                 publish();
             }
         });
-        connect(value, &QLineEdit::textEdited, card, [this, i](const QString &text) {
+        connect(value, &QLineEdit::textEdited, this, [this, i](const QString &text) {
             if (i < node_.rules.size()) {
                 node_.rules[i].value = text;
                 publish();
             }
         });
-        connect(op, &QComboBox::currentIndexChanged, card, [this, i](int index) {
+        connect(op, &QComboBox::currentIndexChanged, this, [this, i](int index) {
             if (i < node_.rules.size()) {
                 node_.rules[i].equals = index == 0;
                 publish();
             }
         });
-        connect(remove, &QPushButton::clicked, card, [this, i] {
+        connect(remove, &QPushButton::clicked, this, [this, i] {
             if (readOnly_ || i >= node_.rules.size())
                 return;
             node_.rules.erase(node_.rules.begin() + i);

@@ -1,4 +1,14 @@
-void NodeForm::buildShell(QVBoxLayout *layout, QFormLayout *form) {
+class ShellForm final : public NodeParameterForm {
+public:
+    ShellForm(NodeForm &owner, QVBoxLayout *layout, QFormLayout *form);
+private:
+    QLineEdit *shellDirectory_ = nullptr;
+    QComboBox *shellOutput_ = nullptr;
+    QPushButton *shellDirectoryBrowse_ = nullptr;
+    TextPreview *shellCommand_ = nullptr;
+};
+
+ShellForm::ShellForm(NodeForm &owner, QVBoxLayout *layout, QFormLayout *form) : NodeParameterForm(owner) {
     const auto &node = node_;
     shellOutput_ = new QComboBox;
     shellOutput_->setObjectName(strings::ShellOutput);
@@ -42,7 +52,7 @@ void NodeForm::buildShell(QVBoxLayout *layout, QFormLayout *form) {
     connect(shellDirectoryBrowse_, &QPushButton::clicked, this, [this] {
         if (readOnly_)
             return;
-        QFileDialog dialog(dialogOwner(this), strings::SelectShellDirectory);
+        QFileDialog dialog(dialogOwner(&owner_), strings::SelectShellDirectory);
         dialog.setObjectName(strings::ShellDirectoryDialog);
         dialog.setFileMode(QFileDialog::Directory);
         dialog.setOption(QFileDialog::ShowDirsOnly);

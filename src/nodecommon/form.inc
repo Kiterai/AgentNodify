@@ -1,4 +1,12 @@
-void NodeForm::buildInputs(QVBoxLayout *, QFormLayout *form) {
+// All and Any have exactly the same input-count editor and no other UI state.
+class InputPortsForm final : public NodeParameterForm {
+public:
+    InputPortsForm(NodeForm &owner, QFormLayout *form);
+private:
+    QSpinBox *inputs_ = nullptr;
+};
+
+InputPortsForm::InputPortsForm(NodeForm &owner, QFormLayout *form) : NodeParameterForm(owner) {
     const auto &node = node_;
     inputs_ = new QSpinBox;
     inputs_->setObjectName(strings::NodeInputs);

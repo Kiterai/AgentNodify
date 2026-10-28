@@ -1,4 +1,14 @@
-void NodeForm::buildSchedule(QVBoxLayout *, QFormLayout *form) {
+class ScheduleForm final : public NodeParameterForm {
+public:
+    ScheduleForm(NodeForm &owner, QFormLayout *form);
+private:
+    QLineEdit *scheduleMonth_ = nullptr, *scheduleDay_ = nullptr, *scheduleHour_ = nullptr, *scheduleMinute_ = nullptr;
+    std::vector<QCheckBox *> scheduleWeekdays_;
+    std::vector<QLabel *> weekdayLabels_;
+    void updateWeekdayLabels();
+};
+
+ScheduleForm::ScheduleForm(NodeForm &owner, QFormLayout *form) : NodeParameterForm(owner) {
     const auto &node = node_;
     auto addField = [this, form](const QString &label, const QString &name, const QString &value, int low, int high, QString Node::*field) {
         auto *edit = new QLineEdit(value);
@@ -78,7 +88,7 @@ void NodeForm::buildSchedule(QVBoxLayout *, QFormLayout *form) {
     };
 }
 
-void NodeForm::updateWeekdayLabels() {
+void ScheduleForm::updateWeekdayLabels() {
     for (size_t i = 0; i < weekdayLabels_.size(); ++i)
         weekdayLabels_[i]->setStyleSheet(scheduleWeekdays_[i]->isChecked() ? strings::ActiveWeekdayStyle : strings::InactiveWeekdayStyle);
 }

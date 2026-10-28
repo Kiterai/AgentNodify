@@ -1,4 +1,22 @@
-void NodeForm::buildAgent(QVBoxLayout *layout, QFormLayout *form) {
+class AgentForm final : public NodeParameterForm {
+public:
+    AgentForm(NodeForm &owner, QVBoxLayout *layout, QFormLayout *form, ModelCatalog *catalog);
+    ~AgentForm() override { if (model_) model_->beforePopup = {}; }
+private:
+    QComboBox *agent_ = nullptr, *effort_ = nullptr;
+    ModelCombo *model_ = nullptr;
+    QCheckBox *retainContext_ = nullptr;
+    QPointer<ModelCatalog> catalog_;
+    QLabel *modelStatus_ = nullptr;
+    QFormLayout *parameterForm_ = nullptr;
+    QPushButton *refreshModels_ = nullptr;
+    TextPreview *prompt_ = nullptr, *schema_ = nullptr;
+    void populateModels();
+    void populateEfforts();
+};
+
+AgentForm::AgentForm(NodeForm &owner, QVBoxLayout *layout, QFormLayout *form, ModelCatalog *catalog)
+    : NodeParameterForm(owner), catalog_(catalog), parameterForm_(form) {
     const auto &node = node_;
     agent_ = new QComboBox;
     agent_->setObjectName(strings::NodeAgent);
@@ -115,7 +133,7 @@ void NodeForm::buildAgent(QVBoxLayout *layout, QFormLayout *form) {
     readOnlyParameters_ = [this](bool readOnly) { retainContext_->setEnabled(!readOnly); };
 }
 
-void NodeForm::populateModels() {
+void AgentForm::populateModels() {
     if (!model_)
         return;
     QSignalBlocker block(model_);
@@ -151,7 +169,7 @@ void NodeForm::populateModels() {
     populateEfforts();
     scheduleResize();
 }
-void NodeForm::populateEfforts() {
+void AgentForm::populateEfforts() {
     if (!effort_)
         return;
     QSignalBlocker blocker(effort_);

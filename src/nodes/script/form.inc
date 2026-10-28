@@ -1,4 +1,13 @@
-void NodeForm::buildScript(QVBoxLayout *, QFormLayout *form) {
+class ScriptForm final : public NodeParameterForm {
+public:
+    ScriptForm(NodeForm &owner, QFormLayout *form);
+private:
+    QComboBox *scriptLanguage_ = nullptr;
+    QLineEdit *scriptPath_ = nullptr, *scriptDirectory_ = nullptr;
+    QPushButton *scriptFileBrowse_ = nullptr, *scriptDirectoryBrowse_ = nullptr;
+};
+
+ScriptForm::ScriptForm(NodeForm &owner, QFormLayout *form) : NodeParameterForm(owner) {
     const auto &node = node_;
     scriptLanguage_ = new QComboBox;
     scriptLanguage_->setObjectName(strings::ScriptLanguage);
@@ -54,7 +63,7 @@ void NodeForm::buildScript(QVBoxLayout *, QFormLayout *form) {
     connect(scriptFileBrowse_, &QPushButton::clicked, this, [this] {
         if (readOnly_)
             return;
-        QFileDialog dialog(dialogOwner(this), strings::SelectScriptFile);
+        QFileDialog dialog(dialogOwner(&owner_), strings::SelectScriptFile);
         dialog.setObjectName(strings::ScriptFileDialog);
         dialog.setFileMode(QFileDialog::ExistingFile);
         dialog.setAcceptMode(QFileDialog::AcceptOpen);
@@ -71,7 +80,7 @@ void NodeForm::buildScript(QVBoxLayout *, QFormLayout *form) {
     connect(scriptDirectoryBrowse_, &QPushButton::clicked, this, [this] {
         if (readOnly_)
             return;
-        QFileDialog dialog(dialogOwner(this), strings::SelectWorkingDirectory);
+        QFileDialog dialog(dialogOwner(&owner_), strings::SelectWorkingDirectory);
         dialog.setObjectName(strings::ScriptDirectoryDialog);
         dialog.setFileMode(QFileDialog::Directory);
         dialog.setOption(QFileDialog::ShowDirsOnly);

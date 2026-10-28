@@ -3,12 +3,15 @@
 #include "nodeprocess.h"
 #include <functional>
 #include <optional>
+#include <memory>
 class QVBoxLayout;
 class QFormLayout;
 namespace an {
 class Runner;
 class Coordinator;
 class NodeForm;
+class NodeParameterForm;
+class ModelCatalog;
 enum class InputPolicy { Single, All, Any, Source };
 struct SchemaInputs {
     std::vector<Json> ports;
@@ -66,6 +69,6 @@ struct NodeRegistry {
     static NodeDefinition userInput();
     static NodeDefinition delay();
     static NodeDefinition schedule();
-    static void buildForm(NodeForm &form, QVBoxLayout *layout, QFormLayout *fields);
+    static std::unique_ptr<NodeParameterForm> createForm(NodeForm &form, QVBoxLayout *layout, QFormLayout *fields, ModelCatalog *catalog);
 };
 } // namespace an

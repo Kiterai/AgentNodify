@@ -2,6 +2,7 @@
 #include "strings.h"
 #include "nodedefinition.h"
 #include "graph.h"
+#include "modelcatalog.h"
 #include "theme.h"
 #include <QtNodes/NodeStyle>
 #include <QJsonDocument>

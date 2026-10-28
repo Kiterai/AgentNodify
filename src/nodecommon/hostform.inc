@@ -1,6 +1,17 @@
-void NodeForm::buildHost(QVBoxLayout *, QFormLayout *form) {
+// ProjectCreate, FlowRun and FlowWait share the same target/path editor.
+class HostForm final : public NodeParameterForm {
+public:
+    HostForm(NodeForm &owner, QFormLayout *form);
+    void setFlowChoices(const std::vector<std::pair<QString, QString>> &choices) override;
+private:
+    QComboBox *targetFlow_ = nullptr;
+    QLineEdit *projectPath_ = nullptr;
+    std::vector<std::pair<QString, QString>> flowChoices_;
+    void refreshTargetFlows();
+};
+
+HostForm::HostForm(NodeForm &owner, QFormLayout *form) : NodeParameterForm(owner) {
     const auto &node = node_;
-    refreshFlowChoices_ = [this] { refreshTargetFlows(); };
     targetFlow_ = new QComboBox;
     targetFlow_->setObjectName(strings::TargetFlow);
     targetFlow_->setPlaceholderText(strings::SelectFlow);
@@ -32,7 +43,12 @@ void NodeForm::buildHost(QVBoxLayout *, QFormLayout *form) {
     });
 }
 
-void NodeForm::refreshTargetFlows() {
+void HostForm::setFlowChoices(const std::vector<std::pair<QString, QString>> &choices) {
+    flowChoices_ = choices;
+    refreshTargetFlows();
+}
+
+void HostForm::refreshTargetFlows() {
     const auto &choices = flowChoices_;
     if (!targetFlow_)
         return;
