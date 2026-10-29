@@ -81,8 +81,26 @@ endif()
 target_sources(AgentNodify PRIVATE src/app/instancelock.h)
 target_link_libraries(AgentNodify PRIVATE agentui)
 enable_testing()
+if(WIN32)
+  find_program(AGENTNODIFY_POWERSHELL_EXECUTABLE NAMES powershell pwsh)
+  if(AGENTNODIFY_POWERSHELL_EXECUTABLE)
+    add_test(NAME installer_script_guards COMMAND "${AGENTNODIFY_POWERSHELL_EXECUTABLE}"
+      -NoProfile -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/installer_scripts_test.ps1"
+      -SourceDirectory "${CMAKE_CURRENT_SOURCE_DIR}" -BuildDirectory "${CMAKE_BINARY_DIR}")
+    set_tests_properties(installer_script_guards PROPERTIES TIMEOUT 60)
+  endif()
+endif()
+find_package(Python3 3.8 QUIET COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME distribution_materials COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/distribution_test.py")
+  set_tests_properties(distribution_materials PROPERTIES TIMEOUT 60)
+endif()
 find_program(AGENTNODIFY_NODE_EXECUTABLE NAMES node)
 if(AGENTNODIFY_NODE_EXECUTABLE)
+  add_test(NAME installer_scripting COMMAND "${AGENTNODIFY_NODE_EXECUTABLE}"
+    --test "${CMAKE_CURRENT_SOURCE_DIR}/tests/installer.test.mjs")
+  set_tests_properties(installer_scripting PROPERTIES TIMEOUT 30)
   add_test(NAME release_versioning COMMAND "${AGENTNODIFY_NODE_EXECUTABLE}"
     --test "${CMAKE_CURRENT_SOURCE_DIR}/tests/release.test.mjs")
   set_tests_properties(release_versioning PROPERTIES

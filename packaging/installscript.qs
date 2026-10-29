@@ -1,5 +1,14 @@
 function Component() {
+    installer.installationStarted.connect(this, Component.prototype.useSignedMaintenanceTool);
 }
+
+Component.prototype.useSignedMaintenanceTool = function() {
+    if (installer.value("UseSignedMaintenanceTool") === "true"
+            && (component.installationRequested() || component.updateRequested())) {
+        // IFW copies this signed binary as MaintenanceTool after extraction.
+        installer.setInstallerBaseBinary(installer.value("TargetDir") + "/maintenance/installerbase.exe");
+    }
+};
 
 Component.prototype.createOperations = function() {
     component.createOperations();

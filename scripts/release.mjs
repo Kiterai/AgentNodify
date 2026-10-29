@@ -87,24 +87,77 @@ export async function runRelease({ env = process.env, command = process.argv[2],
   if (command !== 'publish') throw new Error('Use prepare or publish');
   if (plan.published) { console.log('Already published; no assets changed'); return; }
   if (plan.version !== env.RELEASE_VERSION) throw new Error('Version changed since preparation; refusing to publish');
+  if (env.LEGAL_APPROVED !== 'true') throw new Error('Explicit distribution review approval is required');
   const directory = env.INSTALLER_DIRECTORY;
   if (!directory) throw new Error('INSTALLER_DIRECTORY is required');
   const installers = readdirSync(directory).filter(name => name.startsWith(`AgentNodify-${plan.version}-`) && name.endsWith('-Setup.exe'));
   if (installers.length !== 1) throw new Error('Expected exactly one versioned installer');
   const installer = join(directory, installers[0]);
+  const installerDigest = createHash('sha256').update(readFileSync(installer)).digest('hex');
+  const validationFile = join(directory, 'installer-validation.json');
+  const validation = JSON.parse(readFileSync(validationFile, 'utf8'));
+  if (validation.schema !== 1 || validation.passed !== true || validation.installerSha256 !== installerDigest
+      || !Array.isArray(validation.checks) || validation.checks.length === 0) {
+    throw new Error('Installer roundtrip validation is missing, failed or stale');
+  }
+  const signatureNames = ['installer', 'application', 'maintenance'];
+  if (!Array.isArray(validation.signatures) || validation.signatures.length !== signatureNames.length
+      || !signatureNames.every(name => validation.signatures.filter(signature => signature.name === name).length === 1)
+      || validation.signatures.some(signature => !['Valid', 'NotSigned'].includes(signature.status))) {
+    throw new Error('Authenticode validation records are missing or contain signature errors');
+  }
+  const signatures = signatureNames.map(name => validation.signatures?.find(signature => signature.name === name));
+  if (signatures.some(signature => signature.status === 'Valid' && signature.selfSigned !== false)) {
+    throw new Error('Self-signed or unclassified signing identities are test-only and cannot be published');
+  }
+  const allSigned = signatures.every(signature => signature?.status === 'Valid');
+  if (((env.REQUIRE_SIGNED === 'true' || env.EXPECTED_SIGNER_THUMBPRINT) && !allSigned)
+      || (env.EXPECTED_SIGNER_THUMBPRINT && signatures.some(signature =>
+        signature?.thumbprint?.toLowerCase() !== env.EXPECTED_SIGNER_THUMBPRINT.toLowerCase()))) {
+    throw new Error('Required Authenticode signature validation is incomplete');
+  }
+  const signatureSummary = allSigned ? 'Authenticode signatures verified for installer, application and Maintenance Tool'
+    : signatures.every(signature => signature?.status === 'NotSigned') ? 'unsigned' : 'not fully signature-verified';
+  const sourceName = `AgentNodify-${plan.version}-Sources.zip`;
+  const sources = join(directory, sourceName);
+  const recordFile = join(directory, 'distribution-release.json');
+  const record = JSON.parse(readFileSync(recordFile, 'utf8'));
+  const sourceDigest = createHash('sha256').update(readFileSync(sources)).digest('hex');
+  if (record.schema !== 1 || record.version !== plan.version || record.commit !== sha
+      || record.repository !== repo || record.sourceBundle !== sourceName
+      || record.sourceBundleSha256 !== sourceDigest) {
+    throw new Error('Source companion does not match this release');
+  }
+  if (!env.LEGAL_DIRECTORY || !record.noticeHashes
+      || !['APPLICATION-LICENSE.txt', 'QT-NOTICES.txt', 'IFW-NOTICES.txt', 'SOURCE-OFFER.txt',
+        'BUILD-INFO.json', 'SOURCE-MANIFEST.json'].every(name => Object.hasOwn(record.noticeHashes, name))) {
+    throw new Error('Distribution notice manifest is incomplete');
+  }
+  if (JSON.stringify(readdirSync(env.LEGAL_DIRECTORY).sort()) !== JSON.stringify(Object.keys(record.noticeHashes).sort())) {
+    throw new Error('Distribution notice file set changed after source preparation');
+  }
+  for (const [name, expected] of Object.entries(record.noticeHashes)) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name) || !/^[a-f0-9]{64}$/.test(expected)
+        || createHash('sha256').update(readFileSync(join(env.LEGAL_DIRECTORY, name))).digest('hex') !== expected) {
+      throw new Error('Distribution notices changed after source preparation');
+    }
+  }
   const checksumFile = join(directory, 'SHA256SUMS.txt');
-  const digest = createHash('sha256').update(readFileSync(installer)).digest('hex');
-  writeFileSync(checksumFile, `${digest}  ${basename(installer)}\n`);
+  const payloads = [sources, recordFile, validationFile, installer];
+  const sums = payloads.map(file => `${createHash('sha256').update(readFileSync(file)).digest('hex')}  ${basename(file)}\n`);
+  writeFileSync(checksumFile, sums.join(''));
   let release = releases.find(release => release.tag_name === plan.tag);
   if (!release) {
     // Create the tag/release only after packaging and all tests have succeeded.
     release = await api('/releases', 'POST', {
       tag_name: plan.tag, target_commitish: sha, name: `AgentNodify ${plan.tag}`, draft: true,
-      prerelease: false, body: `${plan.marker}\n\nWindows x64 installer (unsigned).\nCommit: ${sha}\nSHA-256: see SHA256SUMS.txt.`,
+      prerelease: false, body: `${plan.marker}\n\nWindows x64 installer (${signatureSummary}).\nCommit: ${sha}\n`
+        + `Corresponding source materials: ${sourceName} (application + upstream archives + notices/build records).\n`
+        + 'SHA-256: see SHA256SUMS.txt.',
     });
   }
   if (!release.draft || !release.body?.includes(plan.marker)) throw new Error('Refusing to modify an unrelated or published release');
-  for (const file of [installer, checksumFile]) {
+  for (const file of [...payloads, checksumFile]) {
     const name = basename(file);
     // Retrying a failed draft is safe; never replace published release assets.
     for (const asset of await list(`/releases/${release.id}/assets`)) {
@@ -113,11 +166,17 @@ export async function runRelease({ env = process.env, command = process.argv[2],
     const upload = new URL(release.upload_url.split('{')[0]);
     if (upload.origin !== 'https://uploads.github.com') throw new Error('Unexpected upload host');
     upload.searchParams.set('name', name);
+    const data = readFileSync(file);
     const response = await request(upload, {
       method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/octet-stream' },
-      body: readFileSync(file),
+      body: data,
     });
     if (!response.ok) throw new Error(`Asset upload failed: ${response.status}`);
+    const asset = await response.json();
+    const expectedDigest = `sha256:${createHash('sha256').update(data).digest('hex')}`;
+    if (asset.name !== name || asset.size !== data.length || asset.digest !== expectedDigest) {
+      throw new Error(`Uploaded asset verification failed: ${name}`);
+    }
   }
   await api(`/releases/${release.id}`, 'PATCH', { draft: false, make_latest: 'true' });
   console.log(`Published ${plan.tag}`);

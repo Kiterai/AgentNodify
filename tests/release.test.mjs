@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { nextVersion, parseVersion, planRelease, runRelease } from '../scripts/release.mjs';
 
 const sha = 'a'.repeat(40);
@@ -50,9 +51,30 @@ function fixture(t) {
   const directory = mkdtempSync(join(process.cwd(), 'build-release-test-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   writeFileSync(join(directory, 'AgentNodify-0.1.1-Windows-AMD64-Setup.exe'), 'test installer');
+  writeFileSync(join(directory, 'installer-validation.json'), JSON.stringify({
+    schema: 1, passed: true, installerSha256: createHash('sha256').update('test installer').digest('hex'),
+    checks: ['fixture validation - not real installation evidence'],
+    signatures: ['installer', 'application', 'maintenance'].map(name => ({ name, status: 'NotSigned', thumbprint: null })),
+  }));
+  const sourceName = 'AgentNodify-0.1.1-Sources.zip';
+  writeFileSync(join(directory, sourceName), 'test source bundle');
+  const legalDirectory = join(directory, 'legal');
+  mkdirSync(legalDirectory);
+  const noticeHashes = {};
+  for (const name of ['APPLICATION-LICENSE.txt', 'QT-NOTICES.txt', 'IFW-NOTICES.txt',
+    'SOURCE-OFFER.txt', 'BUILD-INFO.json', 'SOURCE-MANIFEST.json']) {
+    writeFileSync(join(legalDirectory, name), 'fixture notice - not distribution material');
+    noticeHashes[name] = createHash('sha256').update('fixture notice - not distribution material').digest('hex');
+  }
+  writeFileSync(join(directory, 'distribution-release.json'), JSON.stringify({
+    schema: 1, version: '0.1.1', commit: sha, repository: 'owner/repo', sourceBundle: sourceName,
+    sourceBundleSha256: createHash('sha256').update('test source bundle').digest('hex'),
+    noticeHashes,
+  }));
   writeFileSync(join(directory, 'CMakeLists.txt'), 'set(AGENTNODIFY_VERSION "0.1.0" CACHE STRING "Version")');
   return { GITHUB_TOKEN: 'test-token-not-a-secret', GITHUB_REPOSITORY: 'owner/repo', GITHUB_SHA: sha,
-    GITHUB_OUTPUT: join(directory, 'outputs'), INSTALLER_DIRECTORY: directory, RELEASE_VERSION: '0.1.1' };
+    GITHUB_OUTPUT: join(directory, 'outputs'), INSTALLER_DIRECTORY: directory, LEGAL_DIRECTORY: legalDirectory,
+    RELEASE_VERSION: '0.1.1', LEGAL_APPROVED: 'true' };
 }
 
 function runFixture(env, command, request) {
@@ -70,7 +92,7 @@ test('prepare only reads API state and emits validated outputs', async t => {
   assert.equal(readFileSync(env.GITHUB_OUTPUT, 'utf8'), 'version=0.1.1\ntag=v0.1.1\npublished=false\n');
 });
 
-test('publish uploads installer and checksum before making the draft public', async t => {
+test('publish verifies sources, record, validation, installer and checksum before making the draft public', async t => {
   const env = fixture(t);
   const writes = [];
   const request = async (url, options) => {
@@ -85,13 +107,112 @@ test('publish uploads installer and checksum before making the draft public', as
       return Response.json({ ...body, id: 1, upload_url: 'https://uploads.github.com/repos/owner/repo/releases/1/assets{?name}' });
     }
     if (options.method === 'PATCH') assert.equal(JSON.parse(options.body).draft, false);
+    if (new URL(url).host === 'uploads.github.com') {
+      return Response.json({ name: new URL(url).searchParams.get('name'), size: options.body.length,
+        digest: `sha256:${createHash('sha256').update(options.body).digest('hex')}` });
+    }
     return Response.json({});
   };
   await runFixture(env, 'publish', request);
   assert.deepEqual(writes, ['POST /repos/owner/repo/releases',
     'POST /repos/owner/repo/releases/1/assets', 'POST /repos/owner/repo/releases/1/assets',
+    'POST /repos/owner/repo/releases/1/assets', 'POST /repos/owner/repo/releases/1/assets',
+    'POST /repos/owner/repo/releases/1/assets',
     'PATCH /repos/owner/repo/releases/1']);
-  assert.match(readFileSync(join(env.INSTALLER_DIRECTORY, 'SHA256SUMS.txt'), 'utf8'), /^[a-f0-9]{64}  AgentNodify-0\.1\.1-Windows-AMD64-Setup\.exe\n$/);
+  const checksums = readFileSync(join(env.INSTALLER_DIRECTORY, 'SHA256SUMS.txt'), 'utf8');
+  assert.match(checksums, /^[a-f0-9]{64}  AgentNodify-0\.1\.1-Sources\.zip\n/);
+  assert.match(checksums, /[a-f0-9]{64}  AgentNodify-0\.1\.1-Windows-AMD64-Setup\.exe\n$/);
+});
+
+test('failed or stale installer roundtrip evidence cannot create a release', async t => {
+  const env = fixture(t);
+  const request = async (url, options) => {
+    assert.equal(options.method, 'GET');
+    return Response.json([]);
+  };
+  const path = join(env.INSTALLER_DIRECTORY, 'installer-validation.json');
+  const original = JSON.parse(readFileSync(path, 'utf8'));
+  writeFileSync(path, JSON.stringify({ ...original, passed: false }));
+  await assert.rejects(runFixture(env, 'publish', request), /roundtrip validation/);
+  writeFileSync(path, JSON.stringify({ ...original, installerSha256: '0'.repeat(64) }));
+  await assert.rejects(runFixture(env, 'publish', request), /roundtrip validation/);
+});
+
+test('signed-only policy rejects an unsigned installer report', async t => {
+  const env = fixture(t);
+  const request = async (url, options) => {
+    assert.equal(options.method, 'GET');
+    return Response.json([]);
+  };
+  await assert.rejects(runFixture({ ...env, REQUIRE_SIGNED: 'true' }, 'publish', request), /Authenticode/);
+  await assert.rejects(runFixture({ ...env, EXPECTED_SIGNER_THUMBPRINT: 'a'.repeat(40) }, 'publish', request), /Authenticode/);
+  const file = join(env.INSTALLER_DIRECTORY, 'installer-validation.json');
+  const report = JSON.parse(readFileSync(file, 'utf8'));
+  report.signatures[0].status = 'HashMismatch';
+  writeFileSync(file, JSON.stringify(report));
+  await assert.rejects(runFixture(env, 'publish', request), /Authenticode/);
+});
+
+test('self-signed and unclassified valid identities cannot be published', async t => {
+  const env = fixture(t);
+  const request = async (url, options) => {
+    assert.equal(options.method, 'GET');
+    return Response.json([]);
+  };
+  const file = join(env.INSTALLER_DIRECTORY, 'installer-validation.json');
+  const report = JSON.parse(readFileSync(file, 'utf8'));
+  for (const selfSigned of [true, undefined]) {
+    report.signatures[0] = { name: 'installer', status: 'Valid', thumbprint: 'a'.repeat(40), selfSigned };
+    writeFileSync(file, JSON.stringify(report));
+    await assert.rejects(runFixture(env, 'publish', request), /test-only/);
+  }
+});
+
+test('unapproved or changed source material cannot create a release', async t => {
+  const env = fixture(t);
+  const request = async (url, options) => {
+    assert.equal(options.method, 'GET');
+    return Response.json([]);
+  };
+  await assert.rejects(runFixture({ ...env, LEGAL_APPROVED: undefined }, 'publish', request), /approval/);
+  writeFileSync(join(env.INSTALLER_DIRECTORY, 'AgentNodify-0.1.1-Sources.zip'), 'changed source');
+  await assert.rejects(runFixture(env, 'publish', request), /Source companion/);
+});
+
+test('missing source companion cannot create a release', async t => {
+  const env = fixture(t);
+  rmSync(join(env.INSTALLER_DIRECTORY, 'AgentNodify-0.1.1-Sources.zip'));
+  const request = async (url, options) => {
+    assert.equal(options.method, 'GET');
+    return Response.json([]);
+  };
+  await assert.rejects(runFixture(env, 'publish', request), /ENOENT/);
+});
+
+test('changed notice material cannot create a release', async t => {
+  const env = fixture(t);
+  writeFileSync(join(env.LEGAL_DIRECTORY, 'SOURCE-OFFER.txt'), 'changed offer');
+  const request = async (url, options) => {
+    assert.equal(options.method, 'GET');
+    return Response.json([]);
+  };
+  await assert.rejects(runFixture(env, 'publish', request), /notices changed/);
+});
+
+test('server-reported checksum mismatch leaves release unpublished', async t => {
+  const env = fixture(t);
+  let published = false;
+  const request = async (url, options) => {
+    if (options.method === 'PATCH') published = true;
+    if (options.method === 'GET') return Response.json([]);
+    if (new URL(url).host === 'uploads.github.com') {
+      return Response.json({ name: new URL(url).searchParams.get('name'), size: options.body.length,
+        digest: `sha256:${'0'.repeat(64)}` });
+    }
+    return Response.json({ ...release, id: 1, upload_url: 'https://uploads.github.com/assets{?name}' });
+  };
+  await assert.rejects(runFixture(env, 'publish', request), /verification failed/);
+  assert.equal(published, false);
 });
 
 test('failed upload leaves the release unpublished', async t => {

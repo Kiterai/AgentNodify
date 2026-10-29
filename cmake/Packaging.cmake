@@ -53,6 +53,18 @@ set(CPACK_IFW_PACKAGE_NAME AgentNodify)
 set(CPACK_IFW_PACKAGE_START_MENU_DIRECTORY AgentNodify)
 set(CPACK_IFW_PACKAGE_MAINTENANCE_TOOL_NAME MaintenanceTool)
 set(CPACK_IFW_PACKAGE_CONTROL_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/packaging/controlscript.qs")
+set(AGENTNODIFY_SIGNED_INSTALLERBASE "" CACHE FILEPATH "Verified signed IFW installerbase for MaintenanceTool")
+if(AGENTNODIFY_SIGNED_INSTALLERBASE)
+  if(NOT WIN32 OR NOT EXISTS "${AGENTNODIFY_SIGNED_INSTALLERBASE}")
+    message(FATAL_ERROR "Signed MaintenanceTool requires an existing Windows installerbase executable")
+  endif()
+  install(PROGRAMS "${AGENTNODIFY_SIGNED_INSTALLERBASE}"
+    DESTINATION maintenance RENAME installerbase.exe COMPONENT AgentNodify)
+  file(READ "${CMAKE_CURRENT_SOURCE_DIR}/packaging/controlscript.qs" _control_script)
+  file(WRITE "${CMAKE_BINARY_DIR}/signed-controlscript.qs"
+    "var signedInstallerBaseEnabled = true;\n${_control_script}")
+  set(CPACK_IFW_PACKAGE_CONTROL_SCRIPT "${CMAKE_BINARY_DIR}/signed-controlscript.qs")
+endif()
 set(CPACK_IFW_PACKAGE_ALLOW_NON_ASCII_CHARACTERS ON)
 set(CPACK_IFW_PACKAGE_ALLOW_SPACE_IN_PATH ON)
 # Do not recursively delete unknown files a user may have added to the directory.

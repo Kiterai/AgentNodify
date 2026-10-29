@@ -106,11 +106,8 @@ jobs:
           if ($env:LEGAL_APPROVED -ne 'true') {
             throw 'Set RELEASE_LEGAL_APPROVED=true only after the public-distribution review in spec/packaging.md.'
           }
-          foreach ($name in @('APPLICATION-LICENSE.txt', 'QT-NOTICES.txt', 'IFW-NOTICES.txt', 'SOURCE-OFFER.txt')) {
-            $file = Join-Path 'packaging/distribution' $name
-            if (!(Test-Path -LiteralPath $file -PathType Leaf) -or (Get-Item -LiteralPath $file).Length -eq 0) {
-              throw "Missing distribution notice: $file (see spec/packaging.md)"
-            }
+          if (!(Test-Path -LiteralPath 'packaging/sources.json' -PathType Leaf)) {
+            throw 'Missing pinned source profile (see spec/packaging.md)'
           }
 
       - name: Install Qt and Qt Installer Framework
@@ -126,16 +123,48 @@ jobs:
           $creators = @(Get-ChildItem -Path "$qtDirectory/Tools" -Filter binarycreator.exe -Recurse)
           if ($creators.Count -ne 1) { throw 'Expected exactly one IFW installation' }
           $ifwPath = $creators[0].Directory.Parent.FullName
-          $ifwVersion = & $creators[0].FullName --version 2>&1
-          if ($LASTEXITCODE -or "$ifwVersion" -notmatch '4\.7\.0') { throw 'Expected IFW 4.7.0' }
+          $ifwVersion = & (Join-Path $ifwPath 'bin/installerbase.exe') --version 2>&1
+          if ($LASTEXITCODE -or "$ifwVersion" -notmatch 'IFW Version: 4\.7\.0, built with Qt 6\.6\.0') { throw 'Expected IFW 4.7.0 / Qt 6.6.0' }
           "Qt6_ROOT=$qtDirectory/$env:QT_VERSION/msvc2022_64" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           "QTIFWDIR=$ifwPath" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Prepare exact-version notices and source companion
+        if: ${{ steps.version.outputs.published != 'true' }}
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          New-Item -ItemType Directory -Path build-release -Force | Out-Null
+          git archive --format=zip --output=build-release/application-source.zip $env:GITHUB_SHA
+          if ($LASTEXITCODE) { throw 'Application source archive failed' }
+          $supplements = @()
+          if (Test-Path -LiteralPath 'packaging/supplements' -PathType Container) {
+            $supplements = @('--supplement-directory', 'packaging/supplements')
+          }
+          python scripts/distribution.py prepare --download --cache build-source-cache `
+            --output build-release/distribution --bundle-directory build-release/installer `
+            --version $env:RELEASE_VERSION --repository $env:GITHUB_REPOSITORY --commit $env:GITHUB_SHA `
+            --qt-path $env:Qt6_ROOT --ifw-path $env:QTIFWDIR --application-source build-release/application-source.zip @supplements
+          if ($LASTEXITCODE) { throw 'Distribution source preparation failed' }
+          foreach ($name in @('APPLICATION-LICENSE.txt', 'QT-NOTICES.txt', 'IFW-NOTICES.txt', 'SOURCE-OFFER.txt')) {
+            $file = Join-Path 'build-release/distribution' $name
+            if (!(Test-Path -LiteralPath $file -PathType Leaf) -or (Get-Item -LiteralPath $file).Length -eq 0) {
+              throw "Missing generated distribution notice: $file"
+            }
+          }
 
       - name: Build versioned installer and run all tests
         if: ${{ steps.version.outputs.published != 'true' }}
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
-        run: ./scripts/package.ps1 -BuildDirectory build-release -Version $env:RELEASE_VERSION -LegalDirectory packaging/distribution
+        run: ./scripts/package.ps1 -BuildDirectory build-release -Version $env:RELEASE_VERSION -LegalDirectory build-release/distribution
+
+      - name: Install, smoke-test and uninstall the packaged application
+        if: ${{ steps.version.outputs.published != 'true' }}
+        run: |
+          $installers = @(Get-ChildItem build-release/installer -Filter '*-Setup.exe')
+          if ($installers.Count -ne 1) { throw 'Expected exactly one installer to validate' }
+          ./scripts/test-installer.ps1 -Installer $installers[0].FullName -WorkDirectory build-release/roundtrip -EnvironmentKind CIRunner
+          Copy-Item -LiteralPath build-release/roundtrip/result.json -Destination build-release/installer/installer-validation.json
 
       - name: Publish installer and SHA-256 checksum
         if: ${{ steps.version.outputs.published != 'true' }}
@@ -143,6 +172,8 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
           INSTALLER_DIRECTORY: build-release/installer
+          LEGAL_DIRECTORY: build-release/distribution
+          LEGAL_APPROVED: ${{ vars.RELEASE_LEGAL_APPROVED }}
         run: node scripts/release.mjs publish
 
       - name: Save installer build diagnostics
@@ -154,5 +185,9 @@ jobs:
             build-release/Testing/Temporary/*.log
             build-release/CMakeFiles/CMakeConfigureLog.yaml
             build-release/*.png
+            build-release/distribution/*
+            build-release/installer/distribution-release.json
+            build-release/roundtrip/*.log
+            build-release/roundtrip/result.json
           if-no-files-found: ignore
           retention-days: 7

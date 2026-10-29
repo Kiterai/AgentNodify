@@ -78,6 +78,10 @@ Actions画面の`Windows build`から結果を確認できます。CTestログ�
 
 採番・再実行判定のオフラインテストは`node --test tests/release.test.mjs`で実行できます。GitHubやエージェントCLIへの接続はありません。
 
+配布資料生成のオフラインテストは`python tests/distribution_test.py`、IFWスクリプトの分岐テストは`node --test tests/installer.test.mjs`で実行できます。Pythonがある場合は`distribution_materials`、Node.jsがある場合は`installer_scripting`として通常CTestにも含めます。テストは小さな自作アーカイブ・偽のAPI／ツール応答を使い、ソース取得・GitHub公開・実署名を行いません。実ソース取得は配布ガイドの`--download`を明示した準備工程に限ります。
+
+Windowsの`installer_script_guards`はPowerShell構文、`-WhatIf`、既存フォルダの保護、WSBのネットワーク無効化と共有範囲を検査する。実インストールは通常CTestへ入れず、[配布ガイド](packaging.md#実インストールアンインストール)の明示実行とCIリリース工程だけで行う。検証用UUID・作業先・ショートカットを使い、外部CLIの実サービスには接続しない。
+
 ワークフローを登録する認証には対象リポジトリのContentsとWorkflowsの書き込み権限が必要です（classic PATなら`repo`と`workflow`、fine-grained PAT／GitHub Appなら`Contents: Read and write`と`Workflows: Read and write`）。PR作成にはさらにPull requestsの書き込み権限が必要です。実行結果のAPI確認にはActionsの読み取り、手動起動・再実行にはActionsの書き込みが必要です。トークンをソースやチャットへ貼り付けないでください。
 
 ## テスト

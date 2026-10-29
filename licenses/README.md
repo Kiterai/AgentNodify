@@ -69,6 +69,14 @@ No completed source offer, download location, or legal approval is asserted by
 this repository's generic notices. The release workflow's legal-approval and
 required-document checks remain in force. See ../spec/packaging.md.
 
+For the pinned Windows release profile, scripts/distribution.py collects original
+texts from checksum-verified source archives. Its collect command creates review
+material only; prepare also checks actual tool versions, bundles the source
+archives and git-archived application source, and generates per-release source
+access information. The publisher verifies all asset uploads before making a
+release public. This automation does not replace review of vendor patches,
+build configuration, exact source correspondence or continuing source access.
+
 Microsoft runtime files, when distributed, remain subject to Microsoft's
 redistribution terms. Externally installed agent CLIs, Python and Node.js are
 not bundled or relicensed by AgentNodify.

@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "profile": "windows-qt-6.8.3-ifw-4.7.0",
+  "qtVersion": "6.8.3",
+  "ifwVersion": "4.7.0",
+  "ifwQtVersion": "6.6.0",
+  "ifwCommit": "fad83b7a8ba6a9e3179236d11bba0ceb9b3de5b4",
+  "ifwArchiveVersions": "libarchive 3.7.1 zlib/1.2.12 liblzma/5.2.5 bz2lib/1.0.8",
+  "sources": [
+    {
+      "id": "qtbase-6.8.3", "group": "qt",
+      "url": "https://download.qt.io/archive/qt/6.8/6.8.3/submodules/qtbase-everywhere-src-6.8.3.tar.xz",
+      "sha256": "56001b905601bb9023d399f3ba780d7fa940f3e4861e496a7c490331f49e0b80"
+    },
+    {
+      "id": "qtsvg-6.8.3", "group": "qt",
+      "url": "https://download.qt.io/archive/qt/6.8/6.8.3/submodules/qtsvg-everywhere-src-6.8.3.tar.xz",
+      "sha256": "35eb516460f00f264eb504baa253432384351cf23fb9980a5857190e8deef438"
+    },
+    {
+      "id": "ifw-4.7.0", "group": "ifw",
+      "url": "https://download.qt.io/official_releases/qt-installer-framework/4.7.0/installer-framework-everywhere-src-4.7.0.tar.xz",
+      "sha256": "6a88bdf40be359aca5ac66328c597a14d3520db40c04db3c8d0174cf1f4b8aa7"
+    },
+    {
+      "id": "qtbase-6.6.0", "group": "ifw",
+      "url": "https://download.qt.io/archive/qt/6.6/6.6.0/submodules/qtbase-everywhere-src-6.6.0.tar.xz",
+      "sha256": "039d53312acb5897a9054bd38c9ccbdab72500b71fdccdb3f4f0844b0dd39e0e"
+    },
+    {
+      "id": "qtdeclarative-6.6.0", "group": "ifw",
+      "url": "https://download.qt.io/archive/qt/6.6/6.6.0/submodules/qtdeclarative-everywhere-src-6.6.0.tar.xz",
+      "sha256": "1b539bb0a918c8f0307fd07bd4ef0334bf7f8934bbc2eabfc04c433a7d7fa331"
+    },
+    {
+      "id": "qttools-6.6.0", "group": "ifw",
+      "url": "https://download.qt.io/archive/qt/6.6/6.6.0/submodules/qttools-everywhere-src-6.6.0.tar.xz",
+      "sha256": "4e9feebc142bbb6e453e1dc3277e09ec45c8ef081b5ee2a029e6684b5905ba99"
+    },
+    {
+      "id": "qt5compat-6.6.0", "group": "ifw",
+      "url": "https://download.qt.io/archive/qt/6.6/6.6.0/submodules/qt5compat-everywhere-src-6.6.0.tar.xz",
+      "sha256": "3d85edb66126f712266dcbfc6cd00383d46cc6d66c8b84607ca21e2bc71a8fca"
+    },
+    {
+      "id": "zlib-1.2.12", "group": "ifw",
+      "url": "https://zlib.net/fossils/zlib-1.2.12.tar.gz",
+      "sha256": "91844808532e5ce316b3c010929493c0244f3d37593afd6de04f71821d5136d9"
+    },
+    {
+      "id": "xz-5.2.5", "group": "ifw",
+      "url": "https://tukaani.org/xz/xz-5.2.5.tar.xz",
+      "sha256": "3e1e518ffc912f86608a8cb35e4bd41ad1aec210df2a47aaa1f95e7f5576ef56"
+    },
+    {
+      "id": "bzip2-1.0.8", "group": "ifw",
+      "url": "https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz",
+      "sha256": "ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269"
+    }
+  ]
+}

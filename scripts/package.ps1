@@ -5,7 +5,12 @@ param(
     [string]$Generator = 'Visual Studio 17 2022',
     [string]$Architecture = 'x64',
     [string]$LegalDirectory,
-    [string]$Version
+    [string]$Version,
+    [string]$SigningCertificateThumbprint,
+    [uri]$TimestampUrl,
+    [switch]$TestOnlyNoTimestamp,
+    [string]$SignToolPath = $env:SIGNTOOL_PATH,
+    [string[]]$CMakeArguments = @()
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -19,24 +24,55 @@ foreach ($tool in @('binarycreator.exe', 'installerbase.exe', 'repogen.exe')) {
     }
 }
 if ($LegalDirectory) { $LegalDirectory = (Resolve-Path -LiteralPath $LegalDirectory).Path }
+if ($TestOnlyNoTimestamp -and (!$SigningCertificateThumbprint -or $TimestampUrl)) {
+    throw 'Test-only signing requires a certificate and forbids a timestamp service.'
+}
+if (!$TestOnlyNoTimestamp -and (($SigningCertificateThumbprint -and !$TimestampUrl) -or ($TimestampUrl -and !$SigningCertificateThumbprint))) {
+    throw 'Signing requires both -SigningCertificateThumbprint and -TimestampUrl.'
+}
 $savedPath = $env:PATH
 Push-Location $root
 try {
+    $signedBase = ''
+    $signing = @{ CertificateThumbprint = $SigningCertificateThumbprint; TimestampUrl = $TimestampUrl }
+    if ($TestOnlyNoTimestamp) { $signing.TestOnlyNoTimestamp = $true }
+    if ($SignToolPath) { $signing.SignToolPath = $SignToolPath }
+    if ($SigningCertificateThumbprint) {
+        $signingDirectory = Join-Path $BuildDirectory 'signing'
+        New-Item -ItemType Directory -Path $signingDirectory -Force | Out-Null
+        $signedBase = Join-Path $signingDirectory 'installerbase.exe'
+        Copy-Item -LiteralPath (Join-Path $IfwPath 'bin/installerbase.exe') -Destination $signedBase
+        & "$PSScriptRoot/sign-windows.ps1" -Files $signedBase @signing
+        $signedBase = (Resolve-Path -LiteralPath $signedBase).Path
+    }
     $configure = @('-S', '.', '-B', $BuildDirectory, '-G', $Generator,
         "-DCMAKE_PREFIX_PATH=$QtPath", '-DAGENTNODIFY_BUILD_INSTALLER=ON',
-        "-DCPACK_IFW_ROOT=$IfwPath", "-DAGENTNODIFY_LEGAL_DIRECTORY=$LegalDirectory")
+        "-DCPACK_IFW_ROOT=$IfwPath", "-DAGENTNODIFY_LEGAL_DIRECTORY=$LegalDirectory",
+        "-DAGENTNODIFY_SIGNED_INSTALLERBASE=$signedBase")
     if ($Version) { $configure += "-DAGENTNODIFY_VERSION=$Version" }
     if ($Generator -like 'Visual Studio*') { $configure += @('-A', $Architecture) }
     else { $configure += '-DCMAKE_BUILD_TYPE=Release' }
+    $configure += $CMakeArguments
     & cmake @configure
     if ($LASTEXITCODE) { throw 'Installer configure failed' }
     cmake --build $BuildDirectory --config Release --parallel
     if ($LASTEXITCODE) { throw 'Release build failed' }
+    if ($SigningCertificateThumbprint) {
+        $app = Join-Path $BuildDirectory 'Release/AgentNodify.exe'
+        if (!(Test-Path -LiteralPath $app)) { $app = Join-Path $BuildDirectory 'AgentNodify.exe' }
+        & "$PSScriptRoot/sign-windows.ps1" -Files $app @signing
+    }
     $env:PATH = "$QtPath/bin;$savedPath"
     ctest --test-dir $BuildDirectory -C Release --output-on-failure
     if ($LASTEXITCODE) { throw 'Tests failed; installer was not generated' }
     & cpack --config "$BuildDirectory/CPackConfig.cmake" -C Release -G IFW
     if ($LASTEXITCODE) { throw 'IFW packaging failed' }
+    if ($SigningCertificateThumbprint) {
+        $packageConfig = Get-Content -LiteralPath (Join-Path $BuildDirectory 'CPackConfig.cmake') -Raw
+        $name = [regex]::Match($packageConfig, 'set\(CPACK_PACKAGE_FILE_NAME "([^"]+)"\)').Groups[1].Value
+        if (!$name) { throw 'Installer filename was not found in CPackConfig.cmake' }
+        & "$PSScriptRoot/sign-windows.ps1" -Files (Join-Path $BuildDirectory "installer/$name.exe") @signing
+    }
     Write-Host "Installer: $BuildDirectory/installer/"
 } finally {
     $env:PATH = $savedPath
