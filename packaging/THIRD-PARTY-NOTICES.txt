@@ -1,25 +1,55 @@
-Third-party components
-======================
+AgentNodify and third-party software
+===================================
 
-AgentNodify includes:
-- Qt: license depends on the modules and distribution used to build the app.
+AgentNodify's original work is licensed under MIT (see LICENSE).
+Copyright (c) 2026 AgentNodify contributors.
+The MIT license does not relicense the independent software listed below.
+
+Qt (Core / Gui / Widgets; deployed plugins may also use Network / Svg)
+  Copyright The Qt Company Ltd. and other contributors.
+  Open-source application distribution: LGPLv3 for applicable modules,
+  dynamically linked. GPLv3/commercial alternatives depend on the distribution.
+  Qt Test is a build/test dependency, not included in the application payload.
+  The license viewer displays compile-time and runtime Qt versions.
+  Texts: Qt/LGPL-3.0-only.txt and Qt/GPL-3.0-only.txt.
   https://www.qt.io/licensing/
-- QtNodes 3.0.12: BSD-3-Clause (see QtNodes/LICENSE.rst).
+
+QtNodes 3.0.12
+  Copyright (c) 2022, Dmitry Pinaev. All rights reserved.
+  BSD-3-Clause; full terms and disclaimer: QtNodes/LICENSE.rst.
   https://github.com/paceholder/nodeeditor
-- nlohmann/json 3.11.3: MIT (see nlohmann-json/LICENSE.MIT).
+
+nlohmann/json 3.11.3
+  Copyright (c) 2013-2022 Niels Lohmann.
+  MIT; full terms and disclaimer: nlohmann-json/LICENSE.MIT.
+  Bundled Hedley: Copyright 2016-2021 Evan Nemerson; see
+  nlohmann-json/HEDLEY-NOTICE.txt for the file's complete SPDX notices.
   https://github.com/nlohmann/json
-- nlohmann/json-schema-validator 2.3.0: MIT
-  (see json-schema-validator/LICENSE).
+
+nlohmann/json-schema-validator 2.3.0
+  Copyright (c) 2016 Patrick Boettcher.
+  MIT; full terms and disclaimer: json-schema-validator/LICENSE.
+  Bundled SMTP address validator: Copyright (c) 2021 Gene Hightower;
+  MIT notice and full terms: json-schema-validator/SMTP-LICENSE.txt.
   https://github.com/pboettch/json-schema-validator
 
-The installer and MaintenanceTool use Qt Installer Framework, independently of
-the application's Qt runtime. Open-source IFW distributions use GPLv3 with
-the Qt Company GPL exception; commercial terms may also be available.
-https://github.com/qtproject/installer-framework
+Qt Installer Framework (installer / MaintenanceTool only)
+  Copyright The Qt Company Ltd. and other contributors.
+  The release workflow uses IFW 4.7.0; custom builds may use another version.
+  Open-source terms: GPLv3 with the Qt Company GPL Exception 1.0.
+  Full license and exception: IFW/LICENSE.GPL3-EXCEPT.
+  IFW's embedded Qt and third-party code are separate from the app's Qt runtime.
+  IFW is not linked into AgentNodify itself or relicensed under MIT.
+  https://github.com/qtproject/installer-framework
 
-Distribution-specific runtime license texts, copyright notices and applicable
-corresponding-source availability information belong in licenses/distribution/.
-This inventory is not a substitute for those texts or compliance obligations.
+Binary distribution and corresponding source
+  See README.md in this licenses directory for scope and text provenance.
+  Additional, build-specific Qt/IFW and bundled third-party notices and actual
+  corresponding-source access information belong in licenses/distribution/.
+  Generic upstream URLs are references, not a completed source offer.
 
-Windows MSVC packages also include Microsoft redistributable runtime files.
-Their redistribution is subject to the applicable Microsoft license terms.
+Other software
+  Windows MSVC packages include Microsoft redistributable runtime files,
+  governed by the applicable Microsoft license terms, not MIT.
+  Agent CLIs, Python and Node.js are installed separately by the user; they are
+  not bundled and retain their own licenses.

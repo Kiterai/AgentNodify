@@ -87,6 +87,7 @@ inline constexpr int ProjectPaneWidth = 230, WorkCanvasWidth = 780, DetailsPaneW
 inline constexpr int EnsureVisibleMargin = 30, ActivityIconExtent = 18;
 inline constexpr int DefaultInputPaneHeight = 230;
 inline constexpr int CliDialogWidth = 650, CliDialogHeight = 250;
+inline constexpr int LicenseDialogWidth = 940, LicenseDialogHeight = 640;
 inline constexpr int ProjectRowMinimumTextWidth = 40;
 inline constexpr int CodeBlockVerticalMargin = 14, CodeBlockBackgroundPadding = 10;
 inline constexpr int TreeIndentation = 12, ContentBottomPadding = 12;

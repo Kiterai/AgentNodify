@@ -7,6 +7,7 @@
 #include "theme.h"
 #include "graphview.h"
 #include "projectopener.h"
+#include "licensedialog.h"
 #include "core/history.h"
 #include <algorithm>
 #include <QApplication>
@@ -427,6 +428,16 @@ void Window::buildUi() {
     help->addAction(strings::UsageAction, this, [this] {
         QMessageBox::information(this, strings::UsageAction, strings::UsageHelp);
     });
+    auto *licenses = help->addAction(strings::LicensesAction, this, [this] {
+        auto *dialog = findChild<QDialog *>(strings::LicenseDialog);
+        if (!dialog) {
+            dialog = new LicenseDialog(this);
+            dialog->setAttribute(Qt::WA_DeleteOnClose);
+            dialog->setWindowModality(Qt::WindowModal);
+        }
+        dialog->show(); dialog->raise(); dialog->activateWindow();
+    });
+    licenses->setObjectName(strings::ShowLicensesAction);
     auto *root = new QWidget; auto *row = new QHBoxLayout(root); row->setContentsMargins(0, 0, 0, 0); row->setSpacing(0);
     auto *bar = new QWidget; bar->setFixedWidth(metrics::FlowRailWidth); auto *barLayout = new QVBoxLayout(bar); barLayout->setContentsMargins(metrics::SpaceTiny, metrics::SpaceNormal, metrics::SpaceTiny, metrics::SpaceNormal);
     auto *flowScroll = new QScrollArea; flowScroll->setObjectName(strings::FlowScroll); flowScroll->setWidgetResizable(true);

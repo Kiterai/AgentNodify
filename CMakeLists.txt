@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.24)
-project(AgentNodify VERSION 0.1.0 LANGUAGES CXX)
+set(AGENTNODIFY_VERSION "0.1.0" CACHE STRING "Application and installer version (major.minor.patch)")
+if(NOT AGENTNODIFY_VERSION MATCHES "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$")
+  message(FATAL_ERROR "AGENTNODIFY_VERSION must be a stable semantic version")
+endif()
+project(AgentNodify VERSION ${AGENTNODIFY_VERSION} LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
@@ -32,6 +36,7 @@ FetchContent_MakeAvailable(qtnodes)
 # Shared literal catalogs contain data only and require no GUI libraries.
 add_library(agentshared INTERFACE)
 target_include_directories(agentshared INTERFACE src)
+target_compile_definitions(agentshared INTERFACE AGENTNODIFY_APPLICATION_VERSION="${PROJECT_VERSION}")
 target_link_libraries(agentshared INTERFACE Qt6::Core)
 
 # The domain/execution layer is usable without Qt GUI/Widgets or QtNodes.
@@ -49,7 +54,8 @@ add_library(agentui
   src/ui/nodeform.cpp src/ui/nodeform.h src/ui/nodeparameterform.cpp src/ui/nodeparameterform.h
   src/ui/nodepresentation.cpp src/ui/nodepresentation.h src/ui/theme.cpp src/ui/theme.h
   src/ui/graphview.cpp src/ui/graphview.h src/ui/projectopener.cpp src/ui/projectopener.h
-  src/ui/progressview.cpp src/ui/progressview.h)
+  src/ui/progressview.cpp src/ui/progressview.h
+  src/ui/licensedialog.cpp src/ui/licensedialog.h)
 # One composition root, compiled separately for each side of the dependency boundary.
 add_library(agentnodeforms OBJECT src/nodes/registry.cpp)
 target_compile_definitions(agentnodeforms PRIVATE AGENTNODIFY_NODE_UI)
@@ -60,6 +66,7 @@ qt_add_resources(agentui application_icons
   PREFIX "/icons"
   BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets"
   FILES assets/agentnodify.ico)
+include(cmake/Licenses.cmake)
 add_executable(AgentNodify WIN32 src/app/main.cpp)
 if(WIN32)
   target_sources(AgentNodify PRIVATE assets/agentnodify.rc)
@@ -74,6 +81,31 @@ endif()
 target_sources(AgentNodify PRIVATE src/app/instancelock.h)
 target_link_libraries(AgentNodify PRIVATE agentui)
 enable_testing()
+if(WIN32)
+  find_program(AGENTNODIFY_POWERSHELL_EXECUTABLE NAMES powershell pwsh)
+  if(AGENTNODIFY_POWERSHELL_EXECUTABLE)
+    add_test(NAME installer_script_guards COMMAND "${AGENTNODIFY_POWERSHELL_EXECUTABLE}"
+      -NoProfile -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/installer_scripts_test.ps1"
+      -SourceDirectory "${CMAKE_CURRENT_SOURCE_DIR}" -BuildDirectory "${CMAKE_BINARY_DIR}")
+    set_tests_properties(installer_script_guards PROPERTIES TIMEOUT 60)
+  endif()
+endif()
+find_package(Python3 3.8 QUIET COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME distribution_materials COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/distribution_test.py")
+  set_tests_properties(distribution_materials PROPERTIES TIMEOUT 60)
+endif()
+find_program(AGENTNODIFY_NODE_EXECUTABLE NAMES node)
+if(AGENTNODIFY_NODE_EXECUTABLE)
+  add_test(NAME installer_scripting COMMAND "${AGENTNODIFY_NODE_EXECUTABLE}"
+    --test "${CMAKE_CURRENT_SOURCE_DIR}/tests/installer.test.mjs")
+  set_tests_properties(installer_scripting PROPERTIES TIMEOUT 30)
+  add_test(NAME release_versioning COMMAND "${AGENTNODIFY_NODE_EXECUTABLE}"
+    --test "${CMAKE_CURRENT_SOURCE_DIR}/tests/release.test.mjs")
+  set_tests_properties(release_versioning PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
+endif()
 add_executable(agentnodify_instance_tests tests/instance_test.cpp src/app/instancelock.h)
 target_link_libraries(agentnodify_instance_tests PRIVATE agentcore Qt6::Test)
 add_test(NAME instance COMMAND agentnodify_instance_tests -o -,txt)
@@ -93,6 +125,8 @@ add_test(NAME shell COMMAND agentnodify_shell_tests -o -,txt)
 add_executable(agentnodify_gui_tests tests/gui_test.cpp tests/gui_test.h)
 target_link_libraries(agentnodify_gui_tests PRIVATE agentui Qt6::Test)
 target_compile_definitions(agentnodify_gui_tests PRIVATE AGENTNODIFY_TEST_OUTPUT_DIR="${CMAKE_BINARY_DIR}")
+target_compile_definitions(agentnodify_gui_tests PRIVATE
+  AGENTNODIFY_DISTRIBUTION_TEXT_COUNT=${AGENTNODIFY_DISTRIBUTION_TEXT_COUNT})
 add_test(NAME gui COMMAND agentnodify_gui_tests -o -,txt)
 add_executable(fake_catalog tests/fake_catalog.cpp)
 target_link_libraries(fake_catalog PRIVATE Qt6::Core nlohmann_json::nlohmann_json)

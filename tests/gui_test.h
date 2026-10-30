@@ -7,6 +7,7 @@ class GuiTest : public QObject {
 private slots:
     void initTestCase();
     void applicationIconAsset();
+    void licenseViewer();
     void previewHeightAndClick();
     void embeddedParameters();
     void branchAndInputForms();

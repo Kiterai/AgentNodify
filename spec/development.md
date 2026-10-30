@@ -31,6 +31,8 @@ All／Anyの入力ポート数や別フロー連携のフロー・パス指定�
 
 アプリアイコンの共通アセットは `assets/agentnodify.ico` です（16〜256px）。Qtリソースとしてウィンドウ・タスクバー・トレイに使用し、Windowsでは `assets/agentnodify.rc` で実行ファイルにも埋め込みます。アイコン変更時はこのファイルを更新してください。
 
+本体のライセンスはルートの`LICENSE`（MIT）。依存ライセンスの原文・出典は`licenses/`に置き、一覧は`packaging/THIRD-PARTY-NOTICES.txt`へ集約します。`cmake/Licenses.cmake`で固定版依存の原文との一致を検査し、通常ビルドでもQtリソースへ埋め込みます。`src/ui/licensedialog.*`が「ヘルプ → ライセンス・依存ソフトウェア…」のオフライン表示を担当します。GUIテストは全資料の読み込み・原文表示・ダイアログの再表示を検証します。配布固有資料と対応ソースの提供は[配布ガイド](packaging.md#ライセンスと公開前の準備)に従い、公開承認チェックを迂回しないでください。
+
 ## ビルド環境の詳細
 
 C++20を使用します。Qtキットのコンパイラ・ABI・アーキテクチャをビルド環境に合わせてください。
@@ -62,15 +64,23 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## GitHub Actions（Windows）
 
-`.github/workflows/windows-build.yml` は`master`ブランチへのpushだけで、GitHubホストの`windows-2022`上にMSVC 2022 x64／Qt 6.8.3を用意します。PR作成・他ブランチへのpush・手動実行では起動しません。既存の`scripts/build.ps1`でReleaseビルド・通常のCTest・Qt DLL配置を実行します。Python・Node.jsはランナー付属のものを使用し、不在なら失敗させます。Qtは固定版のaqtinstallで取得し、個人のQtパスや認証情報は使いません。
+`.github/workflows/windows-build.yml` は`master`・`develop`ブランチへのpush（PRマージを含む）で、GitHubホストの`windows-2022`上にMSVC 2022 x64／Qt 6.12.0を用意します。PR作成・他ブランチへのpush・手動実行では起動しません。既存の`scripts/build.ps1`でReleaseビルド・通常のCTest・Qt DLL配置を実行します。Python・Node.jsはランナー付属のものを使用し、不在なら失敗させます。Qtは固定版のaqtinstallで取得し、個人のQtパスや認証情報は使いません。
 
-`master`をPR経由でのみ更新できるよう保護し、マージに伴う`push`でビルドを起動する運用です。このワークフローを追加するPRのマージから有効になります。マージコミット・Squash・Rebaseのいずれでも、更新後の`master`をビルドします。ブランチ保護を迂回した直接pushが許可されている場合はそれでも起動するため、直接更新の禁止はGitHubのブランチ保護で管理してください。マージ前の必須チェックには使えません。
+`master`をPR経由でのみ更新できるよう保護し、マージに伴う`push`でビルドを起動する運用です。マージコミット・Squash・Rebaseのいずれでも更新後のコミットをビルドします。ブランチ保護を迂回した直接pushが許可されている場合はそれでも起動するため、直接更新の禁止はGitHubのブランチ保護で管理してください。マージ前の必須チェックには使えません。`develop`は作成後、そのブランチにもワークフローファイルを含めてください。
+
+同一ブランチのワークフローは直列実行し、`queue: max`で最大100件の待機を保持します。実行中の採番・公開をキャンセルしません。キュー上限超過・失敗時は対象コミットの実行をActionsから再実行してください。再実行で同じコミットに別バージョンは割り当てません。
 
 Actions画面の`Windows build`から結果を確認できます。CTestログ・CMake構成ログ・テスト画像は、失敗時も含めて`windows-x64-release-diagnostics`アーティファクトに7日間保存します。ビルド自体のログは各実行のステップにあります。
 
-このCIはビルド検証用です。実CLIの認証・モデル取得・推論、IFWインストーラ作成、バイナリ配布、Release公開、署名は行いません。配布を追加するときは[配布ガイド](packaging.md)のライセンスと公開前確認を別途満たしてください。
+`develop`はビルド検証だけです。`master`ではビルド成功後、[配布ガイド](packaging.md#github-actionsでの自動リリース)の公開準備チェックを通過した場合に限り、バージョン採番・IFWインストーラ生成・通常のCTestと配布レイアウト検査・GitHub Release公開を実施します。実CLIの認証・モデル取得・推論、署名は行いません。
 
-リポジトリのSettings → Actions → GeneralでActionsと使用する`actions/checkout`・`actions/upload-artifact`を許可してください。実行トークンは`contents: read`のみで、追加Secretsは不要です。非公開リポジトリではWindowsランナーの利用枠・料金を確認してください。`pull_request_target`は使用しません。
+リポジトリのSettings → Actions → GeneralでActionsと使用する`actions/checkout`・`actions/upload-artifact`を許可してください。通常ビルドのトークンは`contents: read`のみ、`master`のリリースジョブだけ`contents: write`を使用します。追加Secrets・PATは不要ですが、組織のポリシーでActionsからのタグ作成・Release公開が許可されている必要があります。タグ保護に拒否された場合はワークフローが失敗し、保護設定を自動で迂回しません。非公開リポジトリではWindowsランナーの利用枠・料金を確認してください。`pull_request_target`は使用しません。
+
+採番・再実行判定のオフラインテストは`node --test tests/release.test.mjs`で実行できます。GitHubやエージェントCLIへの接続はありません。
+
+配布資料生成のオフラインテストは`python tests/distribution_test.py`、IFWスクリプトの分岐テストは`node --test tests/installer.test.mjs`で実行できます。Pythonがある場合は`distribution_materials`、Node.jsがある場合は`installer_scripting`として通常CTestにも含めます。テストは小さな自作アーカイブ・偽のAPI／ツール応答を使い、ソース取得・GitHub公開・実署名を行いません。実ソース取得は配布ガイドの`--download`を明示した準備工程に限ります。
+
+Windowsの`installer_script_guards`はPowerShell構文、`-WhatIf`、既存フォルダの保護、WSBのネットワーク無効化と共有範囲を検査する。実インストールは通常CTestへ入れず、[配布ガイド](packaging.md#実インストールアンインストール)の明示実行とCIリリース工程だけで行う。検証用UUID・作業先・ショートカットを使い、外部CLIの実サービスには接続しない。
 
 ワークフローを登録する認証には対象リポジトリのContentsとWorkflowsの書き込み権限が必要です（classic PATなら`repo`と`workflow`、fine-grained PAT／GitHub Appなら`Contents: Read and write`と`Workflows: Read and write`）。PR作成にはさらにPull requestsの書き込み権限が必要です。実行結果のAPI確認にはActionsの読み取り、手動起動・再実行にはActionsの書き込みが必要です。トークンをソースやチャットへ貼り付けないでください。
 
