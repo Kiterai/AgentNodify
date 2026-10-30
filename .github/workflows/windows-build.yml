@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # 3.3.0 predates Qt's compiler-specific repository layout (Qt 6.11+).
+  AQTINSTALL_SOURCE: 'aqtinstall @ git+https://github.com/miurahr/aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7'
+
 concurrency:
   group: windows-build-${{ github.workflow }}-${{ github.ref }}
   # Serialize each branch; retain pending merges rather than replacing them.
@@ -33,6 +37,11 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+
       - name: Check build tools and test runtimes
         run: |
           $ErrorActionPreference = 'Stop'
@@ -48,7 +57,7 @@ jobs:
 
       - name: Install Qt
         run: |
-          python -m pip install aqtinstall==3.3.0
+          python -m pip install "$env:AQTINSTALL_SOURCE"
           if ($LASTEXITCODE) { throw 'aqtinstall installation failed' }
           $qtDirectory = Join-Path $env:RUNNER_TEMP 'Qt'
           python -m aqt install-qt windows desktop $env:QT_VERSION $env:QT_ARCH --outputdir $qtDirectory
@@ -92,6 +101,11 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+
       - name: Determine next semantic version (or resume a draft)
         id: version
         env:
@@ -113,7 +127,7 @@ jobs:
       - name: Install Qt and Qt Installer Framework
         if: ${{ steps.version.outputs.published != 'true' }}
         run: |
-          python -m pip install aqtinstall==3.3.0
+          python -m pip install "$env:AQTINSTALL_SOURCE"
           if ($LASTEXITCODE) { throw 'aqtinstall installation failed' }
           $qtDirectory = Join-Path $env:RUNNER_TEMP 'Qt'
           python -m aqt install-qt windows desktop $env:QT_VERSION $env:QT_ARCH --outputdir $qtDirectory

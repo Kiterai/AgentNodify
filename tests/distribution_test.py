@@ -63,6 +63,12 @@ class DistributionTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 d.load_manifest(path)
 
+    def test_ci_uses_the_release_qt_profile(self):
+        workflow = (ROOT / ".github/workflows/windows-build.yml").read_text(encoding="utf-8")
+        self.assertEqual(workflow.count(f"QT_VERSION: '{self.manifest['qtVersion']}'"), 2)
+        self.assertEqual(workflow.count('python -m pip install "$env:AQTINSTALL_SOURCE"'), 2)
+        self.assertIn("aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7", workflow)
+
     def test_cache_hash_checked_and_no_implicit_download(self):
         archive = self.archive()
         entry = self.entry(archive)
