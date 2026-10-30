@@ -148,31 +148,7 @@ python scripts/distribution.py prepare --download --cache build-source-cache `
 
 署名処理の入口は`scripts/sign-windows.ps1`へ集約する。通常は`package.ps1`の`-SigningCertificateThumbprint`、`-TimestampUrl`、`-SignToolPath`を変更するだけで証明書・RFC3161サービス・ツールを差し替えられる。現在はSignToolとCurrentUser/Myストアに対応し、独自CLIが必要なクラウド署名サービスには別途アダプターが必要。本番モードはHTTPSタイムスタンプ必須で、自己署名証明書を拒否する。
 
-`scripts/test-self-signed-package.ps1`は明示的な承認付きで実行する専用テスト。既存のビルド先を拒否し、新しい専用ディレクトリで次を行う。
-
-1. CurrentUser/Myに有効期間7日のRSA/SHA-256コード署名証明書を作成する。名前は`AgentNodify TEST ONLY <乱数>`、秘密鍵はエクスポート不可。公開証明書だけを`.cer`へ出力し、PFX・秘密鍵ファイルを作らない。
-2. その公開証明書だけをCurrentUser/Rootへ一時追加する。LocalMachineや既存証明書は変更しない。ユーザーの信頼設定を一時変更するため、`-AllowTemporaryUserTrust`による明示的な承認を必須とする。Windowsが確認ダイアログを表示した場合は内容を確認する。
-3. 通常と同じ`package.ps1`でMaintenance Tool用ベース、本体、最後にSetupを署名する。自己署名専用の`-TestOnlyNoTimestamp`でタイムスタンプ通信だけを省き、`signtool verify /pa /all /v`は省かない。通常CTestも行う。
-4. `test-installer.ps1 -RequireSigned -ExpectedSignerThumbprint <作成した拇印>`で、インストール後の本体・Maintenance Tool・Setupの有効性と発行元一致、導入・起動・削除を確認する。
-5. 成否を問わず`finally`で今回作った拇印のRoot証明書とMy証明書・秘密鍵を削除し、`self-signing-test.json`へ後始末の確認結果を記録する。
-
-```powershell
-.\scripts\test-self-signed-package.ps1 `
-  -QtPath <Qt-kit> -IfwPath <IFW-root> `
-  -BuildDirectory build-self-signing-test `
-  -SignToolPath <signtool.exe> -AllowTemporaryUserTrust -WhatIf
-# 計画と一時的な信頼変更を承認した後、-WhatIfを外して実行する。
-```
-
-取得済み依存を使う場合は`-DependencySourcesDirectory <dir>`を指定する。直下の`json-3.11.3`、`json-schema-validator-2.3.0`、`nodeeditor-3.0.12`を使い、依存取得の通信を不要にする。個人のパスや拇印を共有ソースへ固定しない。
-
-テスト中のプロセス強制終了・OS停止では`finally`が完走しない可能性がある。拇印は信頼追加前に専用ディレクトリの`self-signing-test.json`へ保存するため、異常終了時はその拇印のCurrentUser/RootとCurrentUser/Myだけを確認し、残っていれば証明書と秘密鍵を削除する。既存証明書を一括削除しない。
-
-出力には`TEST-ONLY.txt`を置く。導入検証レポートは自己署名かを記録し、`release.mjs`は自己署名または自己署名判定のない有効署名の結果を公開に使うことを拒否する。一時信頼削除後にこの自己署名が一般環境で信頼されるわけではなく、SmartScreen・公開CA・失効確認・RFC3161の検証にはならない。テスト用バイナリを配布しない。
-
-#### ホストの信頼ストアを変更しないSandbox方式
-
-推奨は`scripts/prepare-signing-sandbox.ps1`で準備するオフラインのSandbox。通常のCPack生成後に残るステージの`config/`と`packages/`、IFWのbinarycreator／installerbase、SignToolと明示したSDKランタイム、検証スクリプトだけを入力へコピーする。入力全体のSHA-256マニフェストを作る。リポジトリ、SDK全体、ホストの証明書ストアや秘密鍵は共有しない。
+自己署名テストはWindows Sandbox専用。ホストの信頼ストアは変更しない。`scripts/prepare-signing-sandbox.ps1`で、CPackのステージの`config/`と`packages/`、必要なIFW／SignToolランタイム、検証スクリプトだけを読み取り専用入力へコピーする。SDKの依存マニフェストと入力全体のSHA-256を検査し、既存の出力先は拒否する。`-WhatIf`で準備計画を確認できる。
 
 ```powershell
 .\scripts\prepare-signing-sandbox.ps1 `
@@ -182,13 +158,19 @@ python scripts/distribution.py prepare --download --cache build-source-cache `
 # 既存Sandboxを終了してから、生成したvalidate-signing.wsbを開く。
 ```
 
-ゲストは入力をローカルAppDataへコピーして全マニフェストのSHA-256を照合し、`test-self-signed-package.ps1 -PreparedPackageDirectory ... -EnvironmentKind WindowsSandbox`を実行する。ゲスト内だけで使い捨て証明書を作成・信頼し、本体とMaintenance Tool用ベースへ署名する。CPackの配置済みペイロードに署名済みベースと有効化フラグを加えてbinarycreatorでオフラインSetupを再生成し、最後にSetupへ署名する。導入・起動・削除検証は通常と同じスクリプトと署名必須の条件を使う。この方式は署名・再パッケージ・導入検証であり、Sandbox内でのC++ビルドやCTestは行わない。
+`run-signing-sandbox-guest.ps1`がゲスト内で以下を一括実行する。C++ビルドやCTestは行わない。
 
-ネットワーク・クリップボード・vGPUは無効。ホストへの書き込み共有は新しいレポート専用出力だけで、署名済みexeや秘密鍵は持ち出さない。`guest-status.json`、`self-signing-test.json`、`result.json`とログを出力する。成功時は署名3件の`Valid`と拇印一致、導入・削除、ゲストの一時信頼と秘密鍵の削除を確認する。証明書ストア変更の確認が表示された場合は、ゲスト内の`AgentNodify TEST ONLY`証明書であることを利用者が確認する。完了後はSandboxを閉じ、環境を破棄する。
+1. 入力をローカルAppDataへコピーし、SHA-256とSignToolの起動を確認する。
+2. 有効期間7日・RSA/SHA-256・秘密鍵エクスポート不可の`AgentNodify TEST ONLY <乱数>`証明書をCurrentUser/Myに作成し、公開証明書だけをCurrentUser/Rootへ一時追加する。
+3. 共通の`sign-windows.ps1 -TestOnlyNoTimestamp`で本体とMaintenance Tool用ベースに署名し、binarycreatorでオフラインSetupを再生成して最後に署名する。タイムスタンプ通信だけを省き、`signtool verify /pa /all /v`は省かない。
+4. `test-installer.ps1 -RequireSigned -ExpectedSignerThumbprint <拇印>`で、3件の署名と発行元一致、導入・起動・削除、検証用ユーザーファイル保持を確認する。
+5. 成否を問わず`finally`で今回のRoot／My証明書と秘密鍵だけを削除し、後始末結果を記録する。
 
-モックによる署名引数・検証呼び出し・本番／テスト分離・公開拒否と`-WhatIf`、WSB隔離・マニフェストを検査済み。初回のSandboxでは入力照合と証明書の信頼承認後、SignToolのside-by-sideランタイム不足で署名前に失敗した。コピー対象へAppxPackaging／OpcServicesとマニフェストを追加し、準備時の依存マニフェスト検査と、証明書作成前のゲスト側SignTool起動確認を追加した。
+ネットワーク・クリップボード・vGPUは無効。書き込み共有は新しい出力フォルダだけで、`guest-status.json`、`self-signing-test.json`、`result.json`とログだけを持ち出す。署名済みexe・秘密鍵・ホストの証明書ストアは共有しない。信頼追加・削除の確認ダイアログでは、ゲスト内のテスト証明書であることを利用者が確認する。強制終了で後始末が完走しない場合も、Sandboxを終了して環境を破棄する。拇印と進行状況は信頼追加前に出力する。
 
-修正版はネットワーク無効のWindows Sandboxで自己署名・再パッケージ・署名必須の実導入／削除に成功した。Setup・導入後のアプリ・生成後のMaintenance Toolの3件がすべて`Valid`かつ同じテスト証明書の拇印と一致し、自己署名として記録された。日本語・空白を含むパス、開発用PATHなしの起動、Maintenance Toolを含む削除、登録・ショートカット解除、ユーザー所有の検証ファイル4件の保持も成功。ゲストのRoot／Myから今回の証明書と秘密鍵を削除し、`trustCleanupPassed: true`とゲスト全体の完了を確認した。信頼追加と削除の確認ダイアログは利用者が承認した。ホストの信頼ストアは変更していない。署名済みテストバイナリはゲストだけに置き、ホストへはレポートとログだけを出力した。
+`release.mjs`は自己署名または自己署名判定のない有効署名の結果を公開に使うことを拒否する。自己署名は一般環境での信頼、SmartScreen、公開CA、失効確認、RFC3161の検証にはならない。
+
+整理後のコードでもネットワーク無効のSandboxで3件の署名`Valid`・拇印一致、導入・削除・データ保持、証明書と秘密鍵の削除を確認済み。レポートを回収し、Sandboxの終了も確認した。通常CTestには署名引数、本番／テスト分離、公開拒否、WSB隔離、マニフェストと既存出力保護の検査を含める。実Sandboxの検証は明示実行とし、通常CTestでは証明書を作成しない。
 
 ## 検証
 
@@ -219,7 +201,7 @@ python scripts/distribution.py prepare --download --cache build-source-cache `
 
 署名済みパッケージの検査では生成時に`-RequireSigned -ExpectedSignerThumbprint <拇印>`を追加できる。ゲストが必要な証明書チェーン・失効情報を持たず署名を検証できない場合は失敗として扱い、ネットワークや証明書検査を勝手に緩和しない。必要なオンライン確認は所有者が別途管理する検証環境で実施する。
 
-Windows Sandboxで旧パッケージは削除後にMaintenanceTool.exeが残り失敗した。IFW 4.7.0の自己削除はVBScriptに依存し、ゲストの診断でもVBScriptエンジンが見つからないことを確認した。成功した削除後だけ固定名のMaintenanceTool.exeを遅延削除する補助処理を追加した。GUIでは完了画面のFinishまたは閉じる操作まで待つ。ユーザーパスは作業ディレクトリとして渡し、コマンド文字列へ埋め込まず、ディレクトリやワイルドカードを削除しない。ゲストランナーはVBScriptの動作を診断するが、機能を有効化しない。
+IFW 4.7.0の自己削除はVBScriptに依存するため、エンジンがないWindowsでも削除できるよう、成功した削除後だけ固定名のMaintenanceTool.exeを遅延削除する。GUIでは完了画面のFinishまたは閉じる操作まで待つ。ユーザーパスは作業ディレクトリとして渡し、コマンド文字列へ埋め込まず、ディレクトリやワイルドカードを削除しない。
 
 修正版は通常CTest全19件とホスト上の導入・起動・削除・登録解除・検証用データ保持を確認済み。同じ未署名インストーラについて、ネットワーク無効のWindows Sandboxでも日本語・空白を含むゲストローカルパスへの導入、開発用PATHなしのスモーク起動、MaintenanceTool.exeを含む削除、登録・ショートカット解除、ユーザー所有の検証ファイル4件の保持が成功した。入力マニフェスト・ホスト結果・ゲスト結果のインストーラSHA-256一致を確認した。実GUIでの手動操作や実署名の検証まで完了とは扱わない。ローカル検証ビルドはQt 6.12.0を使用しており、Qt 6.8.3向けの固定ソース資料と組み合わせて公開しない。公開対象の版・署名が変われば、その最終バイナリで再検証する。
 

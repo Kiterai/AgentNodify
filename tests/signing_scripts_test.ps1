@@ -28,9 +28,6 @@ try {
     if (!$refused) { throw 'Self-signed production signing must fail.' }
     & $signer @parameters -TestOnlyNoTimestamp
     if ($global:signingTestCalls.Count -ne 2 -or $global:signingTestCalls[0] -contains '/tr' -or $global:signingTestCalls[1] -notcontains '/pa') { throw 'Test-only signing must skip timestamping, not verification.' }
-    & (Join-Path $SourceDirectory 'scripts/test-self-signed-package.ps1') -QtPath fixture -IfwPath fixture `
-        -BuildDirectory (Join-Path $WorkDirectory 'planned') -SignToolPath $tool -AllowTemporaryUserTrust -WhatIf
-    if (Test-Path (Join-Path $WorkDirectory 'planned')) { throw 'WhatIf must not create certificates or build output.' }
     $payload = Join-Path $WorkDirectory 'payload'
     $ifw = Join-Path $WorkDirectory 'ifw'
     foreach ($relative in @('config/config.xml', 'config/controlscript.qs', 'packages/org.agentnodify.application/data/bin/AgentNodify.exe', 'packages/org.agentnodify.application/meta/installscript.qs')) {
@@ -40,8 +37,16 @@ try {
     }
     New-Item -ItemType Directory -Path (Join-Path $ifw 'bin') | Out-Null
     foreach ($name in @('binarycreator.exe', 'installerbase.exe')) { [IO.File]::WriteAllText((Join-Path $ifw "bin/$name"), 'fixture only') }
+    $prepare = Join-Path $SourceDirectory 'scripts/prepare-signing-sandbox.ps1'
+    $parameters = @{ PreparedPackageDirectory = $payload; IfwPath = $ifw; SignToolPath = $tool }
+    $planned = Join-Path $WorkDirectory 'planned'
+    & $prepare @parameters -OutputDirectory $planned -WhatIf
+    if (Test-Path $planned) { throw 'WhatIf must not create sandbox output.' }
     $sandbox = Join-Path $WorkDirectory 'sandbox'
-    & (Join-Path $SourceDirectory 'scripts/prepare-signing-sandbox.ps1') -PreparedPackageDirectory $payload -IfwPath $ifw -SignToolPath $tool -OutputDirectory $sandbox
+    & $prepare @parameters -OutputDirectory $sandbox
+    $refused = $false
+    try { & $prepare @parameters -OutputDirectory $sandbox -WhatIf } catch { $refused = $true }
+    if (!$refused) { throw 'Signing Sandbox must reject an existing output directory.' }
     [xml]$wsb = [IO.File]::ReadAllText((Join-Path $sandbox 'validate-signing.wsb'))
     $mappings = @($wsb.Configuration.MappedFolders.MappedFolder)
     if ($wsb.Configuration.Networking -ne 'Disable' -or $wsb.Configuration.ClipboardRedirection -ne 'Disable' -or $mappings.Count -ne 2 -or $mappings[0].ReadOnly -ne 'true' -or $mappings[1].ReadOnly -ne 'false') { throw 'Signing Sandbox isolation is incomplete.' }
@@ -50,6 +55,14 @@ try {
         if ((Get-FileHash -LiteralPath (Join-Path $sandbox "input/$($entry.path)") -Algorithm SHA256).Hash -ne $entry.sha256) { throw 'Signing manifest hash mismatch.' }
     }
     if (Test-Path (Join-Path $sandbox 'input/scripts/package.ps1')) { throw 'Guest must not need compiler/build tooling.' }
+    $guest = [IO.File]::ReadAllText((Join-Path $sandbox 'input/scripts/run-signing-sandbox-guest.ps1'))
+    if ($guest -notmatch '-RequireSigned -ExpectedSignerThumbprint' -or $guest -notmatch '-DeleteKey' -or $guest -notmatch 'finally\s*\{\s*\$cleanupErrors') { throw 'Guest signing and certificate cleanup guards are missing.' }
+    if ($guest -match 'LocalMachine|test-self-signed-package|package\.ps1') { throw 'Self-signing must stay inside the standalone guest runner.' }
+    # Missing transitive SDK assemblies must fail during preparation, before VM trust changes.
+    [IO.File]::WriteAllText((Join-Path $WorkDirectory 'signtool.exe.manifest'), '<assembly><dependency><dependentAssembly><assemblyIdentity name="Missing.Runtime"/></dependentAssembly></dependency></assembly>')
+    $refused = $false
+    try { & $prepare @parameters -OutputDirectory (Join-Path $WorkDirectory 'missing-runtime') } catch { $refused = $_.Exception.Message -like '*Missing SDK assembly manifest*' }
+    if (!$refused) { throw 'Missing SDK assembly dependency was accepted.' }
 } finally {
     Remove-Variable signingTestCalls -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable signingTestCertificate -Scope Global -ErrorAction SilentlyContinue

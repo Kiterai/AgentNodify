@@ -32,7 +32,7 @@ foreach ($name in @('signtool.exe.manifest', 'mssign32.dll', 'wintrust.dll', 'ap
     $file = Join-Path (Split-Path $SignToolPath -Parent) $name
     if (Test-Path -LiteralPath $file -PathType Leaf) { Copy-Item -LiteralPath $file -Destination $sdk }
 }
-foreach ($name in @('test-self-signed-package.ps1', 'sign-windows.ps1', 'test-installer.ps1', 'run-signing-sandbox-guest.ps1')) {
+foreach ($name in @('sign-windows.ps1', 'test-installer.ps1', 'run-signing-sandbox-guest.ps1')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $scripts
 }
 # Check the transitive side-by-side manifest closure before asking for guest trust.

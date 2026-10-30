@@ -5,7 +5,7 @@ New-Item -ItemType Directory -Path $root | Out-Null
 # All files in this fixture are new, disposable and under the build directory.
 $installer = Join-Path $root 'fixture.exe'
 [IO.File]::WriteAllText($installer, 'not an executable; WhatIf must never start this file')
-foreach ($name in @('test-installer.ps1', 'prepare-installer-sandbox.ps1', 'run-installer-sandbox-guest.ps1', 'sign-windows.ps1', 'package.ps1', 'test-self-signed-package.ps1', 'prepare-signing-sandbox.ps1', 'run-signing-sandbox-guest.ps1')) {
+foreach ($name in @('test-installer.ps1', 'prepare-installer-sandbox.ps1', 'run-installer-sandbox-guest.ps1', 'sign-windows.ps1', 'package.ps1', 'prepare-signing-sandbox.ps1', 'run-signing-sandbox-guest.ps1')) {
     $tokens = $null; $errors = $null
     [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $SourceDirectory "scripts/$name"), [ref]$tokens, [ref]$errors) | Out-Null
     if ($errors) { throw "PowerShell syntax errors in $name" }

@@ -8,9 +8,7 @@ param(
     [string]$Version,
     [string]$SigningCertificateThumbprint,
     [uri]$TimestampUrl,
-    [switch]$TestOnlyNoTimestamp,
-    [string]$SignToolPath = $env:SIGNTOOL_PATH,
-    [string[]]$CMakeArguments = @()
+    [string]$SignToolPath = $env:SIGNTOOL_PATH
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -24,10 +22,7 @@ foreach ($tool in @('binarycreator.exe', 'installerbase.exe', 'repogen.exe')) {
     }
 }
 if ($LegalDirectory) { $LegalDirectory = (Resolve-Path -LiteralPath $LegalDirectory).Path }
-if ($TestOnlyNoTimestamp -and (!$SigningCertificateThumbprint -or $TimestampUrl)) {
-    throw 'Test-only signing requires a certificate and forbids a timestamp service.'
-}
-if (!$TestOnlyNoTimestamp -and (($SigningCertificateThumbprint -and !$TimestampUrl) -or ($TimestampUrl -and !$SigningCertificateThumbprint))) {
+if (($SigningCertificateThumbprint -and !$TimestampUrl) -or ($TimestampUrl -and !$SigningCertificateThumbprint)) {
     throw 'Signing requires both -SigningCertificateThumbprint and -TimestampUrl.'
 }
 $savedPath = $env:PATH
@@ -35,7 +30,6 @@ Push-Location $root
 try {
     $signedBase = ''
     $signing = @{ CertificateThumbprint = $SigningCertificateThumbprint; TimestampUrl = $TimestampUrl }
-    if ($TestOnlyNoTimestamp) { $signing.TestOnlyNoTimestamp = $true }
     if ($SignToolPath) { $signing.SignToolPath = $SignToolPath }
     if ($SigningCertificateThumbprint) {
         $signingDirectory = Join-Path $BuildDirectory 'signing'
@@ -52,7 +46,6 @@ try {
     if ($Version) { $configure += "-DAGENTNODIFY_VERSION=$Version" }
     if ($Generator -like 'Visual Studio*') { $configure += @('-A', $Architecture) }
     else { $configure += '-DCMAKE_BUILD_TYPE=Release' }
-    $configure += $CMakeArguments
     & cmake @configure
     if ($LASTEXITCODE) { throw 'Installer configure failed' }
     cmake --build $BuildDirectory --config Release --parallel

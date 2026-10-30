@@ -26,25 +26,6 @@ try {
         if ((Get-FileHash -LiteralPath (Join-Path $inputDirectory $name) -Algorithm SHA256).Hash -ne
             (Get-FileHash -LiteralPath (Join-Path $source $name) -Algorithm SHA256).Hash) { throw "Sandbox input copy mismatch: $name" }
     }
-    # Diagnostic only: do not install/enable the optional VBScript engine.
-    $probe = Join-Path $source 'vbscript-probe.vbs'
-    [IO.File]::WriteAllText($probe, 'WScript.Echo "VBScriptEngineAvailable"', [Text.Encoding]::ASCII)
-    $probeProcess = New-Object Diagnostics.Process
-    $probeProcess.StartInfo = New-Object Diagnostics.ProcessStartInfo
-    $probeProcess.StartInfo.FileName = "$env:SystemRoot/System32/cscript.exe"
-    $probeProcess.StartInfo.Arguments = '//Nologo //E:VBScript "' + $probe + '"'
-    $probeProcess.StartInfo.UseShellExecute = $false
-    $probeProcess.StartInfo.RedirectStandardOutput = $true
-    $probeProcess.StartInfo.RedirectStandardError = $true
-    try {
-        if ($probeProcess.Start()) {
-            $probeOutput = $probeProcess.StandardOutput.ReadToEndAsync()
-            $probeError = $probeProcess.StandardError.ReadToEndAsync()
-            if (!$probeProcess.WaitForExit(10000)) { $probeProcess.Kill(); $probeProcess.WaitForExit() }
-            $state.vbScriptExitCode = $probeProcess.ExitCode
-            $state.vbScriptDiagnostic = $probeOutput.Result + $probeError.Result
-        }
-    } catch { $state.vbScriptDiagnostic = $_.Exception.Message } finally { $probeProcess.Dispose() }
     $arguments = @{ Installer = (Join-Path $source 'Setup.exe'); WorkDirectory = $work; EnvironmentKind = 'WindowsSandbox' }
     if ($RequireSigned) { $arguments.RequireSigned = $true }
     if ($ExpectedSignerThumbprint) { $arguments.ExpectedSignerThumbprint = $ExpectedSignerThumbprint }
