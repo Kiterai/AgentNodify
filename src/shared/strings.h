@@ -3,6 +3,7 @@ namespace an::strings {
 inline constexpr char ReorderFlowPath[] = "reorderFlowPath";
 inline constexpr char FlowOrderMime[] = "application/x-agentnodify-flow-order";
 inline constexpr char ProjectOrderMime[] = "application/x-agentnodify-project-order";
+inline constexpr char ToolTipSentencePattern[] = "([。！？]|[.!?](?=\\s|$))[ \\t]*\\n?";
 }
 #include "colors.h"
 #include <array>

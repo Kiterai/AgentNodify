@@ -229,6 +229,7 @@ Window::Window(bool smoke) : smoke_(smoke) {
     if (!smoke_) editGraph_->modelCatalog = workGraph_->modelCatalog = modelCatalog_;
     buildUi();
     qApp->installEventFilter(this);
+    for (auto *widget : findChildren<QWidget *>()) widget->setToolTip(sentenceToolTip(widget->toolTip()));
     editGraph_->newNodePosition = [this] { return nextNodePosition(); };
     static_cast<GraphView *>(editView_)->interactionFinished = [this](std::optional<Id> node, QPointF point) {
         if (current_ < 0 || current_ >= int(documents_.size())) return;
@@ -330,6 +331,10 @@ void Window::updateInputShortcutHint() {
 bool Window::eventFilter(QObject *object, QEvent *event) {
     if (object == this && event->type() == QEvent::WindowDeactivate) { controlPressed_ = false; updateInputShortcutHint(); }
     auto *widget = qobject_cast<QWidget *>(object);
+    if (widget && event->type() == QEvent::ToolTipChange) {
+        const auto formatted = sentenceToolTip(widget->toolTip());
+        if (widget->toolTip() != formatted) widget->setToolTip(formatted);
+    }
     const bool flowTile = widget && widget->property(strings::ReorderFlowPath).isValid();
     const bool projectViewport = projectList_ && widget == projectList_->viewport();
     if (flowTile || projectViewport) {

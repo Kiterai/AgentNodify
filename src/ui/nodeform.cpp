@@ -21,7 +21,7 @@
 #include <cmath>
 
 namespace an {
-QString nodeDescription(Kind kind) { return nodePresentation(kind).description; }
+QString nodeDescription(Kind kind) { return sentenceToolTip(nodePresentation(kind).description); }
 
 TextPreview::TextPreview(QWidget *parent) : QPlainTextEdit(parent) {
     setReadOnly(true); setFocusPolicy(Qt::StrongFocus);

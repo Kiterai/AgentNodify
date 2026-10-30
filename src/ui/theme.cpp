@@ -9,8 +9,12 @@
 #include <QStyledItemDelegate>
 #include <QStyleOptionButton>
 #include <QStylePainter>
+#include <QRegularExpression>
 
 namespace an {
+QString sentenceToolTip(QString text) {
+    return text.replace(QRegularExpression(strings::ToolTipSentencePattern), QStringLiteral("\\1\n")).trimmed();
+}
 bool hasSpecialNodeBackground(Kind kind) { return nodePresentation(kind).specialBackground; }
 QColor nodeBackground(Kind kind) { return QColor(nodePresentation(kind).background); }
 QColor nodeForeground(Kind kind) { return QColor(nodePresentation(kind).foreground); }

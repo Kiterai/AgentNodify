@@ -1,4 +1,5 @@
 #include "gui_test.h"
+#include "core/nodedefinition.h"
 #include "ui/window.h"
 #include "ui/nodeform.h"
 #include "ui/graphview.h"
@@ -896,6 +897,16 @@ void GuiTest::interactionWhileWaiting() {
     QVERIFY(window.coordinator_->submitUserInput(first,"first",0)); QTRY_COMPARE(primary.count(),1); QVERIFY(primary[0][0].toBool()); QVERIFY(!window.busy()); QCOMPARE(window.project_,1);
     QVERIFY(window.projects_[0].results.at(2).output=="two"); QVERIFY(window.projects_[1].results.at(2).output=="two"); QCOMPARE(window.projects_[0].history.size(),size_t(4)); QCOMPARE(window.projects_[1].history.size(),size_t(4));
     window.selectWorkNode(4); QVERIFY(window.output_->toPlainText().contains("two"));
+}
+void GuiTest::sentenceToolTips() {
+    const auto text=QString::fromUtf8("最初の文。次の文。\n最後の文。");
+    QCOMPARE(sentenceToolTip(text),QString::fromUtf8("最初の文。\n次の文。\n最後の文。"));
+    QCOMPARE(sentenceToolTip(sentenceToolTip(text)),sentenceToolTip(text));
+    QCOMPARE(sentenceToolTip("Version 1.2.3. See https://example.org/file.json."),QString("Version 1.2.3.\nSee https://example.org/file.json."));
+    Window window(true);
+    auto *add=window.findChild<QPushButton *>("addNode_all"); QVERIFY(add); QVERIFY(add->toolTip().contains(QString::fromUtf8("。\n")));
+    add->setToolTip(text); QCOMPARE(add->toolTip(),sentenceToolTip(text));
+    for(const auto &definition:nodeDefinitions()) QCOMPARE(nodeDescription(definition.kind),sentenceToolTip(nodeDescription(definition.kind)));
 }
 void GuiTest::compactNamelessNodes() {
     Graph graph; graph.replace(Flow::initial());

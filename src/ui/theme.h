@@ -5,6 +5,7 @@
 class QComboBox;
 
 namespace an {
+QString sentenceToolTip(QString text);
 void styleComboBoxPopup(QComboBox *combo);
 bool hasSpecialNodeBackground(Kind kind);
 QColor nodeBackground(Kind kind);

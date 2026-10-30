@@ -15,6 +15,7 @@ private slots:
     void editorAndFlowRail();
     void reorderListsWhileRunning();
     void paletteWidthAndElision();
+    void sentenceToolTips();
     void editorUndoRedoParameters();
     void editorUndoRedoDeletion();
     void editorUndoIsolationAndPorts();
