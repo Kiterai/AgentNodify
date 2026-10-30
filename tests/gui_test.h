@@ -14,6 +14,7 @@ private slots:
     void terminalAppearance();
     void editorAndFlowRail();
     void reorderListsWhileRunning();
+    void reorderInsertionLines();
     void paletteWidthAndElision();
     void sentenceToolTips();
     void editorUndoRedoParameters();

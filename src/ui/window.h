@@ -20,6 +20,7 @@
 class QSystemTrayIcon;
 class QComboBox;
 class QHBoxLayout;
+class QFrame;
 
 namespace an {
 class Window : public QMainWindow {
@@ -117,6 +118,10 @@ private:
     void reorderProject(int from, int to);
     QPoint reorderPress_;
     QString reorderSource_;
+    QFrame *flowInsertion_ = nullptr, *projectInsertion_ = nullptr;
+    int showReorderBoundary(bool flows, const QPoint &point);
+    void dropReorder(bool flows, const QString &source, int boundary);
+    void hideReorderIndicators();
     void selectFlow(int index);
     void selectNode(Id id);
     void showText(const QString &field);

@@ -1,4 +1,6 @@
 #include "gui_test.h"
+#include <QVBoxLayout>
+#include <QFrame>
 #include "core/nodedefinition.h"
 #include "ui/window.h"
 #include "ui/nodeform.h"
@@ -1172,6 +1174,27 @@ void GuiTest::userInputWorkPanel() {
     QTRY_COMPARE(done.count(),1); QVERIFY(done[0][0].toBool()); QVERIFY(window.inputPrompts_.empty()); QVERIFY(!window.inputPanel_->isVisible());
     QVERIFY(window.runner_->results().at(2).output == answer.toUtf8().toStdString()); QVERIFY(window.runner_->results().at(5).state == State::Skipped); QCOMPARE(window.runner_->results().at(6).executions,quint64(1)); QCOMPARE(window.historyList_->count(),1);
     done.clear(); window.executeFlow(); QTRY_COMPARE(window.inputPrompts_.size(),size_t(1)); window.coordinator_->cancelAll(); QTRY_COMPARE(done.count(),1); QVERIFY(window.inputPrompts_.empty()); QVERIFY(!window.inputPanel_->isVisible());
+}
+void GuiTest::reorderInsertionLines() {
+    Window window(true); window.show(); window.newFlow(); window.newFlow(); QCoreApplication::processEvents();
+    const auto first=window.documents_[0].path, second=window.documents_[1].path, third=window.documents_[2].path;
+    auto *tile=window.activityLayout_->itemAt(1)->widget();
+    QCOMPARE(window.showReorderBoundary(true,tile->geometry().topLeft()),1);
+    QVERIFY(window.flowInsertion_->isVisible());
+    QCOMPARE(window.flowInsertion_->height(),metrics::DropIndicatorThickness);
+    QVERIFY(window.flowInsertion_->geometry().center().y()<=tile->geometry().top());
+    window.hideReorderIndicators(); QVERIFY(window.flowInsertion_->isHidden());
+    window.dropReorder(true,first,3); QCOMPARE(window.documents_[2].path,first); QCOMPARE(window.documents_[0].path,second);
+    window.dropReorder(true,first,0); QCOMPARE(window.documents_[0].path,first); QCOMPARE(window.documents_[2].path,third);
+    window.dropReorder(true,first,1); QCOMPARE(window.documents_[0].path,first);
+    window.selectFlow(0);
+    for(QString name:{"First","Second","Third"}) window.projects_.push_back({name,QDir::tempPath(),first,{}});
+    window.refreshProjects(); window.tabs_->setCurrentIndex(1); QCoreApplication::processEvents();
+    const auto row=window.projectList_->visualItemRect(window.projectList_->item(1));
+    QCOMPARE(window.showReorderBoundary(false,row.topLeft()),1); QVERIFY(window.projectInsertion_->isVisible());
+    QCOMPARE(window.projectInsertion_->y(),row.top()-metrics::DropIndicatorThickness/2);
+    const auto id=window.projects_[0].historyId; window.dropReorder(false,id,3); QCOMPARE(window.projects_[2].historyId,id);
+    window.hideReorderIndicators(); QVERIFY(window.projectInsertion_->isHidden());
 }
 void GuiTest::reorderListsWhileRunning() {
     try {

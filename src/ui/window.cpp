@@ -48,6 +48,7 @@
 #include <QDrag>
 #include <QMouseEvent>
 #include <QDropEvent>
+#include <QFrame>
 #include <QtNodes/internal/NodeGraphicsObject.hpp>
 
 // Resource initialization must be declared outside the application namespace.
@@ -336,11 +337,13 @@ bool Window::eventFilter(QObject *object, QEvent *event) {
         if (widget->toolTip() != formatted) widget->setToolTip(formatted);
     }
     const bool flowTile = widget && widget->property(strings::ReorderFlowPath).isValid();
+    const bool flowArea = flowTile || (widget && widget == activities_);
     const bool projectViewport = projectList_ && widget == projectList_->viewport();
-    if (flowTile || projectViewport) {
-        const auto mime = flowTile ? strings::FlowOrderMime : strings::ProjectOrderMime;
+    if (flowArea || projectViewport) {
+        const auto mime = flowArea ? strings::FlowOrderMime : strings::ProjectOrderMime;
         auto identityAt = [&](const QPoint &point) -> QString {
             if (flowTile) return widget->property(strings::ReorderFlowPath).toString();
+            if (flowArea) return {};
             auto *item = projectList_->itemAt(point);
             return item ? projects_[size_t(item->data(Qt::UserRole).toInt())].historyId : QString();
         };
@@ -355,28 +358,24 @@ bool Window::eventFilter(QObject *object, QEvent *event) {
                 reorderSource_.clear();
                 if (auto *button = qobject_cast<QToolButton *>(widget)) button->setDown(false);
                 QDrag drag(this); drag.setMimeData(data); drag.exec(Qt::MoveAction);
+                hideReorderIndicators();
                 return true;
             }
+        } else if (event->type() == QEvent::DragLeave) {
+            hideReorderIndicators();
         } else if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove || event->type() == QEvent::Drop) {
             auto *drop = static_cast<QDropEvent *>(event);
             if (drop->source() == this && drop->mimeData()->hasFormat(mime)) {
                 drop->setDropAction(Qt::MoveAction); drop->accept();
+                const auto point = flowArea ? widget->mapTo(activities_, drop->position().toPoint()) : drop->position().toPoint();
+                const int boundary = showReorderBoundary(flowArea, point);
                 if (event->type() == QEvent::Drop) {
                     const auto source = QString::fromUtf8(drop->mimeData()->data(mime));
-                    auto target = identityAt(drop->position().toPoint());
-                    if (target.isEmpty() && projectViewport && projectList_->count())
-                        target = projects_[size_t(projectList_->item(projectList_->count()-1)->data(Qt::UserRole).toInt())].historyId;
-                    int from = -1, to = -1;
-                    if (flowTile) {
-                        for (int i = 0; i < int(documents_.size()); ++i) { if (documents_[size_t(i)].path == source) from = i; if (documents_[size_t(i)].path == target) to = i; }
-                        reorderFlow(from, to);
-                    } else {
-                        for (int i = 0; i < int(projects_.size()); ++i) { if (projects_[size_t(i)].historyId == source) from = i; if (projects_[size_t(i)].historyId == target) to = i; }
-                        reorderProject(from, to);
-                    }
+                    hideReorderIndicators(); dropReorder(flowArea, source, boundary);
                 }
                 return true;
             }
+            hideReorderIndicators();
         }
     }
     if (widget && editorTarget(widget)) {
@@ -495,6 +494,9 @@ void Window::buildUi() {
     auto *flowScroll = new QScrollArea; flowScroll->setObjectName(strings::FlowScroll); flowScroll->setWidgetResizable(true);
     flowScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     activities_ = new QWidget; activities_->setObjectName(strings::FlowRail); activities_->setMinimumWidth(metrics::FlowRailMinimumWidth);
+    activities_->setAcceptDrops(true);
+    flowInsertion_ = new QFrame(activities_); flowInsertion_->setObjectName(strings::FlowInsertionIndicator);
+    flowInsertion_->setStyleSheet(strings::InsertionIndicatorStyle); flowInsertion_->setAttribute(Qt::WA_TransparentForMouseEvents); flowInsertion_->hide();
     activityLayout_ = new QVBoxLayout(activities_); activityLayout_->setContentsMargins(metrics::SpaceNormal, metrics::SpaceComfortable, metrics::SpaceNormal, metrics::SpaceComfortable); activityLayout_->setSpacing(metrics::SpaceLarge);
     flowScroll->setWidget(activities_); barLayout->addWidget(flowScroll, 1); row->addWidget(bar);
     tabs_ = new QTabWidget; tabs_->setObjectName(strings::MainTabs); row->addWidget(tabs_, 1);
@@ -578,6 +580,8 @@ void Window::buildUi() {
     auto *workSplit = new QSplitter;
     auto *projectPane = new QWidget; auto *pl = new QVBoxLayout(projectPane); pl->addWidget(new QLabel(strings::ProjectLabel));
     projectList_ = new QListWidget; projectList_->viewport()->setAcceptDrops(true); pl->addWidget(projectList_, 1);
+    projectInsertion_ = new QFrame(projectList_->viewport()); projectInsertion_->setObjectName(strings::ProjectInsertionIndicator);
+    projectInsertion_->setStyleSheet(strings::InsertionIndicatorStyle); projectInsertion_->setAttribute(Qt::WA_TransparentForMouseEvents); projectInsertion_->hide();
     connect(projectList_, &QListWidget::currentRowChanged, this, [this](int rowIndex) {
         if (rowIndex >= 0 && projectList_->item(rowIndex)) selectProject(projectList_->item(rowIndex)->data(Qt::UserRole).toInt());
     });
@@ -763,6 +767,7 @@ void Window::deleteEditorObjects(std::optional<Id> node) {
     editorOperation([&] { for (auto connection : connections) editGraph_->deleteConnection(connection); for (auto id : nodes) editGraph_->deleteNode(id); });
 }
 void Window::refreshActivities() {
+    hideReorderIndicators();
     syncCoordinatorRegistry();
     refreshFlowChoices();
     while (auto *item = activityLayout_->takeAt(0)) {
@@ -799,6 +804,46 @@ void Window::refreshActivities() {
     menu->addAction(strings::AddExistingFlowAction, this, [this] { openFlow(); });
     add->setMenu(menu); add->setPopupMode(QToolButton::InstantPopup);
     activityLayout_->addStretch();
+}
+void Window::hideReorderIndicators() {
+    if (flowInsertion_) flowInsertion_->hide();
+    if (projectInsertion_) projectInsertion_->hide();
+}
+int Window::showReorderBoundary(bool flows, const QPoint &point) {
+    std::vector<QRect> rows;
+    if (flows) {
+        for (int i=0; i<int(documents_.size()); ++i) if (auto *item=activityLayout_->itemAt(i))
+            if (auto *tile=item->widget()) rows.push_back(tile->geometry());
+    } else {
+        for (int i=0; i<projectList_->count(); ++i) rows.push_back(projectList_->visualItemRect(projectList_->item(i)));
+    }
+    hideReorderIndicators();
+    if (rows.empty()) return -1;
+    int boundary=0;
+    while (boundary<int(rows.size()) && point.y()>=rows[size_t(boundary)].center().y()) ++boundary;
+    const int y=boundary==0 ? rows.front().top() : boundary==int(rows.size()) ? rows.back().bottom()+1
+        : (rows[size_t(boundary-1)].bottom()+1+rows[size_t(boundary)].top())/2;
+    auto *indicator=flows ? flowInsertion_ : projectInsertion_;
+    const auto rect=rows[size_t(qMin(boundary,int(rows.size())-1))];
+    indicator->setGeometry(rect.left(), qMax(0,y-metrics::DropIndicatorThickness/2),rect.width(),metrics::DropIndicatorThickness);
+    indicator->show(); indicator->raise();
+    return boundary;
+}
+void Window::dropReorder(bool flows, const QString &source, int boundary) {
+    std::vector<int> indices; int from=-1;
+    if (flows) {
+        for (int i=0; i<int(documents_.size()); ++i) { indices.push_back(i); if(documents_[size_t(i)].path==source) from=i; }
+    } else {
+        for (int row=0; row<projectList_->count(); ++row) {
+            const auto index=projectList_->item(row)->data(Qt::UserRole).toInt();
+            if(projects_[size_t(index)].historyId==source) from=row;
+            indices.push_back(index);
+        }
+    }
+    if (from<0 || boundary<0 || boundary>int(indices.size())) return;
+    const int to=boundary-(from<boundary ? 1 : 0);
+    if (to==from) return;
+    if (flows) reorderFlow(from,to); else reorderProject(indices[size_t(from)],indices[size_t(to)]);
 }
 void Window::reorderFlow(int from, int to) {
     if (from < 0 || to < 0 || from >= int(documents_.size()) || to >= int(documents_.size()) || from == to) return;
@@ -912,6 +957,7 @@ void Window::validateFlow() {
     else reportError(errors.join('\n'));
 }
 void Window::refreshProjects() {
+    hideReorderIndicators();
     const int previous = project_;
     QSignalBlocker block(projectList_); projectList_->clear(); project_ = -1;
     if (current_ < 0) { refreshUserInputPanel(); updateExecutionUi(); return; }

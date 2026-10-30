@@ -3,6 +3,8 @@ namespace an::strings {
 inline constexpr char ReorderFlowPath[] = "reorderFlowPath";
 inline constexpr char FlowOrderMime[] = "application/x-agentnodify-flow-order";
 inline constexpr char ProjectOrderMime[] = "application/x-agentnodify-project-order";
+inline constexpr char FlowInsertionIndicator[] = "flowInsertionIndicator";
+inline constexpr char ProjectInsertionIndicator[] = "projectInsertionIndicator";
 inline constexpr char ToolTipSentencePattern[] = "([。！？]|[.!?](?=\\s|$))[ \\t]*\\n?";
 }
 #include "colors.h"
@@ -24,6 +26,8 @@ template <std::size_t... N> constexpr auto join(const char (&...pieces)[N]) {
     return result;
 }
 } // namespace detail
+inline constexpr auto InsertionIndicatorStyleStorage = detail::join("background:", colors::AgentAccent, "; border:0;");
+inline constexpr auto InsertionIndicatorStyle = InsertionIndicatorStyleStorage.data();
 // UI text, diagnostics, serialization keys and protocol literals. Equal values
 // intentionally share a constant; keep portable JSON/CLI values unchanged.
 inline constexpr char UserEnvironmentRegistry[] = "HKEY_CURRENT_USER\\Environment";
