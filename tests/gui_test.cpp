@@ -457,6 +457,10 @@ void GuiTest::timingNodeForms() {
     for(int day=1;day<=7;++day){auto *check=scheduled->findChild<QCheckBox *>(QString("scheduleWeekday%1").arg(day));auto *label=scheduled->findChild<QLabel *>(QString("scheduleWeekdayLabel%1").arg(day));QVERIFY(check);QVERIFY(label);QVERIFY(!check->isChecked());QVERIFY(label->styleSheet().contains("#75899c"));}
     auto *monday=scheduled->findChild<QCheckBox *>("scheduleWeekday1");QTest::mouseClick(monday,Qt::LeftButton);QVERIFY(window.editGraph_->flow.nodes.at(schedule).scheduleWeekdays==std::vector<int>{1});QVERIFY(scheduled->findChild<QLabel *>("scheduleWeekdayLabel1")->styleSheet().contains("#173b5b"));
     window.stepHistory(false);QVERIFY(!monday->isChecked());window.stepHistory(true);QVERIFY(monday->isChecked());
+    for(int day=1;day<=7;++day) QVERIFY(scheduled->findChild<QLabel *>(QString("scheduleWeekdayLabel%1").arg(day))->styleSheet().contains("#173b5b"));
+    QTest::mouseClick(monday,Qt::LeftButton);
+    for(int day=1;day<=7;++day) QVERIFY(scheduled->findChild<QLabel *>(QString("scheduleWeekdayLabel%1").arg(day))->styleSheet().contains("#75899c"));
+    QTest::mouseClick(monday,Qt::LeftButton);
     for(Id id:{delay,schedule}){NodeStyle style(QJsonObject::fromVariantMap(window.editGraph_->nodeData(id,NodeRole::Style).toMap()));QCOMPARE(style.GradientColor0,QColor("#9ac9f2"));}
     window.workGraph_->replace(window.editGraph_->flow);auto *readonly=window.workGraph_->form(schedule)->findChild<QCheckBox *>("scheduleWeekday1");QVERIFY(readonly->isChecked());QVERIFY(!readonly->isEnabled());QTest::mouseClick(readonly,Qt::LeftButton);QVERIFY(readonly->isChecked());
     window.editGraph_->setNodeData(1,NodeRole::Position,QPointF(-200,100));window.editGraph_->setNodeData(delay,NodeRole::Position,QPointF(0,0));window.editGraph_->setNodeData(schedule,NodeRole::Position,QPointF(500,0));
@@ -898,7 +902,8 @@ void GuiTest::compactNamelessNodes() {
     const auto agent=graph.addNode("agent"); auto named=graph.flow.nodes.at(agent); named.title="Custom agent"; graph.updateNode(named);
     QCOMPARE(graph.nodeData(agent,NodeRole::Caption).toString(),kindName(Kind::Agent)); QCOMPARE(graph.form(agent)->findChild<QLineEdit *>("nodeTitle")->text(),named.title);
     for(Kind kind:{Kind::All,Kind::Any,Kind::Branch,Kind::UserInput,Kind::Delay,Kind::Schedule}) {
-        const auto id=graph.addNode(kindKey(kind)); auto *form=graph.form(id); QVERIFY(form); form->show(); QCoreApplication::processEvents(); QCOMPARE(form->width(),210);
+        const auto id=graph.addNode(kindKey(kind)); auto *form=graph.form(id); QVERIFY(form); form->show(); QCoreApplication::processEvents(); QCOMPARE(form->width(),kind==Kind::All || kind==Kind::Any ? 110 : 210);
+        if(kind==Kind::All || kind==Kind::Any) for(auto *label:form->findChildren<QLabel *>()) QVERIFY(label->text()!=QString::fromUtf8("入力ポート数"));
         QCOMPARE(graph.nodeData(id,NodeRole::Caption).toString(),kindName(kind));
         if(kind!=Kind::UserInput) { QVERIFY(!form->findChild<QLineEdit *>("nodeTitle")); QVERIFY(graph.flow.nodes.at(id).title.isEmpty()); auto node=graph.flow.nodes.at(id); node.title="Old name"; graph.updateNode(node); QVERIFY(graph.flow.nodes.at(id).title.isEmpty()); }
         for(auto *edit:form->findChildren<QLineEdit *>()) QVERIFY2(edit->geometry().right()<=edit->parentWidget()->width(),qPrintable(edit->objectName()));
@@ -908,7 +913,7 @@ void GuiTest::compactNamelessNodes() {
 }
 void GuiTest::nodeColorsAndPalette() {
     Window window(true); window.show(); int i=0;
-    for(const auto &[kind,color]:std::vector<std::pair<Kind,QColor>>{{Kind::All,QColor("#142b49")},{Kind::Any,QColor("#142b49")},{Kind::Branch,QColor("#e59a42")},{Kind::UserInput,QColor("#6f2635")},{Kind::Delay,QColor("#9ac9f2")},{Kind::Schedule,QColor("#9ac9f2")},{Kind::End,QColor("#efc65e")}}) {
+    for(const auto &[kind,color]:std::vector<std::pair<Kind,QColor>>{{Kind::All,QColor("#164b86")},{Kind::Any,QColor("#164b86")},{Kind::Branch,QColor("#e59a42")},{Kind::UserInput,QColor("#6f2635")},{Kind::Delay,QColor("#9ac9f2")},{Kind::Schedule,QColor("#9ac9f2")},{Kind::End,QColor("#efc65e")}}) {
         const auto id=window.editGraph_->addNode(kindKey(kind)); QVERIFY(id!=InvalidNodeId); window.editGraph_->setNodeData(id,NodeRole::Position,QPointF((i%3)*360,(i/3)*280));++i;
         NodeStyle style(QJsonObject::fromVariantMap(window.editGraph_->nodeData(id,NodeRole::Style).toMap()));QCOMPARE(style.GradientColor0,color);QCOMPARE(style.FontColor,nodeForeground(kind));QCOMPARE(style.NormalBoundaryColor,nodeAccent(kind));QVERIFY(style.NormalBoundaryColor!=style.GradientColor0);
         auto *button=window.findChild<QPushButton *>("addNode_"+kindKey(kind));QVERIFY(button);QVERIFY(button->styleSheet().contains("background:"+color.name()));

@@ -13,7 +13,8 @@ InputPortsForm::InputPortsForm(NodeForm &owner, QFormLayout *form) : NodeParamet
     inputs_->setRange(1, limits::InputPorts);
     inputs_->setValue(int(node.inputs));
     inputs_->setToolTip(strings::InputCountTooltip);
-    form->addRow(strings::InputCountLabel, inputs_);
+    owner.setFixedWidth(metrics::JoinNodeWidth);
+    form->addRow(inputs_);
     connect(inputs_, &QSpinBox::valueChanged, this, [this](int count) {
         if (!updating_) {
             node_.inputs = unsigned(count);
