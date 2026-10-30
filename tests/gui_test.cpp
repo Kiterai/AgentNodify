@@ -900,6 +900,29 @@ void GuiTest::interactionWhileWaiting() {
     QVERIFY(window.projects_[0].results.at(2).output=="two"); QVERIFY(window.projects_[1].results.at(2).output=="two"); QCOMPARE(window.projects_[0].history.size(),size_t(4)); QCOMPARE(window.projects_[1].history.size(),size_t(4));
     window.selectWorkNode(4); QVERIFY(window.output_->toPlainText().contains("two"));
 }
+void GuiTest::validationOverlay() {
+    Window window(true); window.show(); QCoreApplication::processEvents();
+    auto *button=window.findChild<QToolButton *>("validationOverlay"); QVERIFY(button); QVERIFY(!button->icon().isNull()); QVERIFY(button->text().isEmpty());
+    QCOMPARE(button->parentWidget(),window.editView_); QCOMPARE(button->toolTip(),QString::fromUtf8("フローを検証"));
+    QCOMPARE(button->accessibleName(),button->toolTip());
+    for(const auto &size:{QSize(1000,700),QSize(1500,950)}) {
+        window.resize(size); QCoreApplication::processEvents();
+        QCOMPARE(button->x(),window.editView_->viewport()->x()+metrics::OverlayMargin);
+        QCOMPARE(button->y(),window.editView_->viewport()->geometry().bottom()+1-button->height()-metrics::OverlayMargin);
+        QVERIFY(button->isVisible());
+    }
+    auto *palette=window.findChild<QWidget *>("nodePalette"); QVERIFY(palette);
+    for(auto *old:palette->findChildren<QPushButton *>()) QVERIFY(old->text()!=button->toolTip());
+    auto connected=Flow::initial(); connected.edges={{1,2}}; window.editGraph_->replace(connected);
+    const auto position=button->pos(); window.editView_->centerOn(QPointF(3000,3000)); QCoreApplication::processEvents(); QCOMPARE(button->pos(),position);
+    QCOMPARE(window.childAt(button->mapTo(&window,button->rect().center())),button);
+    QTimer::singleShot(0,&window,[]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget());QVERIFY(box);const auto icon=box->icon();box->accept();QCOMPARE(icon,QMessageBox::Information);});
+    QTest::mouseClick(button,Qt::LeftButton);
+    window.tabs_->setCurrentIndex(1); QVERIFY(!button->isVisible()); window.tabs_->setCurrentIndex(0); QVERIFY(button->isVisible());
+    window.editView_->centerScene();
+    QCoreApplication::processEvents();
+    QVERIFY(window.grab().save(QDir(AGENTNODIFY_TEST_OUTPUT_DIR).filePath("gui-validation-overlay.png")));
+}
 void GuiTest::validationWarnings() {
     Window window(true); auto flow=Flow::initial(false); Node node; node.id=3; node.kind=Kind::Delay; flow.nodes[3]=node;
     window.editGraph_->replace(flow);

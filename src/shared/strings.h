@@ -5,6 +5,7 @@ inline constexpr char FlowOrderMime[] = "application/x-agentnodify-flow-order";
 inline constexpr char ProjectOrderMime[] = "application/x-agentnodify-project-order";
 inline constexpr char FlowInsertionIndicator[] = "flowInsertionIndicator";
 inline constexpr char ProjectInsertionIndicator[] = "projectInsertionIndicator";
+inline constexpr char ValidationOverlay[] = "validationOverlay";
 inline constexpr char ToolTipSentencePattern[] = "([。！？]|[.!?](?=\\s|$))[ \\t]*\\n?";
 inline constexpr char ToolTipSentenceReplacement[] = "\\1\n";
 inline constexpr char ValidationErrorsHeading[] = "エラー";

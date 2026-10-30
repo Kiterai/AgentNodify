@@ -95,6 +95,8 @@ private:
     ContentView *output_;
     QLabel *textTitle_, *textError_, *status_, *nodeStatus_;
     QPushButton *runButton_, *stopButton_;
+    QToolButton *validationButton_ = nullptr;
+    void positionValidationButton();
     struct InputPrompt { QString projectId; UserInputRequest request; QString draft; };
     std::vector<InputPrompt> inputPrompts_;
     QString activeInput_;

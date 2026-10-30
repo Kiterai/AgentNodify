@@ -332,6 +332,7 @@ void Window::updateInputShortcutHint() {
 bool Window::eventFilter(QObject *object, QEvent *event) {
     if (object == this && event->type() == QEvent::WindowDeactivate) { controlPressed_ = false; updateInputShortcutHint(); }
     auto *widget = qobject_cast<QWidget *>(object);
+    if (validationButton_ && object==editView_->viewport() && (event->type()==QEvent::Resize || event->type()==QEvent::Show)) positionValidationButton();
     if (widget && event->type() == QEvent::ToolTipChange) {
         const auto formatted = sentenceToolTip(widget->toolTip());
         if (widget->toolTip() != formatted) widget->setToolTip(formatted);
@@ -514,12 +515,20 @@ void Window::buildUi() {
         add->setToolTip(strings::AddNodePrefix + kindName(k) + strings::Newline + nodeDescription(k)); add->setObjectName(strings::AddNode + kindKey(k));
         if(hasSpecialNodeBackground(k)) add->setStyleSheet(QString(strings::NodePaletteButtonStyle).arg(nodeBackground(k).name(),nodeForeground(k).name(),nodeAccent(k).name(),nodeBackground(k).lighter(metrics::NodeButtonHoverLightnessPercent).name()));
     }
-    auto *validate = button(strings::ValidateAction, leftLayout, [this] { validateFlow(); }, true); validate->setToolTip(strings::ValidateAction);
     leftLayout->addStretch(); left->setObjectName(strings::NodePalette);
     left->setMinimumWidth(metrics::PaletteMinimumWidth); editorSplit_->addWidget(left);
     editScene_ = new QtNodes::BasicGraphicsScene(*editGraph_, this); editView_ = new GraphView(editScene_);
     editView_->setScaleRange(metrics::WheelZoomMinimum, metrics::WheelZoomMaximum); editorSplit_->addWidget(editView_);
     editView_->setObjectName(strings::FlowEditorView);
+    // Keep the overlay outside the scrolling viewport so panning never moves it.
+    validationButton_=new QToolButton(editView_); validationButton_->setObjectName(strings::ValidationOverlay);
+    validationButton_->setIcon(style()->standardIcon(QStyle::SP_DialogApplyButton));
+    validationButton_->setIconSize(QSize(metrics::ValidationIconExtent,metrics::ValidationIconExtent));
+    validationButton_->setFixedSize(metrics::ValidationButtonExtent,metrics::ValidationButtonExtent);
+    validationButton_->setToolTip(strings::ValidateAction); validationButton_->setAccessibleName(strings::ValidateAction);
+    validationButton_->setCursor(Qt::PointingHandCursor);
+    connect(validationButton_,&QToolButton::clicked,this,[this]{validateFlow();});
+    positionValidationButton();
     // QtNodes' commands drive mouse gestures; our per-document snapshots own
     // user-facing undo so parameter edits and structural edits share one order.
     for (auto *action : editView_->actions()) {
@@ -949,6 +958,13 @@ bool Window::saveFlow(bool saveAs) {
         doc.path = path; doc.flow = editGraph_->flow; doc.dirty = false; doc.undo->setClean(); doc.savedNextNodeId = editGraph_->flow.nextNodeId;
         refreshActivities(); setWindowTitle(strings::WindowTitlePrefix + doc.flow.name); persist(); statusBar()->showMessage(strings::SavedFlowMessage + path, time::StatusSavedMilliseconds); return true;
     } catch (const std::exception &e) { reportError(QString::fromUtf8(e.what())); return false; }
+}
+void Window::positionValidationButton() {
+    if (!validationButton_) return;
+    auto *viewport=editView_->viewport();
+    validationButton_->move(viewport->pos()+QPoint(qMin(metrics::OverlayMargin,qMax(0,viewport->width()-validationButton_->width())),
+        qMax(0,viewport->height()-validationButton_->height()-metrics::OverlayMargin)));
+    validationButton_->raise();
 }
 void Window::validateFlow() {
     QStringList warnings;

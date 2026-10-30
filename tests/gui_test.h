@@ -22,6 +22,7 @@ private slots:
     void editorUndoIsolationAndPorts();
     void optionalTerminalControls();
     void validationWarnings();
+    void validationOverlay();
     void timingNodeForms();
     void endlessDelayInWindow();
     void widgetLifetime();

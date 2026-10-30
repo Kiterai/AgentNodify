@@ -70,6 +70,7 @@ namespace an::metrics {
 inline constexpr int CompactNodeWidth = 210, StandardNodeWidth = 320;
 inline constexpr int JoinNodeWidth = 110;
 inline constexpr int DropIndicatorThickness = 3;
+inline constexpr int ValidationButtonExtent = 36, ValidationIconExtent = 22, OverlayMargin = 12;
 inline constexpr int WindowWidth = 1440, WindowHeight = 900;
 inline constexpr int InitialNodeY = 120, InitialEndX = 600;
 inline constexpr int NodeColumns = 4, NodeColumnStep = 220, NodeRowStep = 160;
