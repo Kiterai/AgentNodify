@@ -13,7 +13,7 @@ NodeDefinition NodeRegistry::agent() {
         QStringList errors;
         if (n.prompt.trimmed().isEmpty())
             errors << strings::EmptyPrompt;
-        if (n.agent != strings::Codex && n.agent != strings::ClaudeCode && n.agent != strings::OpenCode)
+        if (!findAgentDefinition(n.agent))
             errors << strings::UnknownAgent;
         try {
             if (!n.schema.trimmed().isEmpty())

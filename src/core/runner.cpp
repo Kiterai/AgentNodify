@@ -6,7 +6,6 @@
 #include <QFileInfo>
 #include <QProcessEnvironment>
 #include <QTimer>
-#include <QRegularExpression>
 #include <QUuid>
 #include <stdexcept>
 
@@ -17,53 +16,6 @@ QString stateName(State s) {
     case State::Succeeded: return strings::Succeeded; case State::Skipped: return strings::Skipped;
     case State::Cancelled: return strings::Cancelled; default: return strings::Error;
     }
-}
-Json decodeAgentOutput(const QString &agent, const QByteArray &data, bool structured) {
-    QString text, finalText; Json structuredValue; bool hasStructured = false;
-    for (auto &line : data.split('\n')) {
-        if (line.trimmed().isEmpty()) continue;
-        auto j = Json::parse(line.toStdString(), nullptr, false);
-        if (j.is_discarded()) throw std::runtime_error(strings::InvalidCliJson);
-        if (j.value(strings::IsError, false) || j.value(strings::Type, strings::Empty) == strings::ErrorValue) throw std::runtime_error(j.dump());
-        if (agent == strings::ClaudeCode) {
-            if (j.value(strings::Type, strings::Empty) == strings::Result) {
-                if (j.contains(strings::StructuredOutputValue)) { structuredValue = j[strings::StructuredOutputValue]; hasStructured = true; }
-                if (j.contains(strings::Result) && j[strings::Result].is_string()) finalText = QString::fromStdString(j[strings::Result].get<std::string>());
-            } else if (j.value(strings::Type, strings::Empty) == strings::Assistant && j.contains(strings::Message)) {
-                for (auto &c : j[strings::Message].value(strings::Content, Json::array()))
-                    if (c.value(strings::Type, strings::Empty) == strings::TextFormat) text += QString::fromStdString(c.value(strings::TextFormat, strings::Empty));
-            }
-        } else if (agent == strings::OpenCode) {
-            if (j.value(strings::Type, strings::Empty) == strings::TextFormat && j.contains(strings::Part)) text += QString::fromStdString(j[strings::Part].value(strings::TextFormat, strings::Empty));
-        } else if (j.value(strings::Type, strings::Empty) == strings::ItemCompleted && j.contains(strings::Item) && j[strings::Item].value(strings::Type, strings::Empty) == strings::AgentMessage) {
-            finalText = QString::fromStdString(j[strings::Item].value(strings::TextFormat, strings::Empty));
-        }
-    }
-    if (structured && hasStructured) return structuredValue;
-    if (!finalText.isEmpty()) text = finalText;
-    if (text.isEmpty()) throw std::runtime_error(strings::MissingAgentResponse);
-    return structured ? parseJson(text.trimmed()) : Json(text.toUtf8().toStdString());
-}
-QString decodeAgentSessionId(const QString &agent, const QByteArray &data) {
-    QString session;
-    const QRegularExpression uuid(strings::UuidPattern);
-    const QRegularExpression openCodeId(strings::OpenCodeSessionPattern);
-    for (const auto &line : data.split('\n')) {
-        const auto event = Json::parse(line.toStdString(), nullptr, false);
-        if (!event.is_object()) continue;
-        const auto type = event.value(strings::Type, Json());
-        const char *field = nullptr;
-        if (agent == strings::Codex && type == strings::ThreadStarted) field = strings::ThreadId;
-        else if (agent == strings::ClaudeCode && (type == strings::Result || (type == strings::System && event.value(strings::Subtype, Json()) == strings::Init))) field = strings::SessionId;
-        else if (agent == strings::OpenCode && (type == strings::StepStart || type == strings::StepFinish || type == strings::TextFormat || type == strings::ToolUse)) field = strings::SessionID;
-        if (!field || !event.contains(field)) continue;
-        if (!event.at(field).is_string()) throw std::runtime_error(strings::InvalidSessionId);
-        const auto id = QString::fromStdString(event.at(field).get<std::string>());
-        if (!(agent == strings::OpenCode ? openCodeId : uuid).match(id).hasMatch()) throw std::runtime_error(strings::InvalidSessionId);
-        if (!session.isEmpty() && session != id) throw std::runtime_error(strings::ConflictingSessionIds);
-        session = id;
-    }
-    return session;
 }
 Runner::Runner(QObject *parent, std::function<QDateTime()> clock) : QObject(parent), clock_(std::move(clock)) {}
 QDateTime Runner::now() const { return clock_ ? clock_() : QDateTime::currentDateTime(); }

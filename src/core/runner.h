@@ -2,6 +2,7 @@
 #include "shared/strings.h"
 #include "nodeprocess.h"
 #include "flow.h"
+#include "agents/config.h"
 #include <QObject>
 #include <QProcess>
 #include <QDateTime>
@@ -34,16 +35,6 @@ struct NodeExecution {
     quint64 sequence = 0; // Assigned by the project's persistent history.
     bool structuredOutput = false;
     bool retainContext = false, contextResumed = false;
-};
-struct AgentConfig {
-    QString codex = strings::CodexExecutable;
-    QString claude = strings::ClaudeExecutable;
-#ifdef Q_OS_WIN
-    QString opencode = strings::OpenCodeWindowsExecutable;
-#else
-    QString opencode = strings::OpenCodeExecutable;
-#endif
-    bool opencodeStandalone = false;
 };
 struct UserInputRequest {
     QString id;

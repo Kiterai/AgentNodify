@@ -9,7 +9,8 @@
 #include <QStringDecoder>
 #include <memory>
 namespace an {
-// Shared process transport; node-specific preparation and decoding live in nodes/.
+// Shared process transport. Node orchestration lives in nodes/; agent CLI
+// preparation and protocol decoding are supplied by core/agents/registry.cpp.
 struct ProcessJob {
     QProcess *process = nullptr;
     QByteArray stdoutData, stderrData;

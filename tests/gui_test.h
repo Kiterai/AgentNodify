@@ -58,6 +58,7 @@ private slots:
     void trayExitSavesChanges();
     void allAndAnyForms();
     void agentContextSetting();
+    void registeredAgentForms();
     void contextCheckboxColors();
     void userInputNodeForm();
     void userInputWorkPanel();

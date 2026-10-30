@@ -20,7 +20,7 @@ AgentForm::AgentForm(NodeForm &owner, QVBoxLayout *layout, QFormLayout *form, Mo
     const auto &node = node_;
     agent_ = new QComboBox;
     agent_->setObjectName(strings::NodeAgent);
-    agent_->addItems({strings::Codex, strings::ClaudeCode, strings::OpenCode});
+    agent_->addItems(agentNames());
     agent_->setCurrentText(node.agent);
     auto *combo = new ModelCombo;
     model_ = combo;
@@ -175,9 +175,8 @@ void AgentForm::populateEfforts() {
     QSignalBlocker blocker(effort_);
     effort_->clear();
     effort_->addItem(strings::DefaultEffortLabel, strings::Empty);
-    QStringList levels = node_.agent == strings::ClaudeCode
-                             ? QStringList{strings::Low, strings::Medium, strings::High, strings::Xhigh, strings::Max}
-                             : QStringList{strings::Low, strings::Medium, strings::High, strings::Xhigh};
+    const auto *definition=findAgentDefinition(node_.agent);
+    QStringList levels = definition ? definition->fallbackEfforts : QStringList{};
     if (catalog_)
         for (const auto &info : catalog_->entry(node_.agent).models)
             if (info.id == node_.model && !info.efforts.isEmpty()) {

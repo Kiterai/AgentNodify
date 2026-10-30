@@ -2,6 +2,7 @@
 #include <QVBoxLayout>
 #include <QFrame>
 #include "core/nodedefinition.h"
+#include "core/agents/definition.h"
 #include "ui/window.h"
 #include "ui/nodeform.h"
 #include "ui/graphview.h"
@@ -931,6 +932,20 @@ void GuiTest::validationWarnings() {
     node.waitDuration=-1; flow.nodes[3]=node; window.editGraph_->replace(flow); window.smoke_=false;
     QTimer::singleShot(0,&window,[]{ auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); QVERIFY(box->text().contains(QString::fromUtf8("警告"))); QVERIFY(box->text().contains(QString::fromUtf8("エラー"))); box->accept(); });
     window.validateFlow(); window.smoke_=true;
+}
+void GuiTest::registeredAgentForms() {
+    for (const auto &definition : agentDefinitions()) {
+        Node node; node.kind=Kind::Agent; node.agent=definition.name;
+        NodeForm form(node);
+        auto *agents=form.findChild<QComboBox *>("nodeAgent");
+        auto *efforts=form.findChild<QComboBox *>("nodeEffort");
+        QVERIFY(agents); QVERIFY(efforts);
+        QCOMPARE(agents->count(),int(agentDefinitions().size()));
+        QCOMPARE(agents->currentText(),QString::fromUtf8(definition.name));
+        for(int i=0;i<agents->count();++i) QCOMPARE(agents->itemText(i),QString::fromUtf8(agentDefinitions()[size_t(i)].name));
+        QCOMPARE(efforts->count(),definition.fallbackEfforts.size()+1);
+        for(const auto &level : definition.fallbackEfforts) QVERIFY(efforts->findData(level)>=0);
+    }
 }
 void GuiTest::sentenceToolTips() {
     const auto text=QString::fromUtf8("最初の文。次の文。\n最後の文。");

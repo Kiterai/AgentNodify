@@ -1,4 +1,5 @@
 #include "shared/constants.h"
+#include "core/agents/definition.h"
 #include "shared/strings.h"
 #include <stdexcept>
 #ifdef AGENTNODIFY_NODE_UI

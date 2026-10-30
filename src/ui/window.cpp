@@ -1089,7 +1089,7 @@ void Window::refreshWorkHistory() {
         const QString title = QString(strings::ExecutionNumberText).arg(entry.executionNumber);
         const bool continued = entry.retainContext && entry.contextResumed;
         QString details = entry.agent.isEmpty() ? QString(strings::InternalExecution) : entry.agent;
-        if (entry.agent == strings::Codex || entry.agent == strings::ClaudeCode || entry.agent == strings::OpenCode) {
+        if (findAgentDefinition(entry.agent)) {
             QString effort = entry.effort.isEmpty() ? QString(strings::DefaultEffort) : entry.effort;
             if (!effort.isEmpty()) effort[0] = effort[0].toUpper();
             details += strings::Space + (entry.model.isEmpty() ? strings::MissingExecutionMetadata : entry.model) + strings::Space + effort;
@@ -1248,13 +1248,14 @@ void Window::settings() {
         button(strings::Browse, layout, [this, edit] { auto p = QFileDialog::getOpenFileName(this, strings::CliExecutableTitle, {}, strings::ExecutableFileFilter); if (!p.isEmpty()) edit->setText(p); });
         form->addRow(label, row); return edit;
     };
-    auto *codex = add(strings::Codex, config_.codex), *claude = add(strings::ClaudeCode, config_.claude), *opencode = add(strings::OpenCode, config_.opencode);
+    std::vector<QLineEdit *> executables;
+    for(const auto &definition : agentDefinitions()) executables.push_back(add(definition.name,agentExecutable(definition,config_)));
     layout->addLayout(form);
     auto *hint = new QLabel(strings::CliPermissionsHint); hint->setWordWrap(true); layout->addWidget(hint);
     auto *box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel); layout->addWidget(box);
     connect(box, &QDialogButtonBox::accepted, &dialog, &QDialog::accept); connect(box, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     if (dialog.exec() == QDialog::Accepted) {
-        config_ = {codex->text(), claude->text(), opencode->text()};
+        for(size_t i=0;i<executables.size();++i) setAgentExecutable(agentDefinitions()[i],config_,executables[i]->text());
         syncCoordinatorRegistry(); persist(); if (!smoke_) { modelCatalog_->setConfig(config_); modelCatalog_->refreshAll(true); }
     }
 }
@@ -1264,7 +1265,7 @@ void Window::persist() {
     Json paths = Json::array(), projects = Json::array();
     for (auto &d : documents_) paths.push_back(str(d.path));
     for (auto &p : projects_) projects.push_back({{strings::Name, str(p.name)}, {strings::Directory, str(p.directory)}, {strings::Flow, str(p.flowPath)}, {strings::HistoryId, str(p.historyId)}});
-    Json j = {{strings::Flows, paths}, {strings::Projects, projects}, {strings::CodexExecutable, str(config_.codex)}, {strings::ClaudeExecutable, str(config_.claude)}, {strings::OpenCodeExecutable, str(config_.opencode)}};
+    Json j = agentConfigJson(config_); j[strings::Flows]=paths; j[strings::Projects]=projects;
     QSaveFile file(dataDir_ + strings::WorkspaceFileSuffix); auto bytes = QByteArray::fromStdString(j.dump(defaults::JsonIndent));
     if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) reportError(strings::SaveWorkspaceFailed + file.errorString());
 }
@@ -1273,11 +1274,7 @@ void Window::restore() {
     if (!file.open(QIODevice::ReadOnly)) { reportError(file.errorString()); return; }
     try {
         auto j = Json::parse(file.readAll().toStdString());
-        config_ = {qs(j.at(strings::CodexExecutable)), qs(j.at(strings::ClaudeExecutable)), qs(j.at(strings::OpenCodeExecutable))};
-#ifdef Q_OS_WIN
-        // Migrate only our old bare default, never a user-specified executable path.
-        if (config_.opencode == strings::OpenCodeExecutable) config_.opencode = strings::OpenCodeWindowsExecutable;
-#endif
+        config_ = agentConfigFromJson(j);
         for (auto &path : j.at(strings::Flows)) {
             try {
                 auto flow = Flow::load(qs(path));

@@ -41,6 +41,15 @@ target_link_libraries(agentshared INTERFACE Qt6::Core)
 
 # The domain/execution layer is usable without Qt GUI/Widgets or QtNodes.
 add_library(agentcore
+  src/core/agents/config.h src/core/agents/definition.h
+  src/core/agents/registry.cpp src/core/agents/common/runtime.cpp
+  src/core/agents/common/config.cpp
+  src/core/agents/common/catalog.cpp src/core/agents/common/catalog.h
+  src/core/agents/common/progress.cpp src/core/agents/common/progress.h
+  src/core/agents/codex/progress.cpp src/core/agents/claude/progress.cpp src/core/agents/opencode/progress.cpp
+  src/core/agents/codex/runtime.cpp src/core/agents/codex/catalog.cpp
+  src/core/agents/claude/runtime.cpp src/core/agents/claude/catalog.cpp
+  src/core/agents/opencode/runtime.cpp src/core/agents/opencode/catalog.cpp
   src/core/flow.cpp src/core/flow.h src/core/runner.cpp src/core/runner.h
   src/core/coordinator.cpp src/core/coordinator.h src/core/cli.cpp src/core/cli.h
   src/core/modelcatalog.cpp src/core/modelcatalog.h src/core/history.cpp src/core/history.h
@@ -150,7 +159,7 @@ set_tests_properties(userinput PROPERTIES TIMEOUT 60)
 add_executable(agentnodify_context_tests tests/context_test.cpp)
 target_link_libraries(agentnodify_context_tests PRIVATE agentcore Qt6::Test)
 add_dependencies(agentnodify_context_tests fake_agent)
-add_test(NAME context COMMAND agentnodify_context_tests -o -,txt)
+add_test(NAME context COMMAND agentnodify_context_tests -o -,txt -o "${CMAKE_BINARY_DIR}/context-results.txt,txt")
 set_tests_properties(context PROPERTIES TIMEOUT 90)
 add_executable(agentnodify_coordinator_tests tests/coordinator_test.cpp)
 target_link_libraries(agentnodify_coordinator_tests PRIVATE agentcore Qt6::Test)
@@ -192,6 +201,11 @@ target_link_libraries(agentnodify_layering_tests PRIVATE agentcore Qt6::Test)
 target_compile_definitions(agentnodify_layering_tests PRIVATE AGENTNODIFY_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 add_test(NAME layering COMMAND agentnodify_layering_tests -o -,txt)
 set_tests_properties(layering PROPERTIES TIMEOUT 20)
+add_executable(agentnodify_agent_registry_tests tests/agent_registry_test.cpp tests/agent_registry_test.h)
+target_link_libraries(agentnodify_agent_registry_tests PRIVATE agentcore Qt6::Test)
+target_compile_definitions(agentnodify_agent_registry_tests PRIVATE AGENTNODIFY_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+add_test(NAME agent_registry COMMAND agentnodify_agent_registry_tests -o -,txt -o "${CMAKE_BINARY_DIR}/agent-registry-results.txt,txt")
+set_tests_properties(agent_registry PROPERTIES TIMEOUT 20)
 install(TARGETS AgentNodify
   RUNTIME DESTINATION bin COMPONENT AgentNodify
   BUNDLE DESTINATION . COMPONENT AgentNodify)
