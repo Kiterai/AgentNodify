@@ -1,21 +1,21 @@
 {
   "schema": 1,
-  "profile": "windows-qt-6.8.3-ifw-4.7.0",
-  "qtVersion": "6.8.3",
+  "profile": "windows-qt-6.12.0-ifw-4.7.0",
+  "qtVersion": "6.12.0",
   "ifwVersion": "4.7.0",
   "ifwQtVersion": "6.6.0",
   "ifwCommit": "fad83b7a8ba6a9e3179236d11bba0ceb9b3de5b4",
   "ifwArchiveVersions": "libarchive 3.7.1 zlib/1.2.12 liblzma/5.2.5 bz2lib/1.0.8",
   "sources": [
     {
-      "id": "qtbase-6.8.3", "group": "qt",
-      "url": "https://download.qt.io/archive/qt/6.8/6.8.3/submodules/qtbase-everywhere-src-6.8.3.tar.xz",
-      "sha256": "56001b905601bb9023d399f3ba780d7fa940f3e4861e496a7c490331f49e0b80"
+      "id": "qtbase-6.12.0", "group": "qt",
+      "url": "https://download.qt.io/official_releases/qt/6.12/6.12.0/submodules/qtbase-everywhere-src-6.12.0.tar.xz",
+      "sha256": "a951bd163c7b80fc6b8c88d7668fb56abf91c152373e13c10666763238131307"
     },
     {
-      "id": "qtsvg-6.8.3", "group": "qt",
-      "url": "https://download.qt.io/archive/qt/6.8/6.8.3/submodules/qtsvg-everywhere-src-6.8.3.tar.xz",
-      "sha256": "35eb516460f00f264eb504baa253432384351cf23fb9980a5857190e8deef438"
+      "id": "qtsvg-6.12.0", "group": "qt",
+      "url": "https://download.qt.io/official_releases/qt/6.12/6.12.0/submodules/qtsvg-everywhere-src-6.12.0.tar.xz",
+      "sha256": "e4ab39534ec97987b1b9b60ef7f4d3253d5912a69f8c713a01753174a4029331"
     },
     {
       "id": "ifw-4.7.0", "group": "ifw",

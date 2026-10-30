@@ -64,7 +64,7 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## GitHub Actions（Windows）
 
-`.github/workflows/windows-build.yml` は`master`・`develop`ブランチへのpush（PRマージを含む）で、GitHubホストの`windows-2022`上にMSVC 2022 x64／Qt 6.8.3を用意します。PR作成・他ブランチへのpush・手動実行では起動しません。既存の`scripts/build.ps1`でReleaseビルド・通常のCTest・Qt DLL配置を実行します。Python・Node.jsはランナー付属のものを使用し、不在なら失敗させます。Qtは固定版のaqtinstallで取得し、個人のQtパスや認証情報は使いません。
+`.github/workflows/windows-build.yml` は`master`・`develop`ブランチへのpush（PRマージを含む）で、GitHubホストの`windows-2022`上にMSVC 2022 x64／Qt 6.12.0を用意します。PR作成・他ブランチへのpush・手動実行では起動しません。既存の`scripts/build.ps1`でReleaseビルド・通常のCTest・Qt DLL配置を実行します。Python・Node.jsはランナー付属のものを使用し、不在なら失敗させます。Qtは固定版のaqtinstallで取得し、個人のQtパスや認証情報は使いません。
 
 `master`をPR経由でのみ更新できるよう保護し、マージに伴う`push`でビルドを起動する運用です。マージコミット・Squash・Rebaseのいずれでも更新後のコミットをビルドします。ブランチ保護を迂回した直接pushが許可されている場合はそれでも起動するため、直接更新の禁止はGitHubのブランチ保護で管理してください。マージ前の必須チェックには使えません。`develop`は作成後、そのブランチにもワークフローファイルを含めてください。
 

@@ -69,6 +69,7 @@ function fixture(t) {
   writeFileSync(join(directory, 'distribution-release.json'), JSON.stringify({
     schema: 1, version: '0.1.1', commit: sha, repository: 'owner/repo', sourceBundle: sourceName,
     sourceBundleSha256: createHash('sha256').update('test source bundle').digest('hex'),
+    qtVersion: '6.12.0', ifwVersionOutput: 'IFW Version: 4.7.0, built with Qt 6.6.0.',
     noticeHashes,
   }));
   writeFileSync(join(directory, 'CMakeLists.txt'), 'set(AGENTNODIFY_VERSION "0.1.0" CACHE STRING "Version")');
@@ -104,6 +105,10 @@ test('publish verifies sources, record, validation, installer and checksum befor
       assert.equal(body.target_commitish, sha);
       assert.equal(body.draft, true);
       assert.equal(body.tag_name, 'v0.1.1');
+      assert.match(body.body, /未署名リリース/);
+      assert.match(body.body, /SmartScreen/);
+      assert.match(body.body, /not signed or endorsed by SignPath/);
+      assert.match(body.body, /Application Qt: 6\.12\.0/);
       return Response.json({ ...body, id: 1, upload_url: 'https://uploads.github.com/repos/owner/repo/releases/1/assets{?name}' });
     }
     if (options.method === 'PATCH') assert.equal(JSON.parse(options.body).draft, false);

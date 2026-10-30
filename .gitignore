@@ -4,3 +4,6 @@
 *.user
 __pycache__/
 *.py[cod]
+/.agent-config/
+/.windows-sandbox-mcp/
+/opencode.jsonc

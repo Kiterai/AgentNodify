@@ -82,7 +82,7 @@ IFWオープンソース版のGPLv3＋例外と、QtのLGPL等は別に確認す
 
 ### 対応ソース・配布固有資料の生成
 
-`packaging/sources.json`はWindowsリリース用の版・HTTPS取得先・SHA-256を固定する。アプリのQt 6.8.3（qtbase／qtsvg）と、IFW 4.7.0に静的リンクされたQt 6.6.0（qtbase／qtdeclarative／qttools／qt5compat）を別々に扱う。IFWソースは実行ファイルが報告するコミット`fad83b7a8ba6a9e3179236d11bba0ceb9b3de5b4`の版。IFWが報告するzlib 1.2.12、liblzma（XZ）5.2.5、bzip2 1.0.8のソースも含める。libarchive 3.7.1はIFWソースに含まれる。
+`packaging/sources.json`はWindowsリリース用の版・HTTPS取得先・SHA-256を固定する。アプリのQt 6.12.0（qtbase／qtsvg）と、IFW 4.7.0に静的リンクされたQt 6.6.0（qtbase／qtdeclarative／qttools／qt5compat）を別々に扱う。IFWソースは実行ファイルが報告するコミット`fad83b7a8ba6a9e3179236d11bba0ceb9b3de5b4`の版。IFWが報告するzlib 1.2.12、liblzma（XZ）5.2.5、bzip2 1.0.8のソースも含める。libarchive 3.7.1はIFWソースに含まれる。
 
 Python 3.8以上の標準ライブラリだけで動く`scripts/distribution.py`が原文を収集する。アーカイブは展開・実行せずに読み、ライセンス本文、Qtの`qt_attribution.json`と参照先、第三者コードの先頭の著作権・ライセンスコメントを保持する。任意機能・未使用コードを含む保守的な上位集合なので、全項目が実バイナリへリンクされたという意味ではない。実ビルドの構成やベンダーパッチとの対応は別途レビューする。
 
@@ -97,7 +97,7 @@ python scripts/distribution.py collect --download `
 
 実リリースの`prepare`は、以下を追加で実施する。
 
-1. 実際の`qmake -query QT_VERSION`と`installerbase --version`を確認し、Qt／IFW／内蔵Qt／IFWコミット／圧縮ライブラリの版がプロファイルと一致しなければ停止する。ローカルQt 6.12等に6.8.3の資料を流用しない。
+1. 実際の`qmake -query QT_VERSION`と`installerbase --version`を確認し、Qt／IFW／内蔵Qt／IFWコミット／圧縮ライブラリの版がプロファイルと一致しなければ停止する。異なるQt版の資料を流用しない。
 2. `git archive --format=zip`で作ったアプリソースのZIPコメントがリリースコミットSHAと一致することと、本体MIT本文を確認する。
 3. 原アーカイブ、アプリソース、表示資料、版・ツールのSHA-256を含む`BUILD-INFO.json`を、`AgentNodify-<版>-Sources.zip`へまとめる。
 4. 同じReleaseに置く実際のアセット名・URLを記した`SOURCE-OFFER.txt`と、ソースZIPのSHA-256を含む`distribution-release.json`を生成する。リンク先は公開前にはまだ存在しないため、**ソースZIPを含む全アセットのアップロード検証後にのみReleaseを公開する**。
@@ -113,9 +113,9 @@ git archive --format=zip --output=build-release/application-source.zip <commit-S
 python scripts/distribution.py prepare --download --cache build-source-cache `
   --output build-release/distribution --bundle-directory build-release/installer `
   --version <major.minor.patch> --repository <owner/repository> --commit <commit-SHA> `
-  --qt-path <Qt-6.8.3-kit> --ifw-path <IFW-4.7.0-root> `
+  --qt-path <Qt-6.12.0-kit> --ifw-path <IFW-4.7.0-root> `
   --application-source build-release/application-source.zip
-.\scripts\package.ps1 -QtPath <Qt-6.8.3-kit> -IfwPath <IFW-4.7.0-root> `
+.\scripts\package.ps1 -QtPath <Qt-6.12.0-kit> -IfwPath <IFW-4.7.0-root> `
   -BuildDirectory build-release -Version <major.minor.patch> -LegalDirectory build-release/distribution
 ```
 
@@ -203,7 +203,7 @@ python scripts/distribution.py prepare --download --cache build-source-cache `
 
 IFW 4.7.0の自己削除はVBScriptに依存するため、エンジンがないWindowsでも削除できるよう、成功した削除後だけ固定名のMaintenanceTool.exeを遅延削除する。GUIでは完了画面のFinishまたは閉じる操作まで待つ。ユーザーパスは作業ディレクトリとして渡し、コマンド文字列へ埋め込まず、ディレクトリやワイルドカードを削除しない。
 
-修正版は通常CTest全19件とホスト上の導入・起動・削除・登録解除・検証用データ保持を確認済み。同じ未署名インストーラについて、ネットワーク無効のWindows Sandboxでも日本語・空白を含むゲストローカルパスへの導入、開発用PATHなしのスモーク起動、MaintenanceTool.exeを含む削除、登録・ショートカット解除、ユーザー所有の検証ファイル4件の保持が成功した。入力マニフェスト・ホスト結果・ゲスト結果のインストーラSHA-256一致を確認した。実GUIでの手動操作や実署名の検証まで完了とは扱わない。ローカル検証ビルドはQt 6.12.0を使用しており、Qt 6.8.3向けの固定ソース資料と組み合わせて公開しない。公開対象の版・署名が変われば、その最終バイナリで再検証する。
+修正版は通常CTest全19件とホスト上の導入・起動・削除・登録解除・検証用データ保持を確認済み。同じ未署名インストーラについて、ネットワーク無効のWindows Sandboxでも日本語・空白を含むゲストローカルパスへの導入、開発用PATHなしのスモーク起動、MaintenanceTool.exeを含む削除、登録・ショートカット解除、ユーザー所有の検証ファイル4件の保持が成功した。入力マニフェスト・ホスト結果・ゲスト結果のインストーラSHA-256一致を確認した。実GUIでの手動操作や公開用署名の検証まで完了とは扱わない。公開・ローカルともQt 6.12.0へ統一する。公開対象の版・署名が変われば、その最終バイナリで再検証する。
 
 `packaging_layout`テストは新しい一時ステージへ対象コンポーネントだけをinstallし、本体・Qt・MSVCランタイム・サンプル・ライセンスの存在と、開発物／ユーザーデータの非混入を確認する。Windowsでは開発用PATHとQtプラグイン環境変数に依存しないステージ済みexeの`--smoke-test`も実行する。検証ステージは調査用にビルド先へ残す。
 
@@ -233,7 +233,7 @@ WindowsでIFW 4.7.0を使い、Releaseビルド・CTest・CPackによる未署�
 | ファイル | 準備する内容 |
 |---|---|
 | `APPLICATION-LICENSE.txt` | ルートの`LICENSE`から生成するMIT本文 |
-| `QT-NOTICES.txt` | Qt 6.8.3の原アーカイブから収集する本文・第三者表示 |
+| `QT-NOTICES.txt` | Qt 6.12.0の原アーカイブから収集する本文・第三者表示 |
 | `IFW-NOTICES.txt` | IFW 4.7.0・Qt 6.6.0・圧縮ライブラリの原アーカイブから収集する本文・第三者表示 |
 | `SOURCE-OFFER.txt` | 実際に生成するソースZIP名・同じReleaseでの入手先・提供範囲・注意事項 |
 
@@ -241,7 +241,7 @@ WindowsでIFW 4.7.0を使い、Releaseビルド・CTest・CPackによる未署�
 
 ### 自動処理と採番
 
-`master`へのマージに伴うpushで通常ビルドが成功した後、専用ジョブがQt 6.8.3・IFW 4.7.0（`qt.tools.ifw.47`）をaqtinstall 3.3.0で取得する。`scripts/release.mjs prepare`が版を計算し、`distribution.py prepare`がソースZIP・資料を準備する。`scripts/package.ps1 -Version <版>`で全通常テストと`packaging_layout`検査、CPack生成を行う。成功後にのみ`publish`がタグ・下書きReleaseを作り、ソースZIP、配布記録、インストーラ、`SHA256SUMS.txt`をアップロードする。各応答の名前・サイズ・GitHub報告SHA-256を検証してから正式Releaseへ切り替える。`develop`ではタグ・Releaseを作らない。
+`master`へのマージに伴うpushで通常ビルドが成功した後、専用ジョブがQt 6.12.0・IFW 4.7.0（`qt.tools.ifw.47`）をaqtinstall 3.3.0で取得する。`scripts/release.mjs prepare`が版を計算し、`distribution.py prepare`がソースZIP・資料を準備する。`scripts/package.ps1 -Version <版>`で全通常テストと`packaging_layout`検査、CPack生成を行う。成功後にのみ`publish`がタグ・下書きReleaseを作り、ソースZIP、配布記録、インストーラ、`SHA256SUMS.txt`をアップロードする。各応答の名前・サイズ・GitHub報告SHA-256を検証してから正式Releaseへ切り替える。未署名時はSmartScreen等の警告、SignPath未導入、テスト証明書の登録不要、CLI別途導入・料金・スクリプト実行権限の注意を本文へ明記する。`develop`ではタグ・Releaseを作らない。
 
 `publish`自体も`LEGAL_APPROVED=true`を要求する。ソースZIPの版・コミット・リポジトリ・SHA-256と、`LEGAL_DIRECTORY`で渡した資料のファイル集合・内容が準備時の記録に一致しなければ、Release作成前に停止する。準備後に資料を編集した場合は、ソースZIPも含めて新しいディレクトリで作り直す。
 

@@ -106,10 +106,11 @@ class DistributionTest(unittest.TestCase):
             d.collect(self.manifest, self.cache, output)
 
     def test_mismatched_actual_versions_fail_closed(self):
-        d.check_versions(self.manifest, "6.8.3", self.ifw_output())
-        for qt, output in (("6.12.0", self.ifw_output()), ("6.8.3", "IFW 4.7.0"),
-                           ("6.8.3", self.ifw_output().replace("6.6.0", "6.6.1")),
-                           ("6.8.3", self.ifw_output().replace("zlib/1.2.12", "zlib/1.3.1"))):
+        version = self.manifest["qtVersion"]
+        d.check_versions(self.manifest, version, self.ifw_output())
+        for qt, output in (("6.8.3", self.ifw_output()), (version, "IFW 4.7.0"),
+                           (version, self.ifw_output().replace("6.6.0", "6.6.1")),
+                           (version, self.ifw_output().replace("zlib/1.2.12", "zlib/1.3.1"))):
             with self.assertRaises(ValueError):
                 d.check_versions(self.manifest, qt, output)
 
@@ -129,7 +130,7 @@ class DistributionTest(unittest.TestCase):
         supplements = self.root / "supplements"
         supplements.mkdir()
         (supplements / "vendor-build.txt").write_text("fixture build information")
-        with patch.object(d.subprocess, "check_output", side_effect=["6.8.3\n", self.ifw_output()]):
+        with patch.object(d.subprocess, "check_output", side_effect=[self.manifest["qtVersion"] + "\n", self.ifw_output()]):
             bundle = d.prepare(self.manifest, self.cache, output, bundles, "0.1.1", "owner/repo", commit,
                                qt, ifw, source, supplements=supplements)
         with zipfile.ZipFile(bundle) as archive:

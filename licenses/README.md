@@ -18,8 +18,8 @@ endings). Update these files and the inventory when upgrading dependencies.
 | QtNodes/LICENSE.rst | https://github.com/paceholder/nodeeditor/blob/3.0.12/LICENSE.rst |
 | nlohmann-json/LICENSE.MIT | https://github.com/nlohmann/json/blob/v3.11.3/LICENSE.MIT |
 | json-schema-validator/LICENSE | https://github.com/pboettch/json-schema-validator/blob/2.3.0/LICENSE |
-| Qt/LGPL-3.0-only.txt | https://github.com/qt/qtbase/blob/v6.8.3/LICENSES/LGPL-3.0-only.txt |
-| Qt/GPL-3.0-only.txt | https://github.com/qt/qtbase/blob/v6.8.3/LICENSES/GPL-3.0-only.txt |
+| Qt/LGPL-3.0-only.txt | https://github.com/qt/qtbase/blob/v6.12.0/LICENSES/LGPL-3.0-only.txt |
+| Qt/GPL-3.0-only.txt | https://github.com/qt/qtbase/blob/v6.12.0/LICENSES/GPL-3.0-only.txt |
 | IFW/LICENSE.GPL3-EXCEPT | https://github.com/qtproject/installer-framework/blob/4.7/LICENSE.GPL3-EXCEPT |
 
 The supplementary HEDLEY-NOTICE.txt preserves the SPDX notices in the bundled
@@ -27,7 +27,7 @@ Hedley header. SMTP-LICENSE.txt reproduces the MIT notice in the bundled SMTP
 address validator. Their source locations are recorded in those files.
 
 The Qt license texts are standard license documents, not a claim that every build
-uses Qt 6.8.3. The application displays its compile-time and runtime Qt versions.
+uses Qt 6.12.0. The application displays its compile-time and runtime Qt versions.
 The IFW text corresponds to the 4.7 series used by the release workflow; verify
 the applicable terms when using a different toolkit or commercial distribution.
 
