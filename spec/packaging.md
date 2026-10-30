@@ -241,7 +241,7 @@ WindowsでIFW 4.7.0を使い、Releaseビルド・CTest・CPackによる未署�
 
 ### 自動処理と採番
 
-`master`へのマージに伴うpushで通常ビルドが成功した後、専用ジョブがQt 6.12.0・IFW 4.7.0（`qt.tools.ifw.47`）をaqtinstall 3.3.0で取得する。`scripts/release.mjs prepare`が版を計算し、`distribution.py prepare`がソースZIP・資料を準備する。`scripts/package.ps1 -Version <版>`で全通常テストと`packaging_layout`検査、CPack生成を行う。成功後にのみ`publish`がタグ・下書きReleaseを作り、ソースZIP、配布記録、インストーラ、`SHA256SUMS.txt`をアップロードする。各応答の名前・サイズ・GitHub報告SHA-256を検証してから正式Releaseへ切り替える。未署名時はSmartScreen等の警告、SignPath未導入、テスト証明書の登録不要、CLI別途導入・料金・スクリプト実行権限の注意を本文へ明記する。`develop`ではタグ・Releaseを作らない。
+`master`へのマージに伴うpushで通常ビルドが成功した後、専用ジョブがQt 6.12.0・IFW 4.7.0（`qt.tools.ifw.47`）をaqtinstallの固定上流コミット`076e1659807d0b362a3ed684d54c2e9c775eb9c7`で取得する（3.3.0は新しいQtリポジトリ構成に未対応）。`scripts/release.mjs prepare`が版を計算し、`distribution.py prepare`がソースZIP・資料を準備する。`scripts/package.ps1 -Version <版>`で全通常テストと`packaging_layout`検査、CPack生成を行う。成功後にのみ`publish`がタグ・下書きReleaseを作り、ソースZIP、配布記録、インストーラ、`SHA256SUMS.txt`をアップロードする。各応答の名前・サイズ・GitHub報告SHA-256を検証してから正式Releaseへ切り替える。未署名時はSmartScreen等の警告、SignPath未導入、テスト証明書の登録不要、CLI別途導入・料金・スクリプト実行権限の注意を本文へ明記する。`develop`ではタグ・Releaseを作らない。
 
 `publish`自体も`LEGAL_APPROVED=true`を要求する。ソースZIPの版・コミット・リポジトリ・SHA-256と、`LEGAL_DIRECTORY`で渡した資料のファイル集合・内容が準備時の記録に一致しなければ、Release作成前に停止する。準備後に資料を編集した場合は、ソースZIPも含めて新しいディレクトリで作り直す。
 
