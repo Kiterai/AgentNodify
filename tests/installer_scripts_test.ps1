@@ -1,5 +1,9 @@
 param([Parameter(Mandatory = $true)][string]$SourceDirectory, [Parameter(Mandatory = $true)][string]$BuildDirectory)
 $ErrorActionPreference = 'Stop'
+# Load script-exported cmdlets in the parent scope before signing mocks run.
+# A cold Windows PowerShell process launched by CTest otherwise can lose the
+# auto-imported Get-FileHash function when a nested test script returns.
+Import-Module (Join-Path $PSHOME 'Modules/Microsoft.PowerShell.Utility/Microsoft.PowerShell.Utility.psd1') -ErrorAction Stop
 $root = Join-Path $BuildDirectory ('installer-script-test-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $root | Out-Null
 # All files in this fixture are new, disposable and under the build directory.
