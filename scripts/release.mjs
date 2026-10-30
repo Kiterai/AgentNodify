@@ -155,14 +155,6 @@ export async function runRelease({ env = process.env, command = process.argv[2],
         + `Corresponding source materials: ${sourceName} (application + upstream archives + notices/build records).\n`
         + 'SHA-256: see SHA256SUMS.txt.\n\n'
         + `Application Qt: ${record.qtVersion}; installer framework: ${record.ifwVersionOutput.split('\n')[0]}.\n\n`
-        + (allSigned ? '' : '## Unsigned release / 未署名リリース\n'
-          + 'This installer, application and Maintenance Tool are not code-signed. '
-          + 'Windows SmartScreen or other security products may warn or block execution. '
-          + 'SignPath signing is not yet configured; this release is not signed or endorsed by SignPath. '
-          + 'Do not install a test certificate or disable system security settings to use this release.\n\n'
-          + '本リリースは未署名です。Windows SmartScreen等の警告・実行ブロックが発生する場合があります。'
-          + 'SignPathによる署名は準備中で、SignPathの署名・承認を受けた配布物ではありません。'
-          + 'テスト証明書の信頼登録やセキュリティ機能の無効化は求めません。\n\n')
         + '## Usage and limitations / 利用上の注意\n'
         + 'AgentNodify is a Windows x64 workflow editor for agent CLIs and script/shell tasks. '
         + 'External agent CLIs and their authentication are not bundled; service usage may incur charges. '
