@@ -105,9 +105,9 @@ test('publish verifies sources, record, validation, installer and checksum befor
       assert.equal(body.target_commitish, sha);
       assert.equal(body.draft, true);
       assert.equal(body.tag_name, 'v0.1.1');
-      assert.match(body.body, /未署名リリース/);
-      assert.match(body.body, /SmartScreen/);
-      assert.match(body.body, /not signed or endorsed by SignPath/);
+      assert.doesNotMatch(body.body, /Unsigned release|未署名リリース|SmartScreen|test certificate/);
+      assert.match(body.body, /Windows x64 installer \(unsigned\)/);
+      assert.match(body.body, /Only open and run trusted workflows/);
       assert.match(body.body, /Application Qt: 6\.12\.0/);
       return Response.json({ ...body, id: 1, upload_url: 'https://uploads.github.com/repos/owner/repo/releases/1/assets{?name}' });
     }

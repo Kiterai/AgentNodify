@@ -113,6 +113,10 @@ private:
     void focusUserInputNode();
     void buildUi();
     void refreshActivities();
+    void reorderFlow(int from, int to);
+    void reorderProject(int from, int to);
+    QPoint reorderPress_;
+    QString reorderSource_;
     void selectFlow(int index);
     void selectNode(Id id);
     void showText(const QString &field);

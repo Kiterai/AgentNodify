@@ -9,9 +9,12 @@ On Windows it is also registered in Settings > Apps.
 This initial installer is offline-only; no automatic updates or update server
 are configured.
 
-User settings, saved flows, execution history and external projects are not
-removed by the installer. Uninstalling does not remove separately installed
-agent CLIs, their credentials, Python or Node.js.
+User settings, internal flows and execution history are retained by default.
+On Windows, the uninstaller asks whether to also delete AgentNodify's own
+AppData folders (default: No). For command-line removal, explicitly add
+RemoveAppData=true to the purge command to delete this data after success.
+External flows and projects are always retained. Uninstalling does not remove
+separately installed agent CLIs, their credentials, Python or Node.js.
 
 Install and authenticate the agent CLIs separately. Python and Node.js are only
 required for the corresponding script nodes. See the application documentation

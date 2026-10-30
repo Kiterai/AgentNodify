@@ -1,4 +1,9 @@
 #pragma once
+namespace an::strings {
+inline constexpr char ReorderFlowPath[] = "reorderFlowPath";
+inline constexpr char FlowOrderMime[] = "application/x-agentnodify-flow-order";
+inline constexpr char ProjectOrderMime[] = "application/x-agentnodify-project-order";
+}
 #include "colors.h"
 #include <array>
 #include <cstddef>
@@ -353,6 +358,8 @@ inline constexpr char Minimum[] = "minimum";
 inline constexpr char Maximum[] = "maximum";
 inline constexpr char Required[] = "required";
 inline constexpr char AdditionalProperties[] = "additionalProperties";
+inline constexpr char RequiredSchemaObject[] = "出力スキーマはオブジェクトで指定してください";
+inline constexpr char MissingSchemaKeyword[] = "出力スキーマに必須キーワードがありません: ";
 inline constexpr char Branch[] = "branch";
 inline constexpr char BranchName[] = "分岐";
 inline constexpr char BranchDescription[] = "上から順に条件を評価し、最初に一致した出力へ伝播します。一致しない場合はelseへ進みます。比較は"

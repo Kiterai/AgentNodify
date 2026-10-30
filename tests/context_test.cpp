@@ -8,7 +8,7 @@
 #include <set>
 using namespace an;
 namespace {
-QString countSchema() { return R"({"type":"object","properties":{"count":{"type":"integer"}},"required":["count"]})"; }
+QString countSchema() { return R"({"type":"object","properties":{"count":{"type":"integer"}},"required":["count"],"additionalProperties":false})"; }
 AgentConfig config() {
     auto path = QCoreApplication::applicationDirPath() + "/fake_agent";
 #ifdef Q_OS_WIN

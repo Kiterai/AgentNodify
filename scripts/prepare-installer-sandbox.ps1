@@ -47,4 +47,4 @@ $manifest = @{ schema = 1; installerSha256 = $hash; requireSigned = [bool]($Requ
 [IO.File]::WriteAllText((Join-Path $OutputDirectory 'input-manifest.json'), ($manifest | ConvertTo-Json), (New-Object Text.UTF8Encoding $false))
 Write-Output "Sandbox configuration: $configuration"
 Write-Output 'Open the .wsb file manually on a Windows Sandbox-capable machine. No Windows features were enabled and no VM was launched.'
-Write-Output "Result after the guest finishes: $resultDirectory/run/result.json"
+Write-Output "Results after the guest finishes: $resultDirectory/run/{Retain,Delete}/result.json"

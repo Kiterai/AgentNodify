@@ -63,7 +63,7 @@ using namespace an;
     }
     void CoreTest::anyAsyncAndVariables() {
         QTemporaryDir directory; auto flow = simple();
-        const QString countSchema = R"({"type":"object","properties":{"count":{"type":"integer"}},"required":["count"]})";
+        const QString countSchema = R"({"type":"object","properties":{"count":{"type":"integer"}},"required":["count"],"additionalProperties":false})";
         flow.nodes[3].prompt = "SHORT_DELAY PASS_COUNT=1"; flow.nodes[3].schema = countSchema;
         auto other = flow.nodes[3]; other.id = 4; other.prompt = "PASS_COUNT=2"; flow.nodes[4] = other;
         Node any; any.id = 5; any.kind = Kind::Any; flow.nodes[5] = any;
@@ -161,7 +161,22 @@ using namespace an;
     void CoreTest::schemas() {
         try {
         checkSchema(parseJson(schema()));
-        checkSchema(Json(true));
+        QVERIFY_EXCEPTION_THROWN(checkSchema(Json(true)), std::exception);
+        const auto valid = parseJson(schema());
+        for(const auto *key : {"type", "properties", "required", "additionalProperties"}) {
+            auto missing=valid; missing.erase(key);
+            QVERIFY_EXCEPTION_THROWN(checkSchema(missing),std::exception);
+            QVERIFY_EXCEPTION_THROWN(validateOutput(missing,Json{{"result","ok"}}),std::exception);
+        }
+        for(const auto &invalid : {Json{{"type",42}}, Json{{"properties",Json::array()}},
+                                  Json{{"required",Json::array({"result","result"})}}, Json{{"required",Json::array({1})}},
+                                  Json{{"additionalProperties",42}}, Json{{"properties",{{"x",{{"type","banana"}}}}}}}) {
+            auto malformed=valid; malformed.update(invalid); QVERIFY_EXCEPTION_THROWN(checkSchema(malformed),std::exception);
+        }
+        auto permitted=valid; permitted["additionalProperties"]=true; checkSchema(permitted);
+        validateOutput(permitted,Json{{"result","ok"},{"extra",1}});
+        QVERIFY_EXCEPTION_THROWN(validateOutput(valid,Json{{"result","ok"},{"extra",1}}),std::exception);
+        QVERIFY_EXCEPTION_THROWN(validateOutput(valid,Json::object()),std::exception);
         QVERIFY_EXCEPTION_THROWN(checkSchema(Json{{"$schema", "https://json-schema.org/draft/2020-12/schema"}}), std::exception);
         QVERIFY_EXCEPTION_THROWN(checkSchema(Json{{"type", "banana"}}), std::exception);
         QVERIFY_EXCEPTION_THROWN(checkSchema(Json{{"required", 42}}), std::exception);
@@ -285,7 +300,7 @@ using namespace an;
     }
     void CoreTest::loopExecution() {
         auto f = simple();
-        f.nodes[3].schema = R"({"type":"object","properties":{"count":{"type":"integer"}},"required":["count"]})";
+        f.nodes[3].schema = R"({"type":"object","properties":{"count":{"type":"integer"}},"required":["count"],"additionalProperties":false})";
         f.nodes[3].prompt = "COUNT_TO_3";
         Node branch; branch.id = 4; branch.kind = Kind::Branch; branch.rules = {{"count", "3", false}};
         f.nodes[4] = branch; f.edges = {{1, 3}, {3, 4}, {4, 3, 0, 0}, {4, 2, 1, 0}};
@@ -323,7 +338,7 @@ using namespace an;
     }
     void CoreTest::repeatedAnd() {
         auto f = simple();
-        f.nodes[3].schema = R"({"type":"object","properties":{"count":{"type":"integer"}},"required":["count"]})";
+        f.nodes[3].schema = R"({"type":"object","properties":{"count":{"type":"integer"}},"required":["count"],"additionalProperties":false})";
         f.nodes[3].prompt = "COUNT_TO_3";
         Node branch; branch.id = 4; branch.kind = Kind::Branch; branch.rules = {{"count", "3", false}}; f.nodes[4] = branch;
         Node a = f.nodes[3]; a.id = 5; f.nodes[5] = a;

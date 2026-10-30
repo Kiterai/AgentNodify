@@ -89,6 +89,7 @@ ScheduleForm::ScheduleForm(NodeForm &owner, QFormLayout *form) : NodeParameterFo
 }
 
 void ScheduleForm::updateWeekdayLabels() {
+    const bool active = std::any_of(scheduleWeekdays_.begin(), scheduleWeekdays_.end(), [](auto *check) { return check->isChecked(); });
     for (size_t i = 0; i < weekdayLabels_.size(); ++i)
-        weekdayLabels_[i]->setStyleSheet(scheduleWeekdays_[i]->isChecked() ? strings::ActiveWeekdayStyle : strings::InactiveWeekdayStyle);
+        weekdayLabels_[i]->setStyleSheet(active ? strings::ActiveWeekdayStyle : strings::InactiveWeekdayStyle);
 }
