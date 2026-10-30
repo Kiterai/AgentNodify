@@ -157,6 +157,11 @@ QString interpolate(const QString &text, const Json &value) {
     return out + text.mid(last);
 }
 void checkSchema(const Json &schema) {
+    // Application output-schema contract applies to the root only. Nested
+    // schemas still use standard Draft 7 (including boolean/scalar schemas).
+    if (!schema.is_object()) error(strings::RequiredSchemaObject);
+    for (const auto *keyword : {strings::Type, strings::Properties, strings::Required, strings::AdditionalProperties})
+        if (!schema.contains(keyword)) error(QString::fromUtf8(strings::MissingSchemaKeyword) + QString::fromUtf8(keyword));
     // Validate both the schema document and references, using Draft 7.
     if (schema.is_object() && schema.contains(strings::SchemaDialect)) {
         const auto dialect = schema.at(strings::SchemaDialect).get<std::string>();
@@ -176,6 +181,7 @@ void checkSchema(const Json &schema) {
     validator.set_root_schema(schema);
 }
 void validateOutput(const Json &schema, const Json &output) {
+    checkSchema(schema);
     nlohmann::json_schema::json_validator validator(nullptr, [](const std::string &, const std::string &) {});
     validator.set_root_schema(schema); validator.validate(output);
 }

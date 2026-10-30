@@ -244,7 +244,7 @@ void GuiTest::appendedOutputsPreservePaths() {
 }
 void GuiTest::appendedBranchExecutesElse() {
     QTemporaryDir directory; Graph graph; BasicGraphicsScene scene(graph); auto flow=Flow::initial();
-    Node source; source.id=3; source.kind=Kind::Agent; source.model="fixture"; source.prompt="Say hello"; source.schema=R"({"type":"object","properties":{"result":{"type":"string"}},"required":["result"]})"; flow.nodes[3]=source;
+    Node source; source.id=3; source.kind=Kind::Agent; source.model="fixture"; source.prompt="Say hello"; source.schema=R"({"type":"object","properties":{"result":{"type":"string"}},"required":["result"],"additionalProperties":false})"; flow.nodes[3]=source;
     Node branch; branch.id=4; branch.kind=Kind::Branch; branch.rules={{"result","never",true}}; flow.nodes[4]=branch;
     for(Id id:{5u,6u,7u}) { Node pass; pass.id=id; pass.kind=Kind::Branch; flow.nodes[id]=pass; }
     flow.edges={{1,3},{3,4},{4,5,0,0},{4,6,1,0},{5,2},{6,2},{7,2}}; graph.replace(flow);
@@ -654,7 +654,7 @@ void GuiTest::nodeExecutionHistory() {
     window.editGraph_->replace(Flow::initial()); window.changed();
     const auto agent = window.editGraph_->addNode("agent"), branch = window.editGraph_->addNode("branch");
     auto node = window.editGraph_->flow.nodes.at(agent); node.model = "fixture"; node.effort = "high"; node.prompt = "COUNT_TO_3";
-    node.title = "ループの実行履歴"; node.retainContext = true; node.schema = R"({"type":"object","properties":{"count":{"type":"integer"}},"required":["count"]})";
+    node.title = "ループの実行履歴"; node.retainContext = true; node.schema = R"({"type":"object","properties":{"count":{"type":"integer"}},"required":["count"],"additionalProperties":false})";
     window.editGraph_->updateNode(node);
     auto condition = window.editGraph_->flow.nodes.at(branch); condition.rules = {{"count", "3", false}}; window.editGraph_->updateNode(condition);
     window.editGraph_->addConnection({1, 0, agent, 0}); window.editGraph_->addConnection({agent, 0, branch, 0});

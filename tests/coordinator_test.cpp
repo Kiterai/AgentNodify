@@ -16,7 +16,7 @@ Flow chain(std::initializer_list<Node> nodes) {
 }
 Flow child(QString prompt = "SHORT_DELAY") {
     Node node; node.kind = Kind::Agent; node.model = "fixture"; node.prompt = prompt;
-    node.schema = R"({"type":"object","properties":{"result":{"type":"string"}},"required":["result"]})";
+    node.schema = R"({"type":"object","properties":{"result":{"type":"string"}},"required":["result"],"additionalProperties":false})";
     return chain({node});
 }
 void configure(Coordinator &host, const QString &directory, Flow parent, Flow target = child()) {
