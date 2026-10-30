@@ -27,6 +27,7 @@
 #include <QToolButton>
 #include <QTextBlock>
 #include <QTextLayout>
+#include <QTextDocument>
 #include <QMenu>
 #include <QMessageBox>
 #include <QContextMenuEvent>
@@ -87,7 +88,11 @@ void GuiTest::licenseViewer() {
         list->setCurrentRow(row);
         QFile file(list->item(row)->data(Qt::UserRole).toString());
         QVERIFY2(file.open(QIODevice::ReadOnly), qPrintable(file.fileName()));
-        const auto expected = QString::fromUtf8(file.readAll()).replace("\r\n", "\n");
+        // QTextDocument normalizes line separators and NBSP in toPlainText().
+        // Compare the complete rendered text, without changing the source file.
+        QTextDocument expectedDocument;
+        expectedDocument.setPlainText(QString::fromUtf8(file.readAll()));
+        const auto expected = expectedDocument.toPlainText();
         QVERIFY(!expected.isEmpty());
         QCOMPARE(text->toPlainText(), expected);
         foundDmitry |= expected.contains("Dmitry Pinaev");

@@ -116,11 +116,18 @@ def collect_notices(archive):
                     if block and re.search(r"copyright|license|public domain", block[0], re.I):
                         headers[name + " [header notice]"] = block[0].strip()
 
-        def text(name):
+        def text(name, required=True):
             item = members.get(name)
             if item is None or item.size > MAX_TEXT:
                 raise ValueError(f"Missing or oversized notice: {name}")
             data = texts[name] if name in texts else tar.extractfile(item).read()
+            # Legal-looking filenames can also name icons, PDFs and test binaries.
+            # Never turn those bytes into mojibake in notices; explicit metadata
+            # references must still fail rather than silently lose a license.
+            if any(byte < 32 and byte not in (9, 10, 12, 13) for byte in data):
+                if required:
+                    raise ValueError(f"Non-text notice: {name}")
+                return None
             try:
                 return data.decode("utf-8-sig")
             except UnicodeDecodeError:
@@ -131,7 +138,9 @@ def collect_notices(archive):
             legal = ("/LICENSES/" in name or base.startswith(("license", "licence", "copying", "copyright"))
                      or base in ("3rdparty", "authors", "notice", "notice.txt"))
             if legal:
-                sections[name] = text(name)
+                content = text(name, required=False)
+                if content is not None:
+                    sections[name] = content
             if (base in ("qt_attribution.json", ".qt_attribution.json")
                     and not set(PurePosixPath(name).parts) & {"tests", "examples"}):
                 content = text(name)

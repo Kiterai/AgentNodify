@@ -38,7 +38,7 @@ class DistributionTest(unittest.TestCase):
             }
         with tarfile.open(path, "w:gz") as archive:
             for filename, content in entries.items():
-                data = content.encode()
+                data = content.encode() if isinstance(content, str) else content
                 item = tarfile.TarInfo(filename)
                 item.size = len(data)
                 archive.addfile(item, io.BytesIO(data))
@@ -87,7 +87,22 @@ class DistributionTest(unittest.TestCase):
     def test_missing_license_reference_is_fatal(self):
         path = self.archive(entries={"src/qt_attribution.json": '{"LicenseFile":"missing.txt"}'})
         with self.assertRaisesRegex(ValueError, "Missing"):
-            d.collect_notices(path)
+                d.collect_notices(path)
+
+    def test_binary_legal_filenames_are_not_decoded_as_notices(self):
+        text = d.collect_notices(self.archive(entries={
+            "src/LICENSE": "Original license body\n",
+            "src/copyright.png": b"\x89PNG\r\n\x1a\n\x00binary",
+            "src/LICENSES/icon.bin": b"\x00binary",
+        }))
+        self.assertIn("Original license body", text)
+        self.assertNotIn("copyright.png", text)
+        self.assertNotIn("icon.bin", text)
+        with self.assertRaisesRegex(ValueError, "Non-text notice"):
+            d.collect_notices(self.archive(entries={
+                "src/qt_attribution.json": '{"LicenseFile":"license.bin"}',
+                "src/license.bin": b"\x00binary",
+            }))
 
     def test_archive_path_traversal_and_escaping_reference_are_rejected(self):
         for name in ("../escape", "/absolute", "C:/absolute", "x\\escape"):
