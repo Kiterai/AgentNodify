@@ -4,9 +4,13 @@ param(
     [string]$WorkDirectory = (Join-Path 'build' ('installer-roundtrip-' + [guid]::NewGuid().ToString('N'))),
     [switch]$RequireSigned,
     [ValidatePattern('^[a-fA-F0-9]{40}$')][string]$ExpectedSignerThumbprint,
-    [ValidateSet('Host', 'CIRunner', 'WindowsSandbox')][string]$EnvironmentKind = 'Host'
+    [ValidateSet('Host', 'CIRunner', 'WindowsSandbox')][string]$EnvironmentKind = 'Host',
+    [ValidateSet('Ignore', 'Retain', 'Delete')][string]$AppDataMode = 'Ignore'
 )
 $ErrorActionPreference = 'Stop'
+if ($AppDataMode -ne 'Ignore' -and ($EnvironmentKind -ne 'WindowsSandbox' -or $env:USERNAME -ne 'WDAGUtilityAccount')) {
+    throw 'Real AppData tests are restricted to the disposable Windows Sandbox account.'
+}
 $Installer = (Resolve-Path -LiteralPath $Installer).Path
 if ([IO.Path]::GetExtension($Installer) -ne '.exe') { throw 'Installer must be a Windows executable.' }
 if (![IO.Path]::IsPathRooted($WorkDirectory)) { $WorkDirectory = Join-Path (Get-Location) $WorkDirectory }
@@ -28,7 +32,7 @@ $reportPath = Join-Path $WorkDirectory 'result.json'
 $report = [ordered]@{
     schema = 1; passed = $false; installerSha256 = (Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash.ToLowerInvariant()
     productId = $productId; checks = @(); signatures = @(); cleanupAttempted = $false
-    environment = $EnvironmentKind; signatureRequired = [bool]($RequireSigned -or $ExpectedSignerThumbprint)
+    environment = $EnvironmentKind; appDataMode = $AppDataMode; signatureRequired = [bool]($RequireSigned -or $ExpectedSignerThumbprint)
     expectedSignerThumbprint = $ExpectedSignerThumbprint
     testDirectoryLeaf = $testDirectoryLeaf; ansiCodePage = [Text.Encoding]::Default.CodePage
 }
@@ -106,8 +110,9 @@ function Check-Signature([string]$File, [string]$Name) {
     }
 }
 function Remove-TestInstallation {
-    Invoke-TestProcess $maintenance @('--no-proxy', '--cache-path', $cache,
-        '--confirm-command', '--default-answer', 'purge') 'uninstall'
+    $arguments = @('--no-proxy', '--cache-path', $cache, '--confirm-command', '--default-answer', 'purge')
+    if ($AppDataMode -eq 'Delete') { $arguments += 'RemoveAppData=true' }
+    Invoke-TestProcess $maintenance $arguments 'uninstall'
     $script:uninstalled = $true
 }
 
@@ -143,6 +148,28 @@ try {
     }
     $hashes = @{}
     foreach ($file in $sentinels) { $hashes[$file] = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash }
+    $appDataRoots = @(); $appDataFiles = @()
+    if ($AppDataMode -ne 'Ignore') {
+        foreach ($kind in @('ApplicationData', 'LocalApplicationData')) {
+            $root = Join-Path ([Environment]::GetFolderPath($kind)) 'AgentNodify/AgentNodify'
+            Assert-Check (!(Test-Path -LiteralPath $root)) 'guest AppData fixture directory is unused'
+            New-Item -ItemType Directory -Path $root | Out-Null
+            $appDataRoots += $root
+            foreach ($name in @('workspace.json', 'flows/internal.flow.json', 'history/node.json', 'cache/model.json')) {
+                $file = Join-Path $root $name
+                New-Item -ItemType Directory -Path (Split-Path $file -Parent) -Force | Out-Null
+                [IO.File]::WriteAllText($file, 'Disposable guest AppData fixture')
+                $appDataFiles += $file; $hashes[$file] = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash
+            }
+        }
+        foreach ($relative in @('.codex/installer-validation.keep', '.claude/installer-validation.keep', '.config/opencode/installer-validation.keep', 'AppData/Roaming/AgentNodify/other-app.keep')) {
+            $file = Join-Path $env:USERPROFILE $relative
+            Assert-Check (!(Test-Path -LiteralPath $file)) 'guest external sentinel is unused'
+            New-Item -ItemType Directory -Path (Split-Path $file -Parent) -Force | Out-Null
+            [IO.File]::WriteAllText($file, 'External data must survive')
+            $sentinels += $file; $hashes[$file] = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash
+        }
+    }
     Remove-TestInstallation
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     while ((Test-Path -LiteralPath $maintenance) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100 }
@@ -155,6 +182,22 @@ try {
     }
     foreach ($file in $sentinels) {
         Assert-Check ((Test-Path -LiteralPath $file) -and (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -eq $hashes[$file]) 'user-owned fixture preserved'
+    }
+    if ($AppDataMode -eq 'Delete') {
+        foreach ($root in $appDataRoots) { Assert-Check (!(Test-Path -LiteralPath $root)) 'opted-in app-owned AppData tree removed' }
+    } elseif ($AppDataMode -eq 'Retain') {
+        foreach ($file in $appDataFiles) {
+            Assert-Check ((Test-Path -LiteralPath $file) -and (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -eq $hashes[$file]) 'default uninstall preserves actual guest AppData'
+        }
+        # Remove just fixtures created here, allowing a second clean guest roundtrip.
+        foreach ($file in $appDataFiles) { [IO.File]::Delete($file) }
+        foreach ($root in $appDataRoots) {
+            foreach ($name in @('flows','history','cache')) { [IO.Directory]::Delete((Join-Path $root $name)) }
+            [IO.Directory]::Delete($root)
+        }
+    }
+    if ($AppDataMode -ne 'Ignore') {
+        foreach ($file in $sentinels | Where-Object { $_ -like '*installer-validation.keep' -or $_ -like '*other-app.keep' }) { [IO.File]::Delete($file) }
     }
     $report.passed = $true
 } catch {

@@ -18,6 +18,9 @@ foreach ($name in @('test-installer.ps1', 'prepare-installer-sandbox.ps1', 'run-
 $planned = Join-Path $root 'planned-installation'
 & (Join-Path $SourceDirectory 'scripts/test-installer.ps1') -Installer $installer -WorkDirectory $planned -WhatIf
 if (Test-Path -LiteralPath $planned) { throw 'WhatIf created an installation directory.' }
+$refusedAppData = $false
+try { & (Join-Path $SourceDirectory 'scripts/test-installer.ps1') -Installer $installer -WorkDirectory $planned -AppDataMode Delete -WhatIf } catch { $refusedAppData = $true }
+if (!$refusedAppData -or (Test-Path -LiteralPath $planned)) { throw 'Host AppData test must be refused before creating files.' }
 $plannedSandbox = Join-Path $root 'planned-sandbox'
 & (Join-Path $SourceDirectory 'scripts/prepare-installer-sandbox.ps1') -Installer $installer -OutputDirectory $plannedSandbox -WhatIf
 if (Test-Path -LiteralPath $plannedSandbox) { throw 'WhatIf created a sandbox directory.' }
