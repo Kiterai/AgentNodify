@@ -951,10 +951,15 @@ bool Window::saveFlow(bool saveAs) {
     } catch (const std::exception &e) { reportError(QString::fromUtf8(e.what())); return false; }
 }
 void Window::validateFlow() {
-    auto errors = editGraph_->flow.validate();
+    QStringList warnings;
+    auto errors = editGraph_->flow.validate(&warnings);
     errors.append(modelSelectionErrors(editGraph_->flow));
-    if (errors.isEmpty()) QMessageBox::information(this, strings::ValidateFlowTitle, strings::NoValidationErrors);
-    else reportError(errors.join('\n'));
+    QStringList sections;
+    if (!errors.isEmpty()) sections << QString(strings::ValidationErrorsHeading)+strings::Newline+errors.join('\n');
+    if (!warnings.isEmpty()) sections << QString(strings::ValidationWarningsHeading)+strings::Newline+warnings.join('\n');
+    if (sections.isEmpty()) QMessageBox::information(this, strings::ValidateFlowTitle, strings::NoValidationErrors);
+    else if (errors.isEmpty()) QMessageBox::warning(this, strings::ValidateFlowTitle, sections.join(QString(strings::Newline)+strings::Newline));
+    else reportError(sections.join(QString(strings::Newline)+strings::Newline));
 }
 void Window::refreshProjects() {
     hideReorderIndicators();

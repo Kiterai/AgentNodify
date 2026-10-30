@@ -13,7 +13,7 @@
 
 namespace an {
 QString sentenceToolTip(QString text) {
-    return text.replace(QRegularExpression(strings::ToolTipSentencePattern), QStringLiteral("\\1\n")).trimmed();
+    return text.replace(QRegularExpression(strings::ToolTipSentencePattern), QString::fromUtf8(strings::ToolTipSentenceReplacement)).trimmed();
 }
 bool hasSpecialNodeBackground(Kind kind) { return nodePresentation(kind).specialBackground; }
 QColor nodeBackground(Kind kind) { return QColor(nodePresentation(kind).background); }

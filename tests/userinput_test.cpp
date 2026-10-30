@@ -21,7 +21,7 @@ private slots:
         flow.nodes[3].userChoices = {"はい 日本語", "いいえ"}; QVERIFY(Flow::fromJson(flow.toJson()).toJson() == flow.toJson());
         auto legacy = flow.toJson(); legacy["nodes"][2].erase("userChoices"); QCOMPARE(Flow::fromJson(legacy).nodes.at(3).userChoices, QStringList{"OK"});
         flow.nodes[3].userChoices.clear(); QVERIFY(!flow.validate().isEmpty()); flow.nodes[3].userChoices = {" ", "No"}; QVERIFY(!flow.validate().isEmpty());
-        flow = branching(); flow.edges.erase(flow.edges.begin() + 2); QVERIFY(!flow.validate().isEmpty());
+        flow = branching(); flow.edges.erase(flow.edges.begin() + 2); QStringList warnings; QVERIFY(flow.validate(&warnings).isEmpty()); QVERIFY(!warnings.isEmpty());
         flow = branching(); Node agent; agent.id = 6; agent.kind = Kind::Agent; agent.prompt = "${original}"; flow.nodes[6] = agent;
         flow.edges = {{1,3},{3,6,0,0},{3,6,1,0},{6,2}}; flow.nodes.erase(4); flow.nodes.erase(5); QVERIFY(!flow.validate().isEmpty());
     }

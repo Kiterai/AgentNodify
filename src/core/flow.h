@@ -7,6 +7,7 @@
 #include <QPointF>
 #include <map>
 #include <vector>
+#include <set>
 
 namespace an {
 using Json = nlohmann::json;
@@ -64,7 +65,8 @@ struct Flow {
     static Flow initial(bool withEnd = true);
     void save(const QString &path) const;
     static Flow load(const QString &path);
-    QStringList validate() const;
+    QStringList validate(QStringList *warnings = nullptr) const;
+    std::set<Id> disconnectedInputs() const;
 };
 Json parseJson(const QString &text);
 QString display(const Json &value);

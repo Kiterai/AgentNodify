@@ -900,6 +900,15 @@ void GuiTest::interactionWhileWaiting() {
     QVERIFY(window.projects_[0].results.at(2).output=="two"); QVERIFY(window.projects_[1].results.at(2).output=="two"); QCOMPARE(window.projects_[0].history.size(),size_t(4)); QCOMPARE(window.projects_[1].history.size(),size_t(4));
     window.selectWorkNode(4); QVERIFY(window.output_->toPlainText().contains("two"));
 }
+void GuiTest::validationWarnings() {
+    Window window(true); auto flow=Flow::initial(false); Node node; node.id=3; node.kind=Kind::Delay; flow.nodes[3]=node;
+    window.editGraph_->replace(flow);
+    QTimer::singleShot(0,&window,[]{ auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); QCOMPARE(box->icon(),QMessageBox::Warning); QVERIFY(box->text().contains(QString::fromUtf8("警告"))); QVERIFY(!box->text().contains(QString::fromUtf8("エラー"))); box->accept(); });
+    window.validateFlow();
+    node.waitDuration=-1; flow.nodes[3]=node; window.editGraph_->replace(flow); window.smoke_=false;
+    QTimer::singleShot(0,&window,[]{ auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); QVERIFY(box->text().contains(QString::fromUtf8("警告"))); QVERIFY(box->text().contains(QString::fromUtf8("エラー"))); box->accept(); });
+    window.validateFlow(); window.smoke_=true;
+}
 void GuiTest::sentenceToolTips() {
     const auto text=QString::fromUtf8("最初の文。次の文。\n最後の文。");
     QCOMPARE(sentenceToolTip(text),QString::fromUtf8("最初の文。\n次の文。\n最後の文。"));

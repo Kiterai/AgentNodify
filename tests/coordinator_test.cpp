@@ -122,7 +122,7 @@ private slots:
         if (mode != "missing project") host.projects.push_back({"target", "child", directory.filePath("target")});
         if (mode != "missing directory") QVERIFY(QDir().mkpath(directory.filePath("target")));
         if (mode == "missing flow") host.flows.erase("child");
-        if (mode == "invalid target") host.flows["child"].edges.clear();
+        if (mode == "invalid target") host.flows["child"].nodes.erase(1);
         if (mode == "missing model") host.flows["child"].nodes[3].model.clear();
         QSignalSpy done(&runner, &Runner::finished); QVERIFY(host.start(host.projects.front(), &runner)); QTRY_COMPARE(done.count(), 1);
         QVERIFY(done[0][0].toBool()); QCOMPARE(runner.results().at(2).output, Json({{"result", "failed"}})); QVERIFY(!host.running());

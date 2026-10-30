@@ -14,6 +14,7 @@ private slots:
     void schemas();
     void roundtrip();
     void invalidFlows();
+    void disconnectedNodes();
     void schemaReferences();
     void protocols();
     void cli_data();

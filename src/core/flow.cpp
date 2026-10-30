@@ -54,6 +54,17 @@ Json outputSchema(const Flow &f, Id id, QSet<Id> &visiting) {
     visiting.remove(id);
     return out;
 }
+QSet<Id> traceNodes(const Flow &flow, bool reverse) {
+    QSet<Id> seen;
+    std::function<void(Id)> trace = [&](Id id) {
+        if (seen.contains(id)) return;
+        seen.insert(id);
+        for (const auto &edge : flow.edges) if ((reverse ? edge.to : edge.from) == id) trace(reverse ? edge.from : edge.to);
+    };
+    for (const auto &[id,node] : flow.nodes)
+        if (reverse ? nodeDefinition(node.kind).terminal : nodeDefinition(node.kind).source) trace(id);
+    return seen;
+}
 }
 bool isHostOperation(Kind k) { return nodeDefinition(k).host; }
 bool hasNodeName(Kind k) { return nodeDefinition(k).named; }
@@ -221,7 +232,28 @@ Json schemaAt(const Json &schema, const QString &path) {
     };
     return walk(schema, schema, 0);
 }
-QStringList Flow::validate() const {
+std::set<Id> Flow::disconnectedInputs() const {
+    const auto reachable=traceNodes(*this,false);
+    std::set<Id> disconnected;
+    bool changed;
+    do {
+        changed=false;
+        for (const auto &[id,node] : nodes) {
+            if (disconnected.contains(id) || inputCount(node)==0) continue;
+            unsigned connected=0;
+            for (unsigned port=0; port<inputCount(node); ++port)
+                if (std::any_of(edges.begin(),edges.end(),[&](const Edge &edge) {
+                    return edge.to==id && edge.input==port && reachable.contains(edge.from) && !disconnected.contains(edge.from);
+                })) ++connected;
+            if (nodeDefinition(node.kind).inputPolicy==InputPolicy::Any ? connected==0 : connected<inputCount(node)) {
+                disconnected.insert(id); changed=true;
+            }
+        }
+    } while(changed);
+    return disconnected;
+}
+QStringList Flow::validate(QStringList *warnings) const {
+    QStringList notices;
     QStringList errors; int starts = 0, ends = 0;
     for (auto &[id, n] : nodes) { starts += nodeDefinition(n.kind).source; ends += nodeDefinition(n.kind).terminal; }
     if (starts != 1) errors << strings::MissingStart;
@@ -234,33 +266,33 @@ QStringList Flow::validate() const {
     }
     for (size_t i = 0; i < edges.size(); ++i)
         for (size_t j = 0; j < i; ++j) if (edges[i] == edges[j]) errors << strings::DuplicateConnection;
-    QSet<Id> reachable, terminal;
-    std::function<void(Id, bool)> trace = [&](Id id, bool reverse) {
-        auto &seen = reverse ? terminal : reachable;
-        if (seen.contains(id)) return; seen.insert(id);
-        for (auto &e : edges) if ((reverse ? e.to : e.from) == id) trace(reverse ? e.from : e.to, reverse);
-    };
-    for (auto &[id, n] : nodes) { if (nodeDefinition(n.kind).source) trace(id, false); if (nodeDefinition(n.kind).terminal) trace(id, true); }
+    const auto reachable=traceNodes(*this,false), terminal=traceNodes(*this,true);
     for (auto &[id, n] : nodes) {
         const auto label = QString(strings::NodeErrorPrefix).arg(n.title.isEmpty() ? kindName(n.kind) : n.title);
-        if (!reachable.contains(id)) errors << label + strings::UnreachableFromStart;
-        if (ends && !terminal.contains(id)) errors << label + strings::UnreachableEnd;
-        for (unsigned p = 0; p < inputCount(n); ++p) if (!incoming.contains({id, p})) errors << label + QString(strings::UnconnectedInput).arg(p);
+        if (!reachable.contains(id)) notices << label + strings::UnreachableFromStart;
+        if (ends && !terminal.contains(id)) notices << label + strings::UnreachableEnd;
+        for (unsigned p = 0; p < inputCount(n); ++p) if (!incoming.contains({id, p})) notices << label + QString(strings::UnconnectedInput).arg(p);
         const auto &definition = nodeDefinition(n.kind);
         for (const auto &message : definition.validate(n)) errors << label + message;
-        if (definition.outputConnectionsRequired) for (unsigned port = 0; port < outputCount(n); ++port) {
+        for (unsigned port = 0; port < outputCount(n); ++port) {
             const bool connected = std::any_of(edges.begin(), edges.end(), [&](const Edge &e) { return e.from == id && e.output == port; });
-            if (!connected) errors << label + definition.unconnectedOutputMessage.arg(port);
+            if (!connected) notices << label + (definition.outputConnectionsRequired ? definition.unconnectedOutputMessage : QString(strings::UnconnectedOutput)).arg(port);
         }
         try {
             std::vector<Json> inputs;
             for (auto &e : edges) if (e.to == id) { QSet<Id> seen; inputs.push_back(outputSchema(*this, e.from, seen)); }
             auto input = schemaSources(inputs);
+            auto checkPath = [&](const QString &path) {
+                if (inputs.empty() && inputCount(n)>0) { if(path!=strings::WholeInput) parts(path); }
+                else schemaAt(input,path);
+            };
             QRegularExpression re(strings::InterpolationPattern); auto it = re.globalMatch(definition.interpolation(n));
-            while (it.hasNext()) schemaAt(input, it.next().captured(1));
-            for (const auto &path : definition.variables(n)) schemaAt(input, path);
+            while (it.hasNext()) checkPath(it.next().captured(1));
+            for (const auto &path : definition.variables(n)) checkPath(path);
         } catch (const std::exception &e) { errors << label + QString::fromUtf8(e.what()); }
     }
-    errors.removeDuplicates(); return errors;
+    errors.removeDuplicates(); notices.removeDuplicates();
+    if (warnings) *warnings=notices;
+    return errors;
 }
 }

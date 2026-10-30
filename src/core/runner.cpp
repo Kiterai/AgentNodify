@@ -229,13 +229,9 @@ void Runner::pump() {
     // Even a synchronous infinite loop must yield to cancellation / GUI events.
     if (budget == 0) { schedulePump(); return; }
     if (!jobs_.empty() || !pendingHost_.empty() || !pendingInput_.empty() || !pendingWait_.empty()) return;
-    for (auto &[id, inputs] : tokens_) for (auto &queue : inputs) if (!queue.empty()) {
+    const auto disconnected=flow_.disconnectedInputs();
+    for (auto &[id, inputs] : tokens_) for (auto &queue : inputs) if (!queue.empty() && !disconnected.contains(id)) {
         fail(id, strings::IncompleteAllInputs); return;
-    }
-    bool reachedEnd = false;
-    for (auto &[id, n] : flow_.nodes) if (nodeDefinition(n.kind).terminal && results_[id].executions > 0) reachedEnd = true;
-    if (!reachedEnd) {
-        for (auto &[id, n] : flow_.nodes) if (nodeDefinition(n.kind).terminal) { fail(id, strings::EndNotReached); return; }
     }
     for (auto &[id, r] : results_) if (r.executions == 0) { r.state = State::Skipped; emit changed(id); }
     active_ = false; agentSessions_.clear();

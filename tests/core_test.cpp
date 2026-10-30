@@ -217,8 +217,29 @@ using namespace an;
         f = simple(); f.edges[0].input = 22; QVERIFY(!f.validate().isEmpty());
         f = simple(); f.edges[0].from = 999; QVERIFY(!f.validate().isEmpty());
         f = simple(); f.nodes.erase(1); QVERIFY(!f.validate().isEmpty());
-        f = simple(); f.edges.clear(); QVERIFY(!f.validate().isEmpty());
+        f = simple(); f.edges.clear(); QStringList warnings; QVERIFY(f.validate(&warnings).isEmpty()); QVERIFY(!warnings.isEmpty());
         f = simple(); f.nodes[3].prompt.clear(); QVERIFY(!f.validate().isEmpty());
+    }
+    void CoreTest::disconnectedNodes() {
+        QTemporaryDir directory;
+        for(int mode=0;mode<5;++mode) {
+            auto flow=Flow::initial(); Node node; node.id=3; node.kind=Kind::Delay; node.waitDuration=0; flow.nodes[3]=node;
+            flow.edges={{1,2}};
+            if(mode==1) { flow.edges.clear(); }
+            if(mode==2 || mode==3) {
+                flow.nodes[3].kind=Kind::All; flow.nodes[3].inputs=2; flow.edges={{1,3,0,0},{3,2}};
+                if(mode==3) { node.id=4; node.kind=Kind::All; node.inputs=2; flow.nodes[4]=node; flow.edges={{1,3,0,0},{3,4,0,1},{1,4,0,0},{4,2}}; }
+            }
+            if(mode==4) { flow.nodes[3].kind=Kind::Branch; flow.edges={{1,3}}; }
+            QStringList warnings; QVERIFY(flow.validate(&warnings).isEmpty()); QVERIFY(!warnings.isEmpty());
+            Runner runner; QSignalSpy done(&runner,&Runner::finished); QVERIFY(runner.start(flow,directory.path(),{})); QTRY_COMPARE(done.count(),1);
+            QVERIFY2(done[0][0].toBool(),qPrintable(done[0][1].toString()));
+            QCOMPARE(runner.results().at(1).state,State::Succeeded);
+            QCOMPARE(runner.results().at(3).state,mode==4 ? State::Succeeded : State::Skipped);
+            QCOMPARE(runner.results().at(2).state,mode==0 ? State::Succeeded : State::Skipped);
+        }
+        auto isolated=simple(); isolated.edges={{1,2}}; isolated.nodes[3].prompt="${notAvailable}";
+        QVERIFY(isolated.validate().isEmpty()); isolated.nodes[3].prompt="${bad..path}"; QVERIFY(!isolated.validate().isEmpty());
     }
     void CoreTest::schemaReferences() {
         auto f = simple(); f.nodes[3].schema = schema();

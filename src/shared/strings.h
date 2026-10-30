@@ -6,6 +6,9 @@ inline constexpr char ProjectOrderMime[] = "application/x-agentnodify-project-or
 inline constexpr char FlowInsertionIndicator[] = "flowInsertionIndicator";
 inline constexpr char ProjectInsertionIndicator[] = "projectInsertionIndicator";
 inline constexpr char ToolTipSentencePattern[] = "([。！？]|[.!?](?=\\s|$))[ \\t]*\\n?";
+inline constexpr char ToolTipSentenceReplacement[] = "\\1\n";
+inline constexpr char ValidationErrorsHeading[] = "エラー";
+inline constexpr char ValidationWarningsHeading[] = "警告";
 }
 #include "colors.h"
 #include <array>
@@ -125,6 +128,7 @@ inline constexpr char NodeErrorPrefix[] = "[%1] ";
 inline constexpr char UnreachableFromStart[] = "始端から到達できません";
 inline constexpr char UnreachableEnd[] = "終端に到達できません";
 inline constexpr char UnconnectedInput[] = "入力%1が未接続です";
+inline constexpr char UnconnectedOutput[] = "出力%1が未接続です";
 inline constexpr char UnconnectedBranchOutput[] = "分岐出力%1が未接続です";
 inline constexpr char UnconnectedChoiceOutput[] = "選択肢出力%1が未接続です";
 inline constexpr char Ok[] = "OK";
