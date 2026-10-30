@@ -13,6 +13,7 @@ private slots:
     void branchAndInputForms();
     void terminalAppearance();
     void editorAndFlowRail();
+    void reorderListsWhileRunning();
     void paletteWidthAndElision();
     void editorUndoRedoParameters();
     void editorUndoRedoDeletion();

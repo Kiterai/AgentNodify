@@ -1,4 +1,9 @@
 #pragma once
+namespace an::strings {
+inline constexpr char ReorderFlowPath[] = "reorderFlowPath";
+inline constexpr char FlowOrderMime[] = "application/x-agentnodify-flow-order";
+inline constexpr char ProjectOrderMime[] = "application/x-agentnodify-project-order";
+}
 #include "colors.h"
 #include <array>
 #include <cstddef>

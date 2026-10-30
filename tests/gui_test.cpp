@@ -1162,6 +1162,37 @@ void GuiTest::userInputWorkPanel() {
     QVERIFY(window.runner_->results().at(2).output == answer.toUtf8().toStdString()); QVERIFY(window.runner_->results().at(5).state == State::Skipped); QCOMPARE(window.runner_->results().at(6).executions,quint64(1)); QCOMPARE(window.historyList_->count(),1);
     done.clear(); window.executeFlow(); QTRY_COMPARE(window.inputPrompts_.size(),size_t(1)); window.coordinator_->cancelAll(); QTRY_COMPARE(done.count(),1); QVERIFY(window.inputPrompts_.empty()); QVERIFY(!window.inputPanel_->isVisible());
 }
+void GuiTest::reorderListsWhileRunning() {
+    try {
+    QTemporaryDir directory; Window window(true); window.show(); auto flow=Flow::initial();
+    Node input; input.id=3; input.kind=Kind::UserInput; flow.nodes[3]=input; flow.edges={{1,3},{3,2}};
+    window.editGraph_->replace(flow); window.changed();
+    window.documents_[0].path=directory.filePath("first.flow.json");
+    const auto path=window.documents_[0].path; const auto undo=window.documents_[0].undo;
+    auto other=Flow::initial(); const auto otherPath=directory.filePath("other.flow.json");
+    window.documents_.push_back({other,otherPath,false}); window.refreshActivities();
+    for(QString name:{"First","Second"}) { auto folder=directory.filePath(name); QVERIFY(QDir().mkpath(folder)); window.projects_.push_back({name,folder,path,{}}); }
+    window.refreshProjects(); window.tabs_->setCurrentIndex(1); window.executeFlow();
+    window.selectProject(1); window.executeFlow(); QTRY_COMPARE(window.inputPrompts_.size(),size_t(2));
+    const auto selected=window.projects_[1].historyId; const auto request=window.inputSelector_->currentData().toString();
+    window.inputText_->setPlainText("retained draft");
+    window.reorderProject(1,0); QCOMPARE(window.project_,0); QCOMPARE(window.projects_[0].historyId,selected);
+    QCOMPARE(window.inputSelector_->currentData().toString(),request); QCOMPARE(window.inputText_->toPlainText(),QString("retained draft"));
+    window.reorderFlow(0,1); QCOMPARE(window.current_,1); QCOMPARE(window.documents_[1].path,path); QCOMPARE(window.documents_[1].undo,undo);
+    QCOMPARE(window.editGraph_->flow.toJson(),flow.toJson()); QVERIFY(window.coordinator_->running(selected));
+    QVERIFY(window.coordinator_->submitUserInput(request,"second answer",0));
+    QTRY_VERIFY(!window.coordinator_->running(selected)); QVERIFY(window.projects_[0].results.at(2).output=="second answer");
+    const auto remaining=window.inputPrompts_.front().request.id;
+    QVERIFY(window.coordinator_->submitUserInput(remaining,"first answer",0)); QTRY_VERIFY(!window.busy());
+    QVERIFY(window.projects_[1].results.at(2).output=="first answer");
+    window.dataDir_=directory.path();
+    for(const auto &doc:window.documents_) doc.flow.save(doc.path);
+    window.smoke_=false; window.persist(); window.smoke_=true;
+    Window restored(true); restored.documents_.clear(); restored.dataDir_=directory.path(); restored.restore();
+    QCOMPARE(restored.documents_[0].path,otherPath); QCOMPARE(restored.documents_[1].path,path);
+    QCOMPARE(restored.projects_[0].historyId,selected); QCOMPARE(restored.projects_[1].name,QString("First"));
+    } catch(const std::exception &error) { QFAIL(error.what()); }
+}
 void GuiTest::userInputParallelProjects() {
     QTemporaryDir directory; Window window(true); window.show(); auto child = Flow::initial();
     Node input; input.id = 3; input.kind = Kind::UserInput; child.nodes[3] = input; child.edges = {{1,3},{3,2}};

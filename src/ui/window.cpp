@@ -45,6 +45,9 @@
 #include <QGraphicsProxyWidget>
 #include <QClipboard>
 #include <QMimeData>
+#include <QDrag>
+#include <QMouseEvent>
+#include <QDropEvent>
 #include <QtNodes/internal/NodeGraphicsObject.hpp>
 
 // Resource initialization must be declared outside the application namespace.
@@ -327,6 +330,50 @@ void Window::updateInputShortcutHint() {
 bool Window::eventFilter(QObject *object, QEvent *event) {
     if (object == this && event->type() == QEvent::WindowDeactivate) { controlPressed_ = false; updateInputShortcutHint(); }
     auto *widget = qobject_cast<QWidget *>(object);
+    const bool flowTile = widget && widget->property(strings::ReorderFlowPath).isValid();
+    const bool projectViewport = projectList_ && widget == projectList_->viewport();
+    if (flowTile || projectViewport) {
+        const auto mime = flowTile ? strings::FlowOrderMime : strings::ProjectOrderMime;
+        auto identityAt = [&](const QPoint &point) -> QString {
+            if (flowTile) return widget->property(strings::ReorderFlowPath).toString();
+            auto *item = projectList_->itemAt(point);
+            return item ? projects_[size_t(item->data(Qt::UserRole).toInt())].historyId : QString();
+        };
+        if (event->type() == QEvent::MouseButtonPress) {
+            auto *mouse = static_cast<QMouseEvent *>(event);
+            if (mouse->button() == Qt::LeftButton) { reorderPress_ = mouse->position().toPoint(); reorderSource_ = identityAt(reorderPress_); }
+        } else if (event->type() == QEvent::MouseMove) {
+            auto *mouse = static_cast<QMouseEvent *>(event);
+            if (mouse->buttons().testFlag(Qt::LeftButton) && !reorderSource_.isEmpty() &&
+                (mouse->position().toPoint() - reorderPress_).manhattanLength() >= QApplication::startDragDistance()) {
+                auto *data = new QMimeData; data->setData(mime, reorderSource_.toUtf8());
+                reorderSource_.clear();
+                if (auto *button = qobject_cast<QToolButton *>(widget)) button->setDown(false);
+                QDrag drag(this); drag.setMimeData(data); drag.exec(Qt::MoveAction);
+                return true;
+            }
+        } else if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove || event->type() == QEvent::Drop) {
+            auto *drop = static_cast<QDropEvent *>(event);
+            if (drop->source() == this && drop->mimeData()->hasFormat(mime)) {
+                drop->setDropAction(Qt::MoveAction); drop->accept();
+                if (event->type() == QEvent::Drop) {
+                    const auto source = QString::fromUtf8(drop->mimeData()->data(mime));
+                    auto target = identityAt(drop->position().toPoint());
+                    if (target.isEmpty() && projectViewport && projectList_->count())
+                        target = projects_[size_t(projectList_->item(projectList_->count()-1)->data(Qt::UserRole).toInt())].historyId;
+                    int from = -1, to = -1;
+                    if (flowTile) {
+                        for (int i = 0; i < int(documents_.size()); ++i) { if (documents_[size_t(i)].path == source) from = i; if (documents_[size_t(i)].path == target) to = i; }
+                        reorderFlow(from, to);
+                    } else {
+                        for (int i = 0; i < int(projects_.size()); ++i) { if (projects_[size_t(i)].historyId == source) from = i; if (projects_[size_t(i)].historyId == target) to = i; }
+                        reorderProject(from, to);
+                    }
+                }
+                return true;
+            }
+        }
+    }
     if (widget && editorTarget(widget)) {
         if (event->type() == QEvent::FocusIn) ++historyGroup_;
         if (event->type() == QEvent::ShortcutOverride || event->type() == QEvent::KeyPress) {
@@ -525,7 +572,7 @@ void Window::buildUi() {
     tabs_->addTab(editorSplit_, strings::FlowEditorTab);
     auto *workSplit = new QSplitter;
     auto *projectPane = new QWidget; auto *pl = new QVBoxLayout(projectPane); pl->addWidget(new QLabel(strings::ProjectLabel));
-    projectList_ = new QListWidget; pl->addWidget(projectList_, 1);
+    projectList_ = new QListWidget; projectList_->viewport()->setAcceptDrops(true); pl->addWidget(projectList_, 1);
     connect(projectList_, &QListWidget::currentRowChanged, this, [this](int rowIndex) {
         if (rowIndex >= 0 && projectList_->item(rowIndex)) selectProject(projectList_->item(rowIndex)->data(Qt::UserRole).toInt());
     });
@@ -727,6 +774,7 @@ void Window::refreshActivities() {
         const auto &doc = documents_[size_t(i)];
         auto *button = tile(doc.flow.name.left(2), doc.flow.name, [this, i] { selectFlow(i); });
         button->setObjectName(strings::FlowTile); button->setCheckable(true); button->setChecked(i == current_);
+        button->setProperty(strings::ReorderFlowPath, doc.path); button->setAcceptDrops(true);
         button->setToolTip(doc.flow.name + strings::Newline + doc.path);
         button->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(button, &QWidget::customContextMenuRequested, this, [this, button, i](const QPoint &point) {
@@ -746,6 +794,27 @@ void Window::refreshActivities() {
     menu->addAction(strings::AddExistingFlowAction, this, [this] { openFlow(); });
     add->setMenu(menu); add->setPopupMode(QToolButton::InstantPopup);
     activityLayout_->addStretch();
+}
+void Window::reorderFlow(int from, int to) {
+    if (from < 0 || to < 0 || from >= int(documents_.size()) || to >= int(documents_.size()) || from == to) return;
+    const auto selected = documents_[size_t(current_)].path;
+    auto document = std::move(documents_[size_t(from)]);
+    documents_.erase(documents_.begin() + from); documents_.insert(documents_.begin() + to, std::move(document));
+    for (int i = 0; i < int(documents_.size()); ++i) if (documents_[size_t(i)].path == selected) current_ = i;
+    refreshActivities(); persist();
+}
+void Window::reorderProject(int from, int to) {
+    if (from < 0 || to < 0 || from >= int(projects_.size()) || to >= int(projects_.size()) || from == to) return;
+    if (projects_[size_t(from)].flowPath != projects_[size_t(to)].flowPath) return;
+    const auto selected = project_ >= 0 ? projects_[size_t(project_)].historyId : QString();
+    // Only permute slots belonging to this flow; other flow lists remain untouched.
+    std::vector<int> positions;
+    for (int i = 0; i < int(projects_.size()); ++i) if (projects_[size_t(i)].flowPath == projects_[size_t(from)].flowPath) positions.push_back(i);
+    const auto first = std::find(positions.begin(), positions.end(), from), last = std::find(positions.begin(), positions.end(), to);
+    if (first < last) for (auto it = first; it != last; ++it) std::swap(projects_[size_t(*it)], projects_[size_t(*(it+1))]);
+    else for (auto it = first; it != last; --it) std::swap(projects_[size_t(*it)], projects_[size_t(*(it-1))]);
+    for (int i = 0; i < int(projects_.size()); ++i) if (projects_[size_t(i)].historyId == selected) project_ = i;
+    syncCoordinatorRegistry(); refreshProjects(); persist();
 }
 void Window::selectFlow(int index) {
     if (index < 0 || index >= int(documents_.size())) return;
