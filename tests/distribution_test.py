@@ -3,6 +3,7 @@ import importlib.util
 import io
 import json
 import shutil
+import sys
 import tarfile
 import unittest
 import zipfile
@@ -14,6 +15,10 @@ ROOT = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location("distribution", ROOT / "scripts/distribution.py")
 d = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(d)
+mac_spec = importlib.util.spec_from_file_location("distribution_macos", ROOT / "scripts/distribution-macos.py")
+mac = importlib.util.module_from_spec(mac_spec)
+with patch.dict(sys.modules, {"distribution": d}):
+    mac_spec.loader.exec_module(mac)
 
 
 class DistributionTest(unittest.TestCase):
@@ -134,6 +139,34 @@ class DistributionTest(unittest.TestCase):
                            (version, self.ifw_output().replace("zlib/1.2.12", "zlib/1.3.1"))):
             with self.assertRaises(ValueError):
                 d.check_versions(self.manifest, qt, output)
+
+    def test_macos_companion_is_independent_and_binds_both_source_and_notices(self):
+        manifest = d.load_manifest(ROOT / "packaging/macos/sources.json")
+        self.assertEqual(manifest["profile"], "macos-official-qt-6.12.0")
+        self.assertEqual(len(manifest["sources"]), 2)
+        manifest["sources"] = [self.entry(self.archive())]
+        qt = self.root / "qt"
+        (qt / "bin").mkdir(parents=True)
+        (qt / "bin/qmake").write_bytes(b"fixture; never executed")
+        source = self.root / "app.zip"
+        commit = "a" * 40
+        with zipfile.ZipFile(source, "w") as archive:
+            archive.comment = commit.encode()
+            archive.writestr("LICENSE", (ROOT / "LICENSE").read_bytes())
+        with patch.object(mac.subprocess, "check_output", return_value="6.12.0\n"):
+            bundle = mac.prepare(manifest, self.cache, self.root / "legal", self.root / "bundles",
+                                 "0.1.3", "owner/repo", commit, qt, source, "arm64")
+        record = json.loads((self.root / "bundles/macos-arm64-distribution-release.json").read_text())
+        self.assertEqual(record["sourceBundleSha256"], d.digest(bundle))
+        self.assertEqual(record["architecture"], "arm64")
+        self.assertNotIn("IFW-NOTICES.txt", record["noticeHashes"])
+        with zipfile.ZipFile(bundle) as archive:
+            self.assertEqual(archive.read("application-source.zip"), source.read_bytes())
+            self.assertIn(b"macOS-arm64-Sources.zip", archive.read("distribution/SOURCE-OFFER.txt"))
+        with patch.object(mac.subprocess, "check_output", return_value="6.11.0\n"):
+            with self.assertRaisesRegex(ValueError, "profile"):
+                mac.prepare(manifest, self.cache, self.root / "bad", self.root / "badbundles",
+                            "0.1.3", "owner/repo", commit, qt, source, "arm64")
 
     def test_prepare_packages_real_bytes_and_binds_source_to_commit(self):
         self.manifest["sources"] = [self.entry(self.archive())]
