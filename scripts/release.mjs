@@ -49,6 +49,8 @@ export function planRelease(baseline, tags, releases, sha) {
   return { version, tag: `v${version}`, published: false, marker };
 }
 
+export [object Function]
+
 export async function runRelease({ env = process.env, command = process.argv[2], request = fetch,
   cmakeFile = 'CMakeLists.txt' } = {}) {
   const { GITHUB_TOKEN: token, GITHUB_REPOSITORY: repo, GITHUB_SHA: sha } = env;
@@ -142,8 +144,11 @@ export async function runRelease({ env = process.env, command = process.argv[2],
       throw new Error('Distribution notices changed after source preparation');
     }
   }
+  if (env.RELEASE_PLATFORMS && env.RELEASE_PLATFORMS !== 'windows,macos') throw new Error('Unsupported release platform set');
+  const mac = env.RELEASE_PLATFORMS === 'windows,macos'
+    ? macosPayloads(env.MACOS_DIRECTORY, plan.version, sha, repo, env.MACOS_LEGAL_APPROVED) : [];
   const checksumFile = join(directory, 'SHA256SUMS.txt');
-  const payloads = [sources, recordFile, validationFile, installer];
+  const payloads = [sources, recordFile, validationFile, installer, ...mac];
   const sums = payloads.map(file => `${createHash('sha256').update(readFileSync(file)).digest('hex')}  ${basename(file)}\n`);
   writeFileSync(checksumFile, sums.join(''));
   let release = releases.find(release => release.tag_name === plan.tag);
@@ -151,12 +156,15 @@ export async function runRelease({ env = process.env, command = process.argv[2],
     // Create the tag/release only after packaging and all tests have succeeded.
     release = await api('/releases', 'POST', {
       tag_name: plan.tag, target_commitish: sha, name: `AgentNodify ${plan.tag}`, draft: true,
-      prerelease: false, body: `${plan.marker}\n\nWindows x64 installer (${signatureSummary}).\nCommit: ${sha}\n`
+      prerelease: false, body: `${plan.marker}\n\nWindows x64 installer (${signatureSummary}).\n`
+        + (mac.length ? 'macOS arm64 and x86_64 PKG installers (ad-hoc application signature; PKG unsigned, not notarized).\n' : '')
+        + `Commit: ${sha}\n`
         + `Corresponding source materials: ${sourceName} (application + upstream archives + notices/build records).\n`
         + 'SHA-256: see SHA256SUMS.txt.\n\n'
         + `Application Qt: ${record.qtVersion}; installer framework: ${record.ifwVersionOutput.split('\n')[0]}.\n\n`
         + '## Usage and limitations / 利用上の注意\n'
-        + 'AgentNodify is a Windows x64 workflow editor for agent CLIs and script/shell tasks. '
+        + `AgentNodify is a ${mac.length ? 'Windows x64 and macOS arm64/x86_64' : 'Windows x64'} workflow editor for agent CLIs and script/shell tasks. `
+        + (mac.length ? 'Each macOS architecture has a matching macOS Sources.zip companion on this release. Gatekeeper may block unsigned/unnotarized packages; no security bypass is provided.\n' : '')
         + 'External agent CLIs and their authentication are not bundled; service usage may incur charges. '
         + 'Only open and run trusted workflows: scripts and shell tasks execute with your user permissions. '
         + 'Automated smoke/installation tests do not cover every interactive workflow. Back up important projects.\n\n'
