@@ -1,4 +1,6 @@
-# IFWインストーラ
+# インストーラ
+
+macOSのネイティブ`.pkg`とGitHub Actionsは[macOS配布・CIガイド](macos-packaging.md)を参照してください。以下は既存のIFW工程です。Windowsの生成・リリースは変更しません。
 
 ## 方針
 
