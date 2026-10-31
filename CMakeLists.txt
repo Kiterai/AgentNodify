@@ -11,6 +11,9 @@ if(MSVC)
   add_compile_options(/utf-8 /W4 /EHsc)
 endif()
 find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Test)
+# QtNodes uses find_package(QT NAMES Qt6 Qt5); pass the already selected kit
+# explicitly instead of relying on Homebrew/system prefix search paths.
+set(QT_DIR "${Qt6_DIR}")
 include(FetchContent)
 set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(json
