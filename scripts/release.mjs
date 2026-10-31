@@ -49,6 +49,56 @@ export function planRelease(baseline, tags, releases, sha) {
   return { version, tag: `v${version}`, published: false, marker };
 }
 
+export function macosPayloads(directory, version, sha, repo, approved) {
+  if (approved !== 'true') throw new Error('Independent macOS distribution review approval is required');
+  if (!directory) throw new Error('MACOS_DIRECTORY is required');
+  const payloads = [];
+  const digest = file => createHash('sha256').update(readFileSync(file)).digest('hex');
+  for (const arch of ['arm64', 'x86_64']) {
+    const folder = join(directory, arch, 'installer');
+    const legal = join(directory, arch, 'distribution');
+    const installerName = `AgentNodify-${version}-macOS-${arch}-Setup.pkg`;
+    const installer = join(folder, installerName);
+    const validationFile = join(folder, `macos-${arch}-installer-validation.json`);
+    const validation = JSON.parse(readFileSync(validationFile, 'utf8'));
+    if (validation.schema !== 1 || validation.success !== true || validation.installed !== true
+        || validation.sha256 !== digest(installer) || validation.commit !== sha
+        || validation.version !== version || validation.architecture !== arch
+        || validation.installer !== installerName || !Array.isArray(validation.checks)
+        || !['payload', 'receipt', 'cocoa', 'signature', 'uninstall', 'receipt_removed'].every(c => validation.checks.includes(c))) {
+      throw new Error(`macOS ${arch} installer roundtrip evidence is missing, failed or stale`);
+    }
+    const packageFile = join(folder, `macos-${arch}-package-validation.json`);
+    const built = JSON.parse(readFileSync(packageFile, 'utf8'));
+    if (built.schema !== 1 || built.version !== version || built.architecture !== arch
+        || built.installer !== installerName || built.sha256 !== digest(installer)
+        || built.applicationSignature !== 'ad-hoc' || built.installerSigned !== false || built.notarized !== false) {
+      throw new Error(`macOS ${arch} package/signature record does not match`);
+    }
+    const sourceName = `AgentNodify-${version}-macOS-${arch}-Sources.zip`;
+    const source = join(folder, sourceName);
+    const recordFile = join(folder, `macos-${arch}-distribution-release.json`);
+    const record = JSON.parse(readFileSync(recordFile, 'utf8'));
+    if (record.schema !== 1 || record.version !== version || record.commit !== sha
+        || record.repository !== repo || record.architecture !== arch
+        || record.profile !== 'macos-official-qt-6.12.0' || record.qtVersion !== '6.12.0'
+        || record.sourceBundle !== sourceName || record.sourceBundleSha256 !== digest(source)
+        || !record.noticeHashes || !['APPLICATION-LICENSE.txt', 'QT-NOTICES.txt', 'SOURCE-OFFER.txt',
+          'BUILD-INFO.json', 'SOURCE-MANIFEST.json'].every(name => Object.hasOwn(record.noticeHashes, name))) {
+      throw new Error(`macOS ${arch} source companion does not match`);
+    }
+    if (JSON.stringify(readdirSync(legal).sort()) !== JSON.stringify(Object.keys(record.noticeHashes).sort())) {
+      throw new Error(`macOS ${arch} notice file set changed`);
+    }
+    for (const [name, hash] of Object.entries(record.noticeHashes)) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name) || !/^[a-f0-9]{64}$/.test(hash)
+          || digest(join(legal, name)) !== hash) throw new Error(`macOS ${arch} notice changed`);
+    }
+    payloads.push(source, recordFile, validationFile, packageFile, installer);
+  }
+  return payloads;
+}
+
 export async function runRelease({ env = process.env, command = process.argv[2], request = fetch,
   cmakeFile = 'CMakeLists.txt' } = {}) {
   const { GITHUB_TOKEN: token, GITHUB_REPOSITORY: repo, GITHUB_SHA: sha } = env;
@@ -84,7 +134,7 @@ export async function runRelease({ env = process.env, command = process.argv[2],
     console.log(`${plan.tag}: ${plan.published ? 'already published; skipping' : 'ready to package'}`);
     return;
   }
-  if (command !== 'publish') throw new Error('Use prepare or publish');
+  if (!['publish', 'verify'].includes(command)) throw new Error('Use prepare, verify or publish');
   if (plan.published) { console.log('Already published; no assets changed'); return; }
   if (plan.version !== env.RELEASE_VERSION) throw new Error('Version changed since preparation; refusing to publish');
   if (env.LEGAL_APPROVED !== 'true') throw new Error('Explicit distribution review approval is required');
@@ -142,21 +192,32 @@ export async function runRelease({ env = process.env, command = process.argv[2],
       throw new Error('Distribution notices changed after source preparation');
     }
   }
+  if (env.RELEASE_PLATFORMS && env.RELEASE_PLATFORMS !== 'windows,macos') throw new Error('Unsupported release platform set');
+  const mac = env.RELEASE_PLATFORMS === 'windows,macos'
+    ? macosPayloads(env.MACOS_DIRECTORY, plan.version, sha, repo, command === 'verify' ? 'true' : env.MACOS_LEGAL_APPROVED) : [];
   const checksumFile = join(directory, 'SHA256SUMS.txt');
-  const payloads = [sources, recordFile, validationFile, installer];
+  const payloads = [sources, recordFile, validationFile, installer, ...mac];
   const sums = payloads.map(file => `${createHash('sha256').update(readFileSync(file)).digest('hex')}  ${basename(file)}\n`);
   writeFileSync(checksumFile, sums.join(''));
+  if (command === 'verify') {
+    console.log('All platform release inputs verified; no GitHub mutation or publication approval');
+    console.log(`macOS publication approval configured: ${env.MACOS_LEGAL_APPROVED === 'true'}`);
+    return;
+  }
   let release = releases.find(release => release.tag_name === plan.tag);
   if (!release) {
     // Create the tag/release only after packaging and all tests have succeeded.
     release = await api('/releases', 'POST', {
       tag_name: plan.tag, target_commitish: sha, name: `AgentNodify ${plan.tag}`, draft: true,
-      prerelease: false, body: `${plan.marker}\n\nWindows x64 installer (${signatureSummary}).\nCommit: ${sha}\n`
+      prerelease: false, body: `${plan.marker}\n\nWindows x64 installer (${signatureSummary}).\n`
+        + (mac.length ? 'macOS arm64 and x86_64 PKG installers (ad-hoc application signature; PKG unsigned, not notarized).\n' : '')
+        + `Commit: ${sha}\n`
         + `Corresponding source materials: ${sourceName} (application + upstream archives + notices/build records).\n`
         + 'SHA-256: see SHA256SUMS.txt.\n\n'
         + `Application Qt: ${record.qtVersion}; installer framework: ${record.ifwVersionOutput.split('\n')[0]}.\n\n`
         + '## Usage and limitations / 利用上の注意\n'
-        + 'AgentNodify is a Windows x64 workflow editor for agent CLIs and script/shell tasks. '
+        + `AgentNodify is a ${mac.length ? 'Windows x64 and macOS arm64/x86_64' : 'Windows x64'} workflow editor for agent CLIs and script/shell tasks. `
+        + (mac.length ? 'Each macOS architecture has a matching macOS Sources.zip companion on this release. Gatekeeper may block unsigned/unnotarized packages; no security bypass is provided.\n' : '')
         + 'External agent CLIs and their authentication are not bundled; service usage may incur charges. '
         + 'Only open and run trusted workflows: scripts and shell tasks execute with your user permissions. '
         + 'Automated smoke/installation tests do not cover every interactive workflow. Back up important projects.\n\n'

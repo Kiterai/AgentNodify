@@ -249,11 +249,12 @@ private:
         const auto fm = fontMetrics();
         if (fm.horizontalAdvance(line_) <= width()) { setText(line_); return; }
         const QString dots = strings::Ellipsis;
-        const int available = qMax(0, width() - fm.horizontalAdvance(dots));
         qsizetype low = 0, high = line_.size();
         while (low < high) {
             const auto middle = (low + high + 1) / 2;
-            if (fm.horizontalAdvance(line_.left(middle)) <= available) low = middle; else high = middle - 1;
+            // Measure the shaped result together: kerning at the suffix boundary
+            // can differ between platform fonts.
+            if (fm.horizontalAdvance(line_.left(middle) + dots) <= width()) low = middle; else high = middle - 1;
         }
         if (low > 0 && line_[low - 1].isHighSurrogate()) --low;
         setText(line_.left(low) + (width() >= fm.horizontalAdvance(dots) ? dots : QString()));

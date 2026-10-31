@@ -1,4 +1,7 @@
-# IFWインストーラ
+# インストーラ
+
+macOSのネイティブ`.pkg`とGitHub Actionsは[macOS配布・CIガイド](macos-packaging.md)を参照してください。以下は既存のIFW工程です。Windowsの生成・リリースは変更しません。
+`master`の自動公開は[Windows／macOS統合リリース](multiplatform-release.md)へ移行し、同じ版の3インストーラがすべて検証済みになるまで公開しません。以下のWindows単体工程の説明より統合ジョブの構成を優先します。
 
 ## 方針
 

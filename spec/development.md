@@ -103,6 +103,51 @@ ctest --test-dir build -C Release --output-on-failure
 手動手順は現在のシェルのPATHを変更します。必要なら専用のターミナルで実行してください。
 ネットワーク制限下ではCMakeの `FETCHCONTENT_SOURCE_DIR_JSON`、`FETCHCONTENT_SOURCE_DIR_JSON_VALIDATOR`、`FETCHCONTENT_SOURCE_DIR_QTNODES` に、それぞれ指定バージョンの展開済みソースを指定できます。
 
+### macOS
+
+`scripts/build-macos.sh [ビルド先]` はmacOS専用の構成・ビルド・通常CTestの入口です。既定のビルド先は `build-macos`、構成はRelease（`CONFIGURATION=Debug`で変更可能）です。Qtは `Qt6_ROOT` または `CMAKE_PREFIX_PATH` で指定します。C++20対応のAppleClangと、実行するアーキテクチャに合うQtキットが必要です。Python 3とNode.jsもPATHに用意すると、スクリプトノードの両ランタイムを検証できます。
+
+```sh
+cmake -S . -B build-macos -DCMAKE_BUILD_TYPE=Release -DQt6_ROOT="$Qt6_ROOT"
+cmake --build build-macos --parallel
+mkdir -p build-macos/test-tmp
+TMPDIR="$PWD/build-macos/test-tmp" ctest --test-dir build-macos --output-on-failure
+build-macos/AgentNodify.app/Contents/MacOS/AgentNodify --smoke-test
+```
+
+CTestのGUIはoffscreenを使います。最後のコマンドはログイン済みデスクトップのCocoa上で、個人設定・実CLIを使わずウィンドウ表示、ノード追加・接続、作業画面への切替を確認し、自動終了します。画面に接続できないサンドボックスでは実行できません。一時ディレクトリにアクセス制限がある場合は上記のようにビルド先へ `TMPDIR` を設定してください。
+
+OS固有の外部アプリ起動は `src/ui/projectopener.*` に閉じ込めます。macOSは `/usr/bin/open` へ独立した引数でパスを渡し、Finder／TerminalとPATH上のVS Codeを提供します。Windowsの検出・起動処理は引き続きWindows側だけでコンパイルします。フォントと実行ファイルフィルターのOS別値は `src/shared/strings.h` に集約します。QMessageBoxはmacOSでタイトルを無視するため、GUIテストは本文とボタンの動作を検証します。
+
+開発用 `.app` はQtキットを参照します。Qtを同梱してローカル確認する場合は、ビルド成果物と別のインストール先を使います。
+
+```sh
+cmake --install build-macos --prefix "$PWD/build-macos/stage" --component AgentNodify
+"$Qt6_ROOT/bin/macdeployqt" build-macos/stage/AgentNodify.app
+build-macos/stage/AgentNodify.app/Contents/MacOS/AgentNodify --smoke-test
+```
+
+`macdeployqt` はローカル実行用のad-hoc署名を行います。配布用の開発者署名・公証・公開用パッケージ生成は行いません。配布前にはQt等のライセンス・対応ソース提供条件とmacOSの署名・公証を別途確認してください。Windows用IFW工程は変更しません。
+
+Homebrew Qt 6.12.0では、`macdeployqt` が終了コード0でも `libbrotlicommon.1.dylib` のrpath解決と署名のエラーを出す場合がありました。ログにエラーがあれば成功扱いにせず、同梱ファイルを確認してください。今回のローカル確認では、同梱済みBrotliの参照先とIDを以下で修正してad-hoc再署名し、署名検証・Cocoaスモークテストに成功しました（システム／Homebrew側のライブラリは変更しません）。
+
+```sh
+app=build-macos/stage/AgentNodify.app
+install_name_tool -change @rpath/libbrotlicommon.1.dylib @loader_path/libbrotlicommon.1.dylib "$app/Contents/Frameworks/libbrotlidec.1.dylib"
+install_name_tool -id @executable_path/../Frameworks/libbrotlicommon.1.dylib "$app/Contents/Frameworks/libbrotlicommon.1.dylib"
+codesign --force --deep --sign - "$app"
+codesign --verify --deep "$app"
+"$app/Contents/MacOS/AgentNodify" --smoke-test
+```
+
+#### 2026-10-31 macOS動作確認
+
+- macOS 15.5 / Apple Silicon arm64 / AppleClang 17 / Qt 6.12.0のReleaseビルドを確認。
+- 通常CTest全17件（Python／Node.jsを含む）、Cocoaでの実アプリのスモークテストを実施。Windows専用のインストーラー検査は対象外。
+- コマンド省略表示は接尾辞込みの文字列を計測し、プラットフォームフォントのカーニングによる幅超過を防ぐ。
+- Menloの小数ピクセルの行高を切り上げてプレビューを確保し、8行以内で不要なスクロールが発生しないことを確認。
+- 実AIサービスの認証・モデル一覧取得・推論は実施しない。Windows／Intel Macでの実行はこの環境では未検証。
+
 ## GitHub Actions（Windows）
 
 `.github/workflows/windows-build.yml` は`master`・`develop`ブランチへのpush（PRマージを含む）で、GitHubホストの`windows-2022`上にMSVC 2022 x64／Qt 6.12.0を用意します。PR作成・他ブランチへのpush・手動実行では起動しません。既存の`scripts/build.ps1`でReleaseビルド・通常のCTest・Qt DLL配置を実行します。Python・Node.jsはランナー付属のものを使用し、不在なら失敗させます。Qtは固定版のaqtinstallで取得し、個人のQtパスや認証情報は使いません。
