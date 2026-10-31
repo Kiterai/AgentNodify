@@ -2,7 +2,7 @@ name: macOS build and installer
 
 on:
   push:
-    branches: [master, develop, ci/macos-installer]
+    branches: [develop, ci/macos-installer]
   pull_request:
     branches: [master, develop]
   workflow_dispatch:

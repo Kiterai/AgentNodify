@@ -43,7 +43,7 @@ python3 scripts/test-macos-installer.py \
 
 ## GitHub Actions
 
-`.github/workflows/macos-build.yml`は`master`／`develop`へのpush、両ブランチ向けPR、手動実行で動く。導入検証用の`ci/macos-installer`へのpushでも動く。Windows workflowを変更せず、Release・タグ・採番・公開承認変数は操作しない。
+`.github/workflows/macos-build.yml`は`develop`へのpush、`master`／`develop`向けPR、手動実行で動く。導入検証用の`ci/macos-installer`へのpushでも動く。単体CIはRelease・タグ・採番・公開承認変数を操作しない。`master`へのpushは重複ビルドせず、統合リリースの版付きmacOSジョブに任せる。
 
 - `macos-15`でarm64、`macos-15-intel`でx86_64をネイティブビルドする。実CPUも検査する。
 - Qt 6.12.0の公式macOSキットを、Windows CIと同じ固定コミットのaqtinstallで取得する。ダウンロードのハッシュ検証を無効化しない。

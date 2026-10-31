@@ -11,7 +11,7 @@
 5. 全インストーラ、検証JSON、対応ソースZIP、配布資料の版・コミット・CPU・SHA-256を確認する。1系統でも欠落・失敗・変更があれば公開しない。
 6. 1つの下書きReleaseへ全アセットをアップロードし、GitHubが報告する名前・サイズ・SHA-256の一致を確認してから公開する。公開済みReleaseは変更せず、途中失敗は同じコミット・版の下書きで再開する。
 
-`develop`は従来のWindows通常ビルドのみ。`ci/multiplatform-release`は全パッケージと最終集約まで検証するが、`release.mjs verify`で終了し、GitHubへの変更・公開は行わない。単体macOSワークフローは引き続きPR等の早期検証に使う。
+統合ワークフロー内では`develop`は従来のWindows通常ビルドのみ。`ci/multiplatform-release`は全パッケージと最終集約まで検証するが、`release.mjs verify`で終了し、GitHubへの変更・公開は行わない。単体macOSワークフローは引き続き`develop`／PR等の早期検証に使い、`master`の重複ビルドは行わない。
 
 ## 公開承認
 
