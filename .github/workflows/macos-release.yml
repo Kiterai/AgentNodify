@@ -1,0 +1,93 @@
+name: Package macOS release
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: macOS ${{ matrix.arch }} release materials
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      QT_VERSION: '6.12.0'
+      RELEASE_VERSION: ${{ inputs.version }}
+      EXPECTED_ARCH: ${{ matrix.arch }}
+      CMAKE_BUILD_PARALLEL_LEVEL: '3'
+      AQTINSTALL_SOURCE: 'aqtinstall @ git+https://github.com/miurahr/aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7'
+    steps:
+      - name: Check out exact release source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Check runtimes and install official pinned Qt
+        run: |
+          set -eu
+          test "$(uname -m)" = "$EXPECTED_ARCH"
+          node --version
+          python3 -m pip install "$AQTINSTALL_SOURCE"
+          python3 -m aqt install-qt mac desktop "$QT_VERSION" clang_64 --outputdir "$RUNNER_TEMP/Qt"
+          qt="$RUNNER_TEMP/Qt/$QT_VERSION/macos"
+          test -f "$qt/lib/cmake/Qt6/Qt6Config.cmake"
+          echo "Qt6_ROOT=$qt" >> "$GITHUB_ENV"
+      - name: Prepare macOS-specific notices and matching source companion
+        run: |
+          set -eu
+          mkdir -p build-macos-release
+          git archive --format=zip --output=build-macos-release/application-source.zip "$GITHUB_SHA"
+          python3 scripts/distribution-macos.py --download --cache build-source-cache \
+            --output build-macos-release/distribution --bundle-directory build-macos-release/installer \
+            --version "$RELEASE_VERSION" --repository "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" \
+            --qt-path "$Qt6_ROOT" --application-source build-macos-release/application-source.zip \
+            --architecture "$EXPECTED_ARCH"
+      - name: Build, test and package the versioned application with notices
+        run: |
+          python3 scripts/package-macos.py --build-directory build-macos-release \
+            --version "$RELEASE_VERSION" --legal-directory build-macos-release/distribution
+      - name: Install, Cocoa smoke-test, verify signatures and remove
+        run: |
+          set -eu
+          python3 scripts/test-macos-installer.py \
+            --installer "build-macos-release/installer/AgentNodify-$RELEASE_VERSION-macOS-$EXPECTED_ARCH-Setup.pkg" \
+            --report "build-macos-release/installer/macos-$EXPECTED_ARCH-installer-validation.json" --install
+          mv build-macos-release/installer/package-validation.json "build-macos-release/installer/macos-$EXPECTED_ARCH-package-validation.json"
+      - name: Save validated macOS release materials (publication is separate)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-${{ matrix.arch }}-release-materials
+          path: |
+            build-macos-release/installer/
+            build-macos-release/distribution/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Save diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-${{ matrix.arch }}-release-diagnostics
+          path: |
+            build-macos-release/Testing/Temporary/*.log
+            build-macos-release/CMakeFiles/CMakeConfigureLog.yaml
+            build-macos-release/*.png
+            build-macos-release/macos-package-*/macdeployqt.log
+            build-macos-release/installer/*validation.json
+          if-no-files-found: warn
+          retention-days: 7

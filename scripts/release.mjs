@@ -86,7 +86,7 @@ export async function runRelease({ env = process.env, command = process.argv[2],
     console.log(`${plan.tag}: ${plan.published ? 'already published; skipping' : 'ready to package'}`);
     return;
   }
-  if (command !== 'publish') throw new Error('Use prepare or publish');
+  if (!['publish', 'verify'].includes(command)) throw new Error('Use prepare, verify or publish');
   if (plan.published) { console.log('Already published; no assets changed'); return; }
   if (plan.version !== env.RELEASE_VERSION) throw new Error('Version changed since preparation; refusing to publish');
   if (env.LEGAL_APPROVED !== 'true') throw new Error('Explicit distribution review approval is required');
@@ -146,11 +146,16 @@ export async function runRelease({ env = process.env, command = process.argv[2],
   }
   if (env.RELEASE_PLATFORMS && env.RELEASE_PLATFORMS !== 'windows,macos') throw new Error('Unsupported release platform set');
   const mac = env.RELEASE_PLATFORMS === 'windows,macos'
-    ? macosPayloads(env.MACOS_DIRECTORY, plan.version, sha, repo, env.MACOS_LEGAL_APPROVED) : [];
+    ? macosPayloads(env.MACOS_DIRECTORY, plan.version, sha, repo, command === 'verify' ? 'true' : env.MACOS_LEGAL_APPROVED) : [];
   const checksumFile = join(directory, 'SHA256SUMS.txt');
   const payloads = [sources, recordFile, validationFile, installer, ...mac];
   const sums = payloads.map(file => `${createHash('sha256').update(readFileSync(file)).digest('hex')}  ${basename(file)}\n`);
   writeFileSync(checksumFile, sums.join(''));
+  if (command === 'verify') {
+    console.log('All platform release inputs verified; no GitHub mutation or publication approval');
+    console.log(`macOS publication approval configured: ${env.MACOS_LEGAL_APPROVED === 'true'}`);
+    return;
+  }
   let release = releases.find(release => release.tag_name === plan.tag);
   if (!release) {
     // Create the tag/release only after packaging and all tests have succeeded.
