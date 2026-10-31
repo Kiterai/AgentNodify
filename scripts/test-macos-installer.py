@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import platform
 import plistlib
 import subprocess
 import tempfile
@@ -68,6 +69,8 @@ def roundtrip(installer, version):
         run("sudo", "-n", "/usr/sbin/pkgutil", "--forget", identifier)
     if app.exists():
         raise ValueError("Application cleanup failed")
+    if subprocess.run(["/usr/sbin/pkgutil", "--pkg-info", identifier], capture_output=True).returncode == 0:
+        raise ValueError("Package receipt cleanup failed")
 
 
 if __name__ == "__main__":
@@ -78,13 +81,16 @@ if __name__ == "__main__":
     args = parser.parse_args()
     installer = args.installer.resolve(strict=True)
     report = {"schema": 1, "installer": installer.name, "sha256": hashlib.sha256(installer.read_bytes()).hexdigest(),
-              "success": False, "installed": False, "notarized": False}
+              "success": False, "installed": False, "notarized": False,
+              "commit": os.environ.get("GITHUB_SHA"), "architecture": platform.machine(), "checks": []}
     try:
         with tempfile.TemporaryDirectory(prefix="agentnodify-pkg-") as temporary:
             report["version"] = inspect(installer, Path(temporary))
+            report["checks"].append("payload")
         if args.install:
             roundtrip(installer, report["version"])
             report["installed"] = True
+            report["checks"].extend(["receipt", "cocoa", "signature", "uninstall", "receipt_removed"])
         report["success"] = True
     finally:
         args.report.parent.mkdir(parents=True, exist_ok=True)

@@ -79,7 +79,7 @@ def repair_and_verify_dependencies(app):
                 raise ValueError(f"External dependency in package: {binary}: {dep}")
 
 
-def package(build, qt, version, reuse_build=False):
+def package(build, qt, version, reuse_build=False, legal_directory=None):
     if platform.system() != "Darwin":
         raise ValueError("macOS is required")
     if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version):
@@ -89,9 +89,13 @@ def package(build, qt, version, reuse_build=False):
     if not deploy.is_file():
         raise ValueError("Qt kit must include bin/macdeployqt")
     build.mkdir(parents=True, exist_ok=True)
+    legal_args = []
+    if legal_directory:
+        legal_directory = Path(legal_directory).resolve(strict=True)
+        legal_args = [f"-DAGENTNODIFY_LEGAL_DIRECTORY={legal_directory}"]
     if not reuse_build:
         run("cmake", "-S", ROOT, "-B", build, "-G", "Unix Makefiles",
-            "-DCMAKE_BUILD_TYPE=Release", f"-DQt6_ROOT={qt}", f"-DAGENTNODIFY_VERSION={version}")
+            "-DCMAKE_BUILD_TYPE=Release", f"-DQt6_ROOT={qt}", f"-DAGENTNODIFY_VERSION={version}", *legal_args)
         run("cmake", "--build", build, "--parallel")
     cache = (build / "CMakeCache.txt").read_text()
     if f"AGENTNODIFY_VERSION:STRING={version}\n" not in cache or "CMAKE_BUILD_TYPE:STRING=Release\n" not in cache:
@@ -113,6 +117,8 @@ def package(build, qt, version, reuse_build=False):
     resources.mkdir(exist_ok=True)
     shutil.copy2(ROOT / "LICENSE", resources / "LICENSE")
     shutil.copytree(ROOT / "licenses", resources / "licenses")
+    if legal_directory:
+        shutil.copytree(legal_directory, resources / "licenses/distribution")
     shutil.copy2(ROOT / "packaging/THIRD-PARTY-NOTICES.txt", resources / "licenses/THIRD-PARTY-NOTICES.txt")
     shutil.copytree(ROOT / "examples", resources / "examples", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     shutil.copy2(ROOT / "packaging/macos/INSTALL-NOTES.txt", resources / "INSTALL-NOTES.txt")
@@ -156,8 +162,9 @@ if __name__ == "__main__":
     parser.add_argument("--build-directory", type=Path, default=ROOT / "build-macos-package")
     parser.add_argument("--qt-path", type=Path, default=os.environ.get("Qt6_ROOT"))
     parser.add_argument("--version", default="0.1.0")
+    parser.add_argument("--legal-directory", type=Path)
     parser.add_argument("--reuse-build", action="store_true", help="Require an existing matching Release build; still run CTest")
     args = parser.parse_args()
     if args.qt_path is None:
         parser.error("Specify --qt-path or Qt6_ROOT")
-    package(args.build_directory, args.qt_path, args.version, args.reuse_build)
+    package(args.build_directory, args.qt_path, args.version, args.reuse_build, args.legal_directory)
