@@ -55,3 +55,10 @@ python3 scripts/test-macos-installer.py \
 現在の成果物は**検証用**。アプリの署名はad-hoc、PKGはDeveloper ID Installer署名なし、公証なし。Gatekeeper回避や隔離属性の自動解除は行わない。公開リリースへのアップロードも行わない。
 
 実際に使うmacOS Qtとその第三者依存のライセンス表示、対応ソース・パッチ・ビルド情報、Developer ID Application／Installer署名と公証、クリーン環境と更新時の確認を別途完了させる。Windows用`packaging/sources.json`やWindows公開承認を流用してmacOS配布の準備完了とは扱わない。Homebrew版と公式Qt版の依存集合も混同しない。
+
+## 検証記録（2026-11-01 JST）
+
+- ローカルmacOS 15.5／arm64／Homebrew Qt 6.12.0で通常CTest全18件成功、PKG生成・展開後の内容／署名検査が成功。ホストへの実インストールは行っていない。
+- GitHub Actions [実行41214665093](https://github.com/Kiterai/AgentNodify/actions/runs/41214665093)で、`bf371db512c5e49343581b9559d54e98651b3b45`のコードを検証。以後の検証記録・資料のみのコミットではCIを再実行していない。
+- `macos-15` arm64と`macos-15-intel` x86_64の両方で、公式Qt 6.12.0によるReleaseビルド、通常CTest全18件、PKG生成、実導入、Cocoaスモーク起動、署名再検証、アプリ／receiptの削除に成功。両CPUのインストーラと診断資料のアップロードも確認。
+- 変更は`ci/macos-installer`ブランチで検証。master／developへのマージ、タグ・公開Releaseの作成、公開承認設定の変更は行っていない。Windowsでの今回の再実行と、公開用署名・公証・Gatekeeperの配布経路検証は対象外。
