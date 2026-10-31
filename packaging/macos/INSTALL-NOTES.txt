@@ -1,4 +1,4 @@
-AgentNodify for macOS — local validation package
+AgentNodify for macOS — installation notes
 
 Open the .pkg in Installer and follow its prompts. The package installs only
 /Applications/AgentNodify.app. Administrator authorization may be required.
@@ -15,7 +15,7 @@ The application has only an ad-hoc signature. The PKG has no Developer ID
 Installer signature and is not notarized. Gatekeeper may block it. Do not
 disable system security checks or remove quarantine automatically.
 
-This build is for validation, not an approved public release. Before publishing,
+Package generation is not public-distribution approval. Before publishing,
 review the actual Qt distribution and all bundled third-party libraries, their
 licenses, corresponding sources, build information, Developer ID signing and
 notarization. The Windows source profile does not cover macOS/Homebrew binaries.

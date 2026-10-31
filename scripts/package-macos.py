@@ -153,7 +153,7 @@ def package(build, qt, version, reuse_build=False, legal_directory=None):
               "sha256": checksum, "applicationSignature": "ad-hoc", "installerSigned": False,
               "notarized": False, "publicationApproved": False, "stage": str(stage)}
     (output / "package-validation.json").write_text(json.dumps(report, indent=2) + "\n")
-    print(f"Ready (local validation only): {installer}")
+    print(f"Ready (publication requires separate review): {installer}")
     return installer
 
 

@@ -1,5 +1,7 @@
 # macOSのインストーラとGitHub Actions
 
+`master`からの自動公開・採番・対応ソース・公開承認は[統合リリース](multiplatform-release.md)を参照してください。以下の単体ビルド／検証CIとは分離しています。
+
 ## 独立した配布工程
 
 Windowsは従来のCPack／IFW、macOSはApple標準の`pkgbuild`を使う。macOS用ツール依存は`scripts/package-macos.py`と`scripts/test-macos-installer.py`へ分離し、通常ビルドやWindows用スクリプトには追加しない。

@@ -37,6 +37,7 @@ Releaseビルドと自動テストを行います。HomebrewのQtを使う場合
 手動ビルドや環境設定・Qt同梱の詳細は[開発ガイド](spec/development.md)を参照してください。
 IFWインストーラは`scripts/package.ps1`で生成できます。前提ツール・ライセンス準備・手順は[配布ガイド](spec/packaging.md)を参照してください。
 macOSの`.pkg`は`scripts/package-macos.py`で生成できます。[macOS配布・CIガイド](spec/macos-packaging.md)を参照してください。
+`master`の自動公開手順は[Windows／macOS統合リリース](spec/multiplatform-release.md)を参照してください。
 
 ## ソース構成
 
