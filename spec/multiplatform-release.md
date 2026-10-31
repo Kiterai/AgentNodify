@@ -43,3 +43,10 @@ Windowsの既存4アセットにmacOS各CPUの5アセットを加え、全14フ�
 現在のmacOSアプリはad-hoc署名、PKGはDeveloper ID Installer署名なし、公証なし。この状態をRelease本文に明示する。Gatekeeperの無効化・隔離属性削除は自動実行しない。Developer ID署名・公証の完了を偽らない。Windowsの署名必須ポリシー・自己署名公開拒否は維持する。
 
 通常CTestは偽のAPI・アーカイブを使い、外部AIサービスへ接続せず、GitHubへ公開しない。統合ワークフローのインストール検証は使い捨てランナーのみ。公開前にはクリーン環境と実配布経路での確認も別途行う。
+
+## 統合検証記録（2026-11-01 JST）
+
+- [実行41217199738](https://github.com/Kiterai/AgentNodify/actions/runs/41217199738)で`451eee3cc3ed7502efdcb81ac064a4b08b5a4381`を検証。候補版は`0.1.3`。
+- Windows通常ビルド、版付きWindows IFWインストーラ、macOS arm64／x86_64の資料付きPKG、3系統の実導入・起動・削除、対応ソース・検証記録の最終集約が成功した。初回のWindowsソース取得は接続タイムアウトで失敗し、ハッシュ検証を維持した同一コミットの失敗ジョブ再実行で成功した。
+- 最終`verify`は全入力の整合性確認に成功したが、`MACOS_RELEASE_LEGAL_APPROVED`は未設定（false）だった。承認を自動設定せず、[PR #7](https://github.com/Kiterai/AgentNodify/pull/7)のマージ・実公開は所有者のレビュー・承認待ち。既存の公開済み`v0.1.2`は変更していない。
+- ローカルでは通常CTest全18件、公開プロトコルのNodeテスト24件、配布資料のPythonテスト11件が成功。追補の回帰テスト・資料・表示文言はCI再実行を省略したコミットへまとめているため、マージ後の本番ワークフローでも最終コミットを再ビルド・再検証する。
