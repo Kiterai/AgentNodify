@@ -74,6 +74,7 @@ endif()
 if(APPLE)
   set_target_properties(AgentNodify PROPERTIES
     MACOSX_BUNDLE TRUE
+    MACOSX_BUNDLE_BUNDLE_NAME "AgentNodify"
     MACOSX_BUNDLE_GUI_IDENTIFIER "org.agentnodify.AgentNodify"
     MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}")
@@ -95,6 +96,9 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME distribution_materials COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/distribution_test.py")
   set_tests_properties(distribution_materials PROPERTIES TIMEOUT 60)
+  add_test(NAME macos_packaging_guards COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/macos_packaging_test.py")
+  set_tests_properties(macos_packaging_guards PROPERTIES TIMEOUT 30)
 endif()
 find_program(AGENTNODIFY_NODE_EXECUTABLE NAMES node)
 if(AGENTNODIFY_NODE_EXECUTABLE)

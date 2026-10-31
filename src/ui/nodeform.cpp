@@ -9,6 +9,7 @@
 #include <QAbstractSpinBox>
 #include <QComboBox>
 #include <QFormLayout>
+#include <QFontMetricsF>
 #include <QEvent>
 #include <QKeyEvent>
 #include <QLabel>
@@ -64,7 +65,11 @@ void TextPreview::resizeToText() {
     // QPlainTextEdit needs a small bottom allowance in addition to its document
     // margins; an exact line-height fit otherwise enables a spurious scrollbar.
     const int chrome = height() - viewport()->height();
-    const int height = lines_ * qMax(fontMetrics().height(), fontMetrics().lineSpacing()) + int(std::ceil(document()->documentMargin() * 2)) + qMax(2 * frameWidth(), chrome) + metrics::PreviewBottomPadding;
+    // Round up fractional font metrics before multiplying; integer rounding can
+    // otherwise clip the final line (for example with Menlo on macOS).
+    const QFontMetricsF fm(font());
+    const int lineHeight = int(std::ceil(qMax(fm.height(), fm.lineSpacing())));
+    const int height = lines_ * lineHeight + int(std::ceil(document()->documentMargin() * 2)) + qMax(2 * frameWidth(), chrome) + metrics::PreviewBottomPadding;
     if (minimumHeight() != height || maximumHeight() != height) { setFixedHeight(height); emit heightChanged(); }
 }
 
