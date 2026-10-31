@@ -7,6 +7,8 @@
 #include <QStandardPaths>
 #include <QDir>
 #include <QMessageBox>
+#include <QTemporaryDir>
+#include <optional>
 
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
@@ -14,8 +16,11 @@ int main(int argc, char **argv) {
     app.setOrganizationName(an::strings::ApplicationName); app.setApplicationName(an::strings::ApplicationName);
     const bool smoke = app.arguments().contains(an::strings::SmokeArgument);
     if (smoke) QStandardPaths::setTestModeEnabled(true);
-    // Keep the isolated smoke-test lock inside the build tree, not real user data.
-    const auto dataDirectory = smoke ? QCoreApplication::applicationDirPath() + an::strings::SmokeInstanceDirectory
+    // Installed/signed bundles may be read-only. Smoke tests never write into
+    // the application or real user data (TMPDIR can select the build tree).
+    std::optional<QTemporaryDir> smokeData;
+    if (smoke) smokeData.emplace();
+    const auto dataDirectory = smoke ? smokeData->path()
                                      : QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
     if (!QDir().mkpath(dataDirectory)) {
         QMessageBox::warning(nullptr, an::strings::ApplicationName, an::strings::CreateInstanceDirectoryFailed);

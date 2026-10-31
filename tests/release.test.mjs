@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { nextVersion, parseVersion, planRelease, runRelease } from '../scripts/release.mjs';
+import { nextVersion, parseVersion, planRelease, runRelease, macosPayloads } from '../scripts/release.mjs';
 
 const sha = 'a'.repeat(40);
 const marker = `<!-- agentnodify-commit:${sha} -->`;
@@ -81,6 +81,93 @@ function fixture(t) {
 function runFixture(env, command, request) {
   return runRelease({ env, command, request, cmakeFile: join(env.INSTALLER_DIRECTORY, 'CMakeLists.txt') });
 }
+
+function macFixture(t) {
+  const env = fixture(t);
+  env.RELEASE_PLATFORMS = 'windows,macos';
+  env.MACOS_LEGAL_APPROVED = 'true';
+  env.MACOS_DIRECTORY = join(env.INSTALLER_DIRECTORY, 'macos');
+  const digest = value => createHash('sha256').update(value).digest('hex');
+  for (const architecture of ['arm64', 'x86_64']) {
+    const dir = join(env.MACOS_DIRECTORY, architecture, 'installer');
+    const legal = join(env.MACOS_DIRECTORY, architecture, 'distribution');
+    mkdirSync(dir, { recursive: true }); mkdirSync(legal);
+    const installer = `AgentNodify-0.1.1-macOS-${architecture}-Setup.pkg`;
+    writeFileSync(join(dir, installer), 'mac fixture');
+    writeFileSync(join(dir, `macos-${architecture}-installer-validation.json`), JSON.stringify({
+      schema: 1, success: true, installed: true, architecture, version: '0.1.1', commit: sha,
+      installer, sha256: digest('mac fixture'), checks: ['payload', 'receipt', 'cocoa', 'signature', 'uninstall', 'receipt_removed'],
+    }));
+    writeFileSync(join(dir, `macos-${architecture}-package-validation.json`), JSON.stringify({
+      schema: 1, architecture, version: '0.1.1', installer, sha256: digest('mac fixture'),
+      applicationSignature: 'ad-hoc', installerSigned: false, notarized: false,
+    }));
+    const sourceBundle = `AgentNodify-0.1.1-macOS-${architecture}-Sources.zip`;
+    writeFileSync(join(dir, sourceBundle), 'mac source fixture');
+    const noticeHashes = {};
+    for (const name of ['APPLICATION-LICENSE.txt', 'QT-NOTICES.txt', 'SOURCE-OFFER.txt', 'BUILD-INFO.json', 'SOURCE-MANIFEST.json']) {
+      writeFileSync(join(legal, name), 'mac notice fixture'); noticeHashes[name] = digest('mac notice fixture');
+    }
+    writeFileSync(join(dir, `macos-${architecture}-distribution-release.json`), JSON.stringify({
+      schema: 1, architecture, version: '0.1.1', commit: sha, repository: 'owner/repo',
+      profile: 'macos-official-qt-6.12.0', qtVersion: '6.12.0', sourceBundle,
+      sourceBundleSha256: digest('mac source fixture'), noticeHashes,
+    }));
+  }
+  return env;
+}
+
+test('multiplatform release requires independent macOS approval and both validated architectures', async t => {
+  const env = macFixture(t);
+  const request = async (url, options) => { assert.equal(options.method, 'GET'); return Response.json([]); };
+  await assert.rejects(runFixture({ ...env, MACOS_LEGAL_APPROVED: undefined }, 'publish', request), /macOS distribution review/);
+  assert.equal(macosPayloads(env.MACOS_DIRECTORY, '0.1.1', sha, 'owner/repo', 'true').length, 10);
+  const report = join(env.MACOS_DIRECTORY, 'x86_64/installer/macos-x86_64-installer-validation.json');
+  const original = JSON.parse(readFileSync(report, 'utf8'));
+  for (const change of [{ commit: 'b'.repeat(40) }, { installed: false }, { sha256: '0'.repeat(64) }, { checks: [] }]) {
+    writeFileSync(report, JSON.stringify({ ...original, ...change }));
+    await assert.rejects(runFixture(env, 'publish', request), /roundtrip evidence/);
+  }
+});
+
+test('macOS source changes and missing CPU block publication before API writes', async t => {
+  const env = macFixture(t);
+  const request = async (url, options) => { assert.equal(options.method, 'GET'); return Response.json([]); };
+  const notice = join(env.MACOS_DIRECTORY, 'arm64/distribution/SOURCE-OFFER.txt');
+  writeFileSync(notice, 'changed');
+  await assert.rejects(runFixture(env, 'publish', request), /notice changed/);
+  writeFileSync(notice, 'mac notice fixture');
+  rmSync(join(env.MACOS_DIRECTORY, 'x86_64/installer/AgentNodify-0.1.1-macOS-x86_64-Setup.pkg'));
+  await assert.rejects(runFixture(env, 'publish', request), /ENOENT/);
+});
+
+test('combined verification performs no GitHub writes and is not publication approval', async t => {
+  const env = macFixture(t); delete env.MACOS_LEGAL_APPROVED;
+  const request = async (url, options) => { assert.equal(options.method, 'GET'); return Response.json([]); };
+  await runFixture(env, 'verify', request);
+  assert.match(readFileSync(join(env.INSTALLER_DIRECTORY, 'SHA256SUMS.txt'), 'utf8'), /macOS-arm64-Setup.pkg/);
+  await assert.rejects(runFixture(env, 'publish', request), /macOS distribution review/);
+});
+
+test('all platform payloads are uploaded before the one draft becomes public', async t => {
+  const env = macFixture(t); const uploads = []; let published = false;
+  const request = async (url, options) => {
+    if (options.method === 'GET') return Response.json([]);
+    if (new URL(url).host === 'uploads.github.com') {
+      const name = new URL(url).searchParams.get('name'); uploads.push(name);
+      return Response.json({ name, size: options.body.length, digest: `sha256:${createHash('sha256').update(options.body).digest('hex')}` });
+    }
+    if (options.method === 'POST') {
+      const body = JSON.parse(options.body); assert.match(body.body, /macOS arm64 and x86_64/);
+      return Response.json({ ...body, id: 1, upload_url: 'https://uploads.github.com/repos/owner/repo/releases/1/assets{?name}' });
+    }
+    if (options.method === 'PATCH') { assert.equal(uploads.length, 15); published = true; }
+    return Response.json({});
+  };
+  await runFixture(env, 'publish', request); assert.equal(published, true);
+  for (const arch of ['arm64', 'x86_64']) assert(uploads.includes(`AgentNodify-0.1.1-macOS-${arch}-Setup.pkg`));
+  assert.equal(new Set(uploads).size, 15);
+});
 
 test('prepare only reads API state and emits validated outputs', async t => {
   const env = fixture(t);

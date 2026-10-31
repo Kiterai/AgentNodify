@@ -1,0 +1,102 @@
+name: macOS build and installer
+
+on:
+  push:
+    branches: [develop, ci/macos-installer]
+  pull_request:
+    branches: [master, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: macOS ${{ matrix.arch }} Release and PKG
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      QT_VERSION: '6.12.0'
+      CMAKE_BUILD_PARALLEL_LEVEL: '3'
+      AQTINSTALL_SOURCE: 'aqtinstall @ git+https://github.com/miurahr/aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7'
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+
+      - name: Check architecture and runtimes
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          set -eu
+          test "$(uname -m)" = "$EXPECTED_ARCH"
+          cmake --version
+          python3 --version
+          node --version
+          xcodebuild -version
+
+      - name: Install pinned Qt kit
+        run: |
+          set -eu
+          python3 -m pip install "$AQTINSTALL_SOURCE"
+          python3 -m aqt install-qt mac desktop "$QT_VERSION" clang_64 --outputdir "$RUNNER_TEMP/Qt"
+          qt="$RUNNER_TEMP/Qt/$QT_VERSION/macos"
+          test -f "$qt/lib/cmake/Qt6/Qt6Config.cmake"
+          echo "Qt6_ROOT=$qt" >> "$GITHUB_ENV"
+
+      - name: Build, test, deploy and generate local-validation PKG
+        run: |
+          set -eu
+          python3 scripts/package-macos.py --build-directory build-macos-ci --version 0.1.0
+
+      - name: Inspect and install, smoke-test, uninstall PKG
+        run: |
+          set -eu
+          python3 scripts/test-macos-installer.py \
+            --installer "build-macos-ci/installer/AgentNodify-0.1.0-macOS-$(uname -m)-Setup.pkg" \
+            --report build-macos-ci/installer/installer-validation.json --install
+
+      - name: Archive matching application source and validation notes
+        run: |
+          git archive --format=zip --output=build-macos-ci/installer/application-source.zip HEAD
+          cp packaging/macos/INSTALL-NOTES.txt build-macos-ci/installer/INSTALL-NOTES.txt
+
+      - name: Save local-validation installer (not a public release)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-${{ matrix.arch }}-installer-validation
+          path: build-macos-ci/installer/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Save diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-${{ matrix.arch }}-diagnostics
+          path: |
+            build-macos-ci/Testing/Temporary/*.log
+            build-macos-ci/CMakeFiles/CMakeConfigureLog.yaml
+            build-macos-ci/*.png
+            build-macos-ci/macos-package-*/macdeployqt.log
+            build-macos-ci/installer/*validation.json
+          if-no-files-found: warn
+          retention-days: 7
