@@ -1,10 +1,11 @@
-name: Windows build
+name: Build and release
 
 on:
   push:
     branches:
       - master
       - develop
+      - ci/multiplatform-release
 
 permissions:
   contents: read
@@ -81,13 +82,16 @@ jobs:
           retention-days: 7
 
   release:
-    name: Version and publish Windows installer
+    name: Version and package Windows installer
     needs: build
-    if: ${{ github.ref == 'refs/heads/master' }}
+    if: ${{ github.ref == 'refs/heads/master' || github.ref == 'refs/heads/ci/multiplatform-release' }}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      published: ${{ steps.version.outputs.published }}
     runs-on: windows-2022
     timeout-minutes: 45
     permissions:
-      contents: write
+      contents: read
     defaults:
       run:
         shell: pwsh
@@ -180,15 +184,16 @@ jobs:
           ./scripts/test-installer.ps1 -Installer $installers[0].FullName -WorkDirectory build-release/roundtrip -EnvironmentKind CIRunner
           Copy-Item -LiteralPath build-release/roundtrip/result.json -Destination build-release/installer/installer-validation.json
 
-      - name: Publish installer and SHA-256 checksum
+      - name: Save validated Windows release materials
         if: ${{ steps.version.outputs.published != 'true' }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ steps.version.outputs.version }}
-          INSTALLER_DIRECTORY: build-release/installer
-          LEGAL_DIRECTORY: build-release/distribution
-          LEGAL_APPROVED: ${{ vars.RELEASE_LEGAL_APPROVED }}
-        run: node scripts/release.mjs publish
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-release-materials
+          path: |
+            build-release/installer/
+            build-release/distribution/
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Save installer build diagnostics
         if: ${{ always() }}
@@ -205,3 +210,52 @@ jobs:
             build-release/roundtrip/result.json
           if-no-files-found: ignore
           retention-days: 7
+
+  macos_release:
+    name: Package macOS installers
+    needs: release
+    if: ${{ needs.release.outputs.published != 'true' }}
+    uses: ./.github/workflows/macos-release.yml
+    with:
+      version: ${{ needs.release.outputs.version }}
+
+  publish:
+    name: Publish all platforms together
+    needs: [release, macos_release]
+    if: ${{ needs.release.outputs.published != 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Check out exact release source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Download Windows materials from this run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: windows-release-materials
+          path: build-release
+      - name: Download macOS arm64 materials from this run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: macos-arm64-release-materials
+          path: build-macos-release/arm64
+      - name: Download macOS Intel materials from this run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: macos-x86_64-release-materials
+          path: build-macos-release/x86_64
+      - name: Verify and publish installers, corresponding sources and checksums
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.release.outputs.version }}
+          INSTALLER_DIRECTORY: build-release/installer
+          LEGAL_DIRECTORY: build-release/distribution
+          MACOS_DIRECTORY: build-macos-release
+          RELEASE_PLATFORMS: windows,macos
+          LEGAL_APPROVED: ${{ vars.RELEASE_LEGAL_APPROVED }}
+          MACOS_LEGAL_APPROVED: ${{ vars.MACOS_RELEASE_LEGAL_APPROVED }}
+          RELEASE_COMMAND: ${{ github.ref == 'refs/heads/master' && 'publish' || 'verify' }}
+        run: node scripts/release.mjs "$RELEASE_COMMAND"

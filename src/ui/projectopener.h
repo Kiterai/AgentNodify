@@ -3,7 +3,7 @@
 #include <vector>
 
 namespace an {
-enum class ProjectApp { Explorer, CommandPrompt, PowerShell, GitBash, Code, CodeInsiders };
+enum class ProjectApp { Explorer, CommandPrompt, PowerShell, GitBash, Code, CodeInsiders, Finder, Terminal };
 struct ProjectOpener {
     ProjectApp app;
     QString label, program;

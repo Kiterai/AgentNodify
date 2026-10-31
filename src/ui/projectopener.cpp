@@ -14,6 +14,8 @@ namespace an {
 QStringList ProjectOpener::arguments(const QString &directory) const {
     const auto path = QDir::toNativeSeparators(QFileInfo(directory).absoluteFilePath());
     switch (app) {
+    case ProjectApp::Finder: return {path};
+    case ProjectApp::Terminal: return {strings::OpenApplicationArgument, strings::TerminalApplication, path};
     case ProjectApp::Explorer: return {path};
     case ProjectApp::CommandPrompt: return {strings::CmdDisableAutoRunArgument, strings::CmdKeepOpenArgument};
     case ProjectApp::PowerShell: return {strings::NoLogoArgument, strings::NoProfileArgument, strings::PowerShellKeepOpenArgument};
@@ -76,6 +78,17 @@ std::vector<ProjectOpener> detectProjectOpeners() {
     add(ProjectApp::GitBash, strings::GitBashAction, {strings::GitBashExe}, git);
     add(ProjectApp::Code, strings::VsCodeAction, {strings::CodeExe}, code);
     add(ProjectApp::CodeInsiders, strings::VsCodeInsidersAction, {strings::CodeInsidersExe}, insiders);
+#elif defined(Q_OS_MACOS)
+    // macOS launches its file manager and terminal via Launch Services, not a
+    // shell command. Keep this dependency inside the project-opening adapter.
+    if (QFileInfo(strings::MacOpenExecutable).isExecutable()) {
+        result.push_back({ProjectApp::Finder, strings::FinderAction, strings::MacOpenExecutable});
+        result.push_back({ProjectApp::Terminal, strings::TerminalAction, strings::MacOpenExecutable});
+    }
+    for (const auto app : {ProjectApp::Code, ProjectApp::CodeInsiders}) {
+        const auto program = resolveExecutable(app == ProjectApp::Code ? strings::Code : strings::CodeInsiders);
+        if (!program.isEmpty()) result.push_back({app, app == ProjectApp::Code ? strings::VsCodeAction : strings::VsCodeInsidersAction, program});
+    }
 #endif
     return result;
 }

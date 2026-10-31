@@ -4,7 +4,9 @@ Codex・Claude Code・OpenCodeなどのエージェントをノードでつな�
 
 ## ビルド方法
 
-Windows向けの手順です。以下をインストールしてください。
+### Windows
+
+以下をインストールしてください。
 
 - Git、CMake 3.24以上、PowerShell 5.1以上
 - Visual Studio 2022またはBuild Tools（「C++によるデスクトップ開発」とWindows SDK）
@@ -21,8 +23,21 @@ Releaseビルド・自動テスト・Qt DLL配置を行い、`build/Release/Agen
 `-QtPath`の代わりに環境変数`Qt6_ROOT`も使えます。初回は依存ライブラリの取得にネットワーク接続が必要です。
 配布先にはVisual C++ 2022ランタイムも必要です。
 
-手動ビルドや環境設定の詳細は[開発ガイド](spec/development.md)を参照してください。
+### macOS
+
+Xcode Command Line Tools、CMake 3.24以上、macOS用Qt 6.5以上（Widgets / Test）を用意します。Qtキットを指定して実行してください。
+
+```sh
+Qt6_ROOT="/path/to/Qt/kit" sh scripts/build-macos.sh
+open build-macos/AgentNodify.app
+```
+
+Releaseビルドと自動テストを行います。HomebrewのQtを使う場合は `Qt6_ROOT="$(brew --prefix qtbase)"` と指定できます。初回の依存取得にはネットワーク接続が必要です。
+
+手動ビルドや環境設定・Qt同梱の詳細は[開発ガイド](spec/development.md)を参照してください。
 IFWインストーラは`scripts/package.ps1`で生成できます。前提ツール・ライセンス準備・手順は[配布ガイド](spec/packaging.md)を参照してください。
+macOSの`.pkg`は`scripts/package-macos.py`で生成できます。[macOS配布・CIガイド](spec/macos-packaging.md)を参照してください。
+`master`の自動公開手順は[Windows／macOS統合リリース](spec/multiplatform-release.md)を参照してください。
 
 ## ソース構成
 
