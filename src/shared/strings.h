@@ -7,6 +7,7 @@ inline constexpr char ProjectOrderMime[] = "application/x-agentnodify-project-or
 #include "colors.h"
 #include <array>
 #include <cstddef>
+#include <QtGlobal>
 namespace an::strings {
 inline constexpr char ApplicationIconResource[] = ":/icons/agentnodify.ico";
 inline constexpr char16_t EllipsisCharacter = u'…';
@@ -238,7 +239,11 @@ inline constexpr char CatalogEndedEarly[] = "モデル一覧を受信する前�
 inline constexpr char AnsiEscapePattern[] = "\x1b\\[[0-9;]*[A-Za-z]";
 inline constexpr char OpenCodeModelPattern[] = "^[A-Za-z0-9_.:-]+/[A-Za-z0-9_./:+@-]+$";
 inline constexpr char InvalidOpenCodeCatalog[] = "OpenCodeのモデル一覧の応答形式が不正です。GUI版ではなくCLI版を指定してください。";
+#ifdef Q_OS_MACOS
+inline constexpr char CodeFont[] = "Menlo";
+#else
 inline constexpr char CodeFont[] = "Consolas";
+#endif
 inline constexpr char TextPreviewTooltip[] = "クリック、またはEnterで右ペインの編集UIを開きます。";
 inline constexpr char NodeForm[] = "nodeForm";
 inline constexpr auto NodeFormStyleStorage = detail::join(
@@ -756,6 +761,11 @@ inline constexpr char ApplicationPathsRegistry[] = "\\Software\\Microsoft\\Windo
 inline constexpr char Dot[] = ".";
 inline constexpr char Exe[] = "exe";
 inline constexpr char ExplorerAction[] = "エクスプローラーで開く";
+inline constexpr char FinderAction[] = "Finderで開く";
+inline constexpr char TerminalAction[] = "ターミナルで開く";
+inline constexpr char MacOpenExecutable[] = "/usr/bin/open";
+inline constexpr char OpenApplicationArgument[] = "-a";
+inline constexpr char TerminalApplication[] = "Terminal";
 inline constexpr char ExplorerExe[] = "explorer.exe";
 inline constexpr char ExplorerExecutableSuffix[] = "/explorer.exe";
 inline constexpr char CommandPromptAction[] = "コマンドプロンプトで開く";
@@ -1068,7 +1078,11 @@ inline constexpr char ProjectAlreadyRunning[] = "このプロジェクトは既�
 inline constexpr char CannotStartFlow[] = "フローを開始できません";
 inline constexpr char CliSettingsTitle[] = "CLI設定";
 inline constexpr char CliExecutableTitle[] = "CLI実行ファイル";
+#ifdef Q_OS_WIN
 inline constexpr char ExecutableFileFilter[] = "Executable (*.exe);;All files (*)";
+#else
+inline constexpr char ExecutableFileFilter[] = "All files (*)";
+#endif
 inline constexpr char CliPermissionsHint[] =
     "Codexはworkspace-write、Claude "
     "CodeはacceptEditsで書き込みを許可します。\n既存の拒否ルールは維持します。OpenCodeは既存CLIの権限設定に従います。\n認証は各CLIで事前に"

@@ -475,7 +475,7 @@ void GuiTest::editorUndoRedoParameters() {
     Window window(true); window.show(); QCoreApplication::processEvents();
     QTest::mouseClick(window.findChild<QPushButton *>("addNode_agent"),Qt::LeftButton); const auto id=window.selected_; const auto position=window.editGraph_->flow.nodes.at(id).position;
     auto stack=window.documents_[0].undo; QCOMPARE(stack->count(),1); QVERIFY(window.undoAction_->isEnabled());
-    auto answer=[&](QMessageBox::StandardButton button) { QTimer::singleShot(0,&window,[button]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); QCOMPARE(box->windowTitle(),QString("ノードを削除")); QCOMPARE(box->standardButton(box->defaultButton()),QMessageBox::Ok);if(button==QMessageBox::Ok)QTest::keyClick(box,Qt::Key_Return);else box->button(button)->click();}); };
+    auto answer=[&](QMessageBox::StandardButton button) { QTimer::singleShot(0,&window,[button]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); QCOMPARE(box->text(),QString(strings::DeleteNodesConfirmation).arg(1)); QCOMPARE(box->standardButton(box->defaultButton()),QMessageBox::Ok);if(button==QMessageBox::Ok)QTest::keyClick(box,Qt::Key_Return);else box->button(button)->click();}); };
     answer(QMessageBox::Cancel); window.stepHistory(false); QCOMPARE(stack->index(),1); QVERIFY(window.editGraph_->nodeExists(id));
     answer(QMessageBox::Ok); window.stepHistory(false); QCOMPARE(stack->index(),0); QVERIFY(!window.editGraph_->nodeExists(id));
     window.stepHistory(true); QVERIFY(window.editGraph_->nodeExists(id)); QCOMPARE(window.editGraph_->flow.nodes.at(id).position,position);
@@ -500,7 +500,7 @@ void GuiTest::editorUndoRedoDeletion() {
     Window window(true); window.show(); auto flow=Flow::initial();
     for(Id id:{3u,4u}) { Node node; node.id=id; node.kind=Kind::UserInput; node.title=QString("Question %1").arg(id); node.position={double(id*300),40}; flow.nodes[id]=node; }
     flow.edges={{1,3},{3,4},{4,2},{3,3}}; window.editGraph_->replace(flow); window.changed(); auto stack=window.documents_[0].undo; stack->clear();
-    int warnings=0; auto answer=[&](QMessageBox::StandardButton button) { QTimer::singleShot(0,&window,[&,button]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); QCOMPARE(box->windowTitle(),QString("ノードを削除")); ++warnings; box->button(button)->click();}); };
+    int warnings=0; auto answer=[&](QMessageBox::StandardButton button) { QTimer::singleShot(0,&window,[&,button]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); QCOMPARE(box->text(),QString(strings::DeleteNodesConfirmation).arg(2)); ++warnings; box->button(button)->click();}); };
     window.editScene_->clearSelection(); window.editScene_->nodeGraphicsObject(3)->setSelected(true); window.editScene_->nodeGraphicsObject(4)->setSelected(true);
     window.editView_->setFocus(); window.editScene_->clearFocus(); QCoreApplication::processEvents(); QTest::keyClick(window.editView_,Qt::Key_Delete); QCOMPARE(stack->count(),1); QVERIFY(!window.editGraph_->nodeExists(3)); QVERIFY(!window.editGraph_->nodeExists(4)); QVERIFY(window.editGraph_->flow.edges.empty()); QCOMPARE(warnings,0); QVERIFY(!QApplication::activeModalWidget());
     window.stepHistory(false); QCOMPARE(window.editGraph_->flow.edges,flow.edges); QCOMPARE(window.editGraph_->flow.nodes.at(3).title,QString("Question 3")); QCOMPARE(window.editGraph_->flow.nodes.at(3).position,flow.nodes.at(3).position); QCOMPARE(warnings,0);
@@ -599,11 +599,16 @@ void GuiTest::projectOpeners() {
         qInfo().noquote() << "Detected:" << opener.label << opener.program;
     }
     QVERIFY(detected.size() <= 6);
+#ifdef Q_OS_MACOS
+    QVERIFY(labels.contains(strings::FinderAction));
+    QVERIFY(labels.contains(strings::TerminalAction));
+#endif
     const auto path = QDir::current().absoluteFilePath("プロジェクト & (sample)");
-    for (const auto app : {ProjectApp::Explorer, ProjectApp::CommandPrompt, ProjectApp::PowerShell, ProjectApp::GitBash, ProjectApp::Code, ProjectApp::CodeInsiders}) {
+    for (const auto app : {ProjectApp::Explorer, ProjectApp::CommandPrompt, ProjectApp::PowerShell, ProjectApp::GitBash, ProjectApp::Code, ProjectApp::CodeInsiders, ProjectApp::Finder, ProjectApp::Terminal}) {
         const ProjectOpener opener{app, "", ""}; const auto args = opener.arguments(path);
         const auto native = QDir::toNativeSeparators(path);
-        if (app == ProjectApp::Explorer) QCOMPARE(args, QStringList{native});
+        if (app == ProjectApp::Explorer || app == ProjectApp::Finder) QCOMPARE(args, QStringList{native});
+        else if (app == ProjectApp::Terminal) QCOMPARE(args, (QStringList{"-a", "Terminal", native}));
         else if (app == ProjectApp::GitBash) QCOMPARE(args, QStringList{"--cd=" + native});
         else if (app == ProjectApp::Code || app == ProjectApp::CodeInsiders) QCOMPARE(args, (QStringList{"--new-window", native}));
         else QVERIFY(!args.join(' ').contains(path)); // Shells use QProcess cwd, never an interpolated cd command.
@@ -876,7 +881,7 @@ void GuiTest::interactionWhileWaiting() {
     QSignalSpy primary(window.runner_,&Runner::finished); window.executeFlow(); QTRY_COMPARE(window.inputPrompts_.size(),size_t(1)); const auto first=window.inputPrompts_[0].request.id;
     window.inputText_->setPlainText("draft stays"); QVERIFY(window.activities_->isEnabled()); QVERIFY(window.projectList_->isEnabled()); QVERIFY(window.tabs_->isTabEnabled(0)); QVERIFY(!window.runButton_->isEnabled());
     window.projectList_->setCurrentRow(1); QCOMPARE(window.project_,1); QVERIFY(window.runButton_->isEnabled()); QVERIFY(window.inputPanel_->isHidden()); QVERIFY(window.inputText_->toPlainText().isEmpty()); QVERIFY(!window.stopButton_->isEnabled());
-    auto dismiss=[&] { QTimer::singleShot(0,&window,[]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); QCOMPARE(box->windowTitle(),QString("実行中のフロー")); box->button(QMessageBox::Ok)->click();}); };
+    auto dismiss=[&] { QTimer::singleShot(0,&window,[]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); QCOMPARE(box->text(),QString(strings::RunningFlowEditWarning)); box->button(QMessageBox::Ok)->click();}); };
     window.tabs_->setCurrentIndex(0); auto edited=window.editGraph_->flow.nodes.at(4); edited.prompt="Say hello"; dismiss(); window.editGraph_->updateNode(edited);
     QVERIFY(window.saveFlow()); QCOMPARE(Flow::load(path).nodes.at(4).prompt,QString("RESPONSE_TWO")); QVERIFY(window.coordinator_->running(window.projects_[0].historyId)); QVERIFY(window.projects_[0].results.at(3).state==State::Running);
     dismiss(); QVERIFY(!window.editGraph_->deleteNode(3)); QCOMPARE(window.inputPrompts_[0].request.id,first);
@@ -927,7 +932,7 @@ void GuiTest::runningFlowEditRestrictions() {
     window.editGraph_->replace(flow); window.changed(); const auto path=window.documents_[0].path;
     window.projects_.push_back({"Running",directory.path(),path,{}}); window.projects_.push_back({"Idle",directory.path(),path,{}}); window.refreshProjects(); window.tabs_->setCurrentIndex(1);
     window.executeFlow(); QTRY_COMPARE(window.inputPrompts_.size(),size_t(1)); window.selectProject(1); window.tabs_->setCurrentIndex(0); QVERIFY(window.currentFlowRunning());
-    int warnings=0; auto reject=[&] { QTimer::singleShot(0,&window,[&]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); QCOMPARE(box->windowTitle(),QString("実行中のフロー")); ++warnings; box->button(QMessageBox::Ok)->click();}); };
+    int warnings=0; auto reject=[&] { QTimer::singleShot(0,&window,[&]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); QCOMPARE(box->text(),QString(strings::RunningFlowEditWarning)); ++warnings; box->button(QMessageBox::Ok)->click();}); };
     const auto before=window.editGraph_->flow.toJson();
     reject(); QTest::mouseClick(window.findChild<QPushButton *>("addNode_agent"),Qt::LeftButton); QCOMPARE(window.editGraph_->flow.toJson(),before);
     auto *edit=window.editGraph_->form(3)->findChild<QLineEdit *>("nodeTitle"); QVERIFY(edit); reject(); QTest::mouseClick(edit,Qt::LeftButton); QCOMPARE(edit->text(),QString("Question"));
@@ -961,11 +966,12 @@ void GuiTest::startAndStopDialogs() {
     window.config_.codex+=".exe";
 #endif
     window.smoke_=false; QStringList dialogs; QMessageBox::StandardButton answer=QMessageBox::Cancel;
-    QTimer responder; responder.setInterval(5); connect(&responder,&QTimer::timeout,&window,[&] { if(auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) { dialogs<<box->windowTitle(); if(box->windowTitle()=="フローを停止" && answer==QMessageBox::Ok){QCOMPARE(box->standardButton(box->defaultButton()),QMessageBox::Ok);QTest::keyClick(box,Qt::Key_Return);}else box->done(answer); } }); responder.start();
+    // macOS intentionally ignores QMessageBox window titles; assert the message instead.
+    QTimer responder; responder.setInterval(5); connect(&responder,&QTimer::timeout,&window,[&] { if(auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) { dialogs<<box->text(); if(box->text()==strings::StopFlowConfirmation && answer==QMessageBox::Ok){QCOMPARE(box->standardButton(box->defaultButton()),QMessageBox::Ok);QTest::keyClick(box,Qt::Key_Return);}else box->done(answer); } }); responder.start();
     window.executeFlow(); QTRY_VERIFY(window.runner_->running()); QTest::qWait(40); QVERIFY(dialogs.isEmpty());
-    window.tabs_->setCurrentIndex(0); auto changed=window.editGraph_->flow.nodes.at(3); changed.prompt="changed"; answer=QMessageBox::Ok; window.editGraph_->updateNode(changed); QCOMPARE(window.editGraph_->flow.nodes.at(3).prompt,QString("SLEEP")); QCOMPARE(dialogs,QStringList{"実行中のフロー"}); dialogs.clear();
-    window.tabs_->setCurrentIndex(1); answer=QMessageBox::Cancel; QTest::mouseClick(window.stopButton_,Qt::LeftButton); QVERIFY(window.busy()); QCOMPARE(dialogs,QStringList{"フローを停止"}); dialogs.clear();
-    answer=QMessageBox::Ok; QTest::mouseClick(window.stopButton_,Qt::LeftButton); QTRY_VERIFY(!window.busy()); QTest::qWait(40); QCOMPARE(dialogs,QStringList{"フローを停止"}); responder.stop(); window.smoke_=true;
+    window.tabs_->setCurrentIndex(0); auto changed=window.editGraph_->flow.nodes.at(3); changed.prompt="changed"; answer=QMessageBox::Ok; window.editGraph_->updateNode(changed); QCOMPARE(window.editGraph_->flow.nodes.at(3).prompt,QString("SLEEP")); QCOMPARE(dialogs,QStringList{strings::RunningFlowEditWarning}); dialogs.clear();
+    window.tabs_->setCurrentIndex(1); answer=QMessageBox::Cancel; QTest::mouseClick(window.stopButton_,Qt::LeftButton); QVERIFY(window.busy()); QCOMPARE(dialogs,QStringList{strings::StopFlowConfirmation}); dialogs.clear();
+    answer=QMessageBox::Ok; QTest::mouseClick(window.stopButton_,Qt::LeftButton); QTRY_VERIFY(!window.busy()); QTest::qWait(40); QCOMPARE(dialogs,QStringList{strings::StopFlowConfirmation}); responder.stop(); window.smoke_=true;
 }
 void GuiTest::addedNodeAutoFit() {
     Window window(true); window.show(); QCoreApplication::processEvents(); auto *view=static_cast<GraphView *>(window.editView_);
@@ -1234,7 +1240,7 @@ void GuiTest::scopedInputSelectionAndStop() {
     window.selectProject(1); QVERIFY(window.inputPanel_->isHidden()); QCOMPARE(window.inputSelector_->count(),0); QVERIFY(!window.stopButton_->isEnabled());
     window.selectProject(0); QCOMPARE(window.inputSelector_->currentIndex(),1); QCOMPARE(window.inputText_->toPlainText(),QString("second draft")); QTRY_VERIFY(qAbs(split->sizes()[1]-height)<5);
     window.selectProject(1); window.executeFlow(); QTRY_COMPARE(window.inputPrompts_.size(),size_t(4)); QCOMPARE(window.inputSelector_->count(),2);
-    auto stop=[&](QMessageBox::StandardButton answer) { QTimer::singleShot(0,&window,[answer]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); QCOMPARE(box->windowTitle(),QString("フローを停止")); box->button(answer)->click();}); QTest::mouseClick(window.stopButton_,Qt::LeftButton); };
+    auto stop=[&](QMessageBox::StandardButton answer) { QTimer::singleShot(0,&window,[answer]{auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); QVERIFY(box); QCOMPARE(box->text(),QString(strings::StopFlowConfirmation)); box->button(answer)->click();}); QTest::mouseClick(window.stopButton_,Qt::LeftButton); };
     stop(QMessageBox::Cancel); QVERIFY(window.coordinator_->running(window.projects_[1].historyId)); QCOMPARE(window.inputPrompts_.size(),size_t(4));
     stop(QMessageBox::Ok); QTRY_VERIFY(!window.coordinator_->running(window.projects_[1].historyId)); QVERIFY(window.coordinator_->running(window.projects_[0].historyId));
     QVERIFY(window.inputPanel_->isHidden()); QCOMPARE(window.inputSelector_->count(),0); QCOMPARE(window.inputPrompts_.size(),size_t(2));
