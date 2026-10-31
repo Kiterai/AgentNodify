@@ -49,7 +49,55 @@ export function planRelease(baseline, tags, releases, sha) {
   return { version, tag: `v${version}`, published: false, marker };
 }
 
-export [object Function]
+export function macosPayloads(directory, version, sha, repo, approved) {
+  if (approved !== 'true') throw new Error('Independent macOS distribution review approval is required');
+  if (!directory) throw new Error('MACOS_DIRECTORY is required');
+  const payloads = [];
+  const digest = file => createHash('sha256').update(readFileSync(file)).digest('hex');
+  for (const arch of ['arm64', 'x86_64']) {
+    const folder = join(directory, arch, 'installer');
+    const legal = join(directory, arch, 'distribution');
+    const installerName = `AgentNodify-${version}-macOS-${arch}-Setup.pkg`;
+    const installer = join(folder, installerName);
+    const validationFile = join(folder, `macos-${arch}-installer-validation.json`);
+    const validation = JSON.parse(readFileSync(validationFile, 'utf8'));
+    if (validation.schema !== 1 || validation.success !== true || validation.installed !== true
+        || validation.sha256 !== digest(installer) || validation.commit !== sha
+        || validation.version !== version || validation.architecture !== arch
+        || validation.installer !== installerName || !Array.isArray(validation.checks)
+        || !['payload', 'receipt', 'cocoa', 'signature', 'uninstall', 'receipt_removed'].every(c => validation.checks.includes(c))) {
+      throw new Error(`macOS ${arch} installer roundtrip evidence is missing, failed or stale`);
+    }
+    const packageFile = join(folder, `macos-${arch}-package-validation.json`);
+    const built = JSON.parse(readFileSync(packageFile, 'utf8'));
+    if (built.schema !== 1 || built.version !== version || built.architecture !== arch
+        || built.installer !== installerName || built.sha256 !== digest(installer)
+        || built.applicationSignature !== 'ad-hoc' || built.installerSigned !== false || built.notarized !== false) {
+      throw new Error(`macOS ${arch} package/signature record does not match`);
+    }
+    const sourceName = `AgentNodify-${version}-macOS-${arch}-Sources.zip`;
+    const source = join(folder, sourceName);
+    const recordFile = join(folder, `macos-${arch}-distribution-release.json`);
+    const record = JSON.parse(readFileSync(recordFile, 'utf8'));
+    if (record.schema !== 1 || record.version !== version || record.commit !== sha
+        || record.repository !== repo || record.architecture !== arch
+        || record.profile !== 'macos-official-qt-6.12.0' || record.qtVersion !== '6.12.0'
+        || record.sourceBundle !== sourceName || record.sourceBundleSha256 !== digest(source)
+        || !record.noticeHashes || !['APPLICATION-LICENSE.txt', 'QT-NOTICES.txt', 'SOURCE-OFFER.txt',
+          'BUILD-INFO.json', 'SOURCE-MANIFEST.json'].every(name => Object.hasOwn(record.noticeHashes, name))) {
+      throw new Error(`macOS ${arch} source companion does not match`);
+    }
+    if (JSON.stringify(readdirSync(legal).sort()) !== JSON.stringify(Object.keys(record.noticeHashes).sort())) {
+      throw new Error(`macOS ${arch} notice file set changed`);
+    }
+    for (const [name, hash] of Object.entries(record.noticeHashes)) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name) || !/^[a-f0-9]{64}$/.test(hash)
+          || digest(join(legal, name)) !== hash) throw new Error(`macOS ${arch} notice changed`);
+    }
+    payloads.push(source, recordFile, validationFile, packageFile, installer);
+  }
+  return payloads;
+}
 
 export async function runRelease({ env = process.env, command = process.argv[2], request = fetch,
   cmakeFile = 'CMakeLists.txt' } = {}) {
